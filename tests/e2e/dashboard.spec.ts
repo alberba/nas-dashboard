@@ -39,7 +39,7 @@ test("login, navigation, origin checks and mobile layout", async ({ page }) => {
   await page.getByLabel("Contraseña", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Entrar", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Todo, bajo control." }),
+    page.getByRole("heading", { name: "Resumen", exact: true }),
   ).toBeVisible();
   const forbidden = await page.request.post("/api/presence", {
     headers: { Origin: "https://evil.invalid" },
@@ -48,7 +48,7 @@ test("login, navigation, origin checks and mobile layout", async ({ page }) => {
   expect(forbidden.status()).toBe(403);
   await page.getByRole("button", { name: "Aplicaciones", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Tu casa digital." }),
+    page.getByRole("heading", { name: "Aplicaciones", exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("link", { name: /Jellyfin/ })).toHaveAttribute(
     "href",
@@ -93,7 +93,7 @@ test("registers a passkey and signs in with it", async ({ page }) => {
   await page.getByLabel("Contraseña", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Entrar", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Todo, bajo control." }),
+    page.getByRole("heading", { name: "Resumen", exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Ajustes", exact: true }).click();
   await page.getByRole("button", { name: "Añadir", exact: true }).click();
@@ -111,6 +111,6 @@ test("registers a passkey and signs in with it", async ({ page }) => {
     .getByRole("button", { name: "Entrar con passkey", exact: true })
     .click();
   await expect(
-    page.getByRole("heading", { name: "Todo, bajo control." }),
+    page.getByRole("heading", { name: "Resumen", exact: true }),
   ).toBeVisible();
 });
