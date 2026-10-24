@@ -47,32 +47,14 @@ const navigation = [
   { id: "apps", label: "Aplicaciones", icon: Grid2X2 },
   { id: "settings", label: "Ajustes", icon: Settings2 },
 ];
-const headings: Record<string, [string, string]> = {
-  summary: [
-    "Todo, bajo control.",
-    "El pulso de tu NAS, sin perder de vista lo importante.",
-  ],
-  resources: [
-    "El pulso de tu NAS.",
-    "Recursos, actividad e historial para entender qué está pasando.",
-  ],
-  containers: [
-    "Cada servicio, en su sitio.",
-    "Consulta su estado y actúa cuando lo necesites.",
-  ],
-  files: [
-    "Tu espacio, en orden.",
-    "Biblioteca, descargas y una segunda oportunidad en la papelera.",
-  ],
-  apps: ["Tu casa digital.", "Todos tus servicios, a un paso."],
-  settings: [
-    "A tu manera.",
-    "Acceso, notificaciones y los avisos que te importan.",
-  ],
-  alerts: [
-    "Lo que necesita atención.",
-    "Incidencias, recuperaciones y actividad reciente.",
-  ],
+const headings: Record<string, string> = {
+  summary: "Resumen",
+  resources: "Recursos",
+  containers: "Contenedores",
+  files: "Archivos",
+  apps: "Aplicaciones",
+  settings: "Ajustes",
+  alerts: "Avisos",
 };
 
 export function Dashboard({ name }: { name: string }) {
@@ -259,7 +241,6 @@ export function Dashboard({ name }: { name: string }) {
             >
               hub<span>.</span>
             </Link>
-            <span className="sidebar-subtitle">Tu NAS, a la vista</span>
           </div>
           <nav aria-label="Navegación principal">
             {navigation.map((item) => (
@@ -292,7 +273,6 @@ export function Dashboard({ name }: { name: string }) {
               <span className="avatar">{name.charAt(0).toUpperCase()}</span>
               <span>
                 <strong>{name}</strong>
-                <small>Tu espacio personal</small>
               </span>
               <Settings2 />
             </button>
@@ -344,8 +324,7 @@ export function Dashboard({ name }: { name: string }) {
                     month: "long",
                   })}
                 </p>
-                <h1>{title[0]}</h1>
-                <p className="lede">{title[1]}</p>
+                <h1>{title}</h1>
               </div>
               <div className="last-update">
                 <span>Última actualización</span>
@@ -358,11 +337,6 @@ export function Dashboard({ name }: { name: string }) {
                       })
                     : "Esperando datos"}
                 </time>
-                <small>
-                  {connected
-                    ? `Cada ${data?.interval ?? 5} segundos`
-                    : "Mostrando el último dato disponible"}
-                </small>
               </div>
             </div>
             {error && (
@@ -383,10 +357,6 @@ export function Dashboard({ name }: { name: string }) {
                 <section className="panel empty-state">
                   <LoaderCircle />
                   <h2>Esperando el primer pulso.</h2>
-                  <p className="subtle">
-                    Las métricas reales aparecerán cuando Oracle reciba la
-                    primera muestra del NAS.
-                  </p>
                 </section>
               )}
 
@@ -399,7 +369,6 @@ export function Dashboard({ name }: { name: string }) {
                         <HardDrive />
                         Un lugar para todo
                       </h2>
-                      <span className="subtle">Almacenamiento</span>
                     </div>
                     <Storage metrics={metrics} />
                     <div className="storage-footer">
@@ -437,13 +406,6 @@ export function Dashboard({ name }: { name: string }) {
                           ? "Hay algo que revisar"
                           : "Todo en su sitio"}
                     </h3>
-                    <p className="subtle">
-                      {!connected
-                        ? "Oracle conserva el último estado recibido."
-                        : openAlerts.length
-                          ? `${openAlerts.length} incidencia${openAlerts.length === 1 ? "" : "s"} necesita${openAlerts.length === 1 ? "" : "n"} tu atención.`
-                          : "Los recursos están dentro de los umbrales configurados."}
-                    </p>
                     <div className="health-facts">
                       <span>
                         En marcha<strong>{uptime(metrics.uptime)}</strong>
@@ -472,10 +434,7 @@ export function Dashboard({ name }: { name: string }) {
                 <MetricCards metrics={metrics} />
                 <section className="panel">
                   <div className="section-heading wrap">
-                    <div>
-                      <h2>Actividad reciente</h2>
-                      <p className="subtle">Cómo respira tu servidor.</p>
-                    </div>
+                    <h2>Actividad reciente</h2>
                     <Range value={range} set={setRange} />
                   </div>
                   <Chart history={data.history} />
@@ -484,7 +443,6 @@ export function Dashboard({ name }: { name: string }) {
                       <i className="legend-dot accent-bg" />
                       CPU
                     </span>
-                    <span>Historial de 30 días</span>
                   </div>
                 </section>
                 <section className="panel">
@@ -580,9 +538,7 @@ export function Dashboard({ name }: { name: string }) {
                         </div>
                       ))
                     ) : (
-                      <p className="subtle">
-                        No hay sensores de temperatura disponibles.
-                      </p>
+<p className="subtle">Sin sensores</p>
                     )}
                   </section>
                   <section className="panel stack">
@@ -619,8 +575,7 @@ export function Dashboard({ name }: { name: string }) {
                       metrics.containers.filter((c) => c.state === "running")
                         .length
                     }{" "}
-                    activos de {metrics.containers.length} servicios · consumo
-                    actualizado cada 10 s
+                    activos de {metrics.containers.length}
                   </span>
                   <button
                     className="secondary danger-text push-end"
@@ -654,11 +609,6 @@ export function Dashboard({ name }: { name: string }) {
                       />
                     ))}
                 </section>
-                <p className="fineprint">
-                  NPM, Tailscale y el agente están protegidos para conservar la
-                  conexión. Las acciones no se repiten automáticamente si se
-                  pierde la respuesta.
-                </p>
               </div>
             )}
             {view === "files" && (
@@ -682,7 +632,6 @@ export function Dashboard({ name }: { name: string }) {
                     </div>
                     <span className="subtle app-category">{app.category}</span>
                     <h2>{app.name}</h2>
-                    <p className="subtle">{app.description}</p>
                     <span className="app-url">
                       {app.host}.{appDomain}
                     </span>
@@ -701,10 +650,6 @@ export function Dashboard({ name }: { name: string }) {
                     <div className="empty-state">
                       <CircleCheck />
                       <h3>Sin incidencias registradas</h3>
-                      <p className="subtle">
-                        Aquí verás lo que necesite atención y cuándo se
-                        recupere.
-                      </p>
                     </div>
                   )}
                   {data.alerts.map((alert) => (
@@ -730,9 +675,7 @@ export function Dashboard({ name }: { name: string }) {
                 <section className="panel stack">
                   <h2>Acciones recientes</h2>
                   {!data.operations.length && (
-                    <p className="subtle">
-                      Las acciones que realices aparecerán aquí.
-                    </p>
+                    <p className="subtle">Sin acciones</p>
                   )}
                   {data.operations.map((op) => (
                     <div className="alert-row" key={op.id}>
@@ -775,9 +718,8 @@ export function Dashboard({ name }: { name: string }) {
             )}
             <footer className="page-footer">
               <span>
-                hub<span className="accent">.</span> Hecho para tenerlo cerca.
+                hub<span className="accent">.</span>
               </span>
-              <span>NAS-HOME · Historial de 30 días</span>
             </footer>
           </div>
         </main>

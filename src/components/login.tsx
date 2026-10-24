@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { Fingerprint, HardDrive, ArrowRight, ShieldCheck } from "lucide-react";
+import { Fingerprint, HardDrive, ArrowRight } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
@@ -79,26 +79,11 @@ export function Login({ setup }: { setup: boolean }) {
             <br />
             Todo a la vista.
           </h1>
-          <p>
-            El espacio de tus películas, la salud de tus discos y cada servicio.
-            Un lugar para tenerlo todo bajo control.
-          </p>
         </div>
-        <span className="subtle with-icon">
-          <ShieldCheck /> Tu panel personal del NAS
-        </span>
       </section>
       <section className="login-panel">
         <div className="login-card">
-          <span className="accent with-icon">
-            <HardDrive /> Tu NAS, a la vista
-          </span>
           <h2>{setup ? "Hazlo tuyo." : "Bienvenido a casa."}</h2>
-          <p className="subtle">
-            {setup
-              ? "Crea tu cuenta para empezar. Después podrás añadir una passkey."
-              : "Entra para ver cómo está todo."}
-          </p>
           <form onSubmit={submit} className="stack">
             {setup && (
               <>
@@ -165,9 +150,6 @@ export function Login({ setup }: { setup: boolean }) {
               <Fingerprint /> Entrar con passkey
             </button>
           )}
-          <p className="fineprint">
-            Acceso personal. El registro público está cerrado.
-          </p>
         </div>
       </section>
     </main>

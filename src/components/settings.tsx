@@ -166,9 +166,6 @@ export function Settings({
               Añadir
             </button>
           </div>
-          <p className="subtle">
-            Entra con la huella, el rostro, un PIN o tu gestor de contraseñas.
-          </p>
           {!keys.length && (
             <p className="empty-note">
               Todavía no has registrado ninguna passkey.
@@ -200,19 +197,12 @@ export function Settings({
               </button>
             </div>
           ))}
-          <p className="fineprint">
-            Registra las passkeys desde el dominio principal del panel.
-          </p>
         </section>
         <section className="panel stack">
           <h2>
             <BellRing />
             En tu móvil
           </h2>
-          <p className="subtle">
-            Añade hub. a tu pantalla de inicio y activa los avisos en cada
-            dispositivo donde quieras recibirlos.
-          </p>
           <div className="toolbar wrap">
             <button
               className="primary"
@@ -248,17 +238,10 @@ export function Settings({
               Desactivar aquí
             </button>
           </div>
-          <p className="fineprint">
-            Los avisos se envían aunque tengas el panel cerrado.
-          </p>
         </section>
       </div>
       <section className="panel stack">
         <h2>Cuándo avisarte</h2>
-        <p className="subtle">
-          Los cambios se aplican a los avisos del panel y del móvil. Se envía un
-          aviso por incidencia y otro al recuperarse.
-        </p>
         <form onSubmit={save} className="stack">
           <div className="form-grid">
             {(
@@ -292,22 +275,12 @@ export function Settings({
             Guardar umbrales
           </button>
         </form>
-        <p className="fineprint">
-          La temperatura depende de los sensores disponibles. Ajusta el umbral
-          según tu hardware.
-        </p>
       </section>
       <section className="panel setting-row">
-        <div className="stack">
-          <h2>
+        <h2>
             <ShieldCheck />
             Tu cuenta
           </h2>
-          <p className="subtle">
-            Acceso personal · correo, contraseña y passkeys. Historial de 30
-            días. Papelera de 7 días.
-          </p>
-        </div>
         <button
           className="secondary"
           onClick={async () => {

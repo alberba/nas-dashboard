@@ -97,11 +97,6 @@ export function Chart({
         <span>{isRate ? "Tráfico de red" : "0–100 %"}</span>
         <time>Ahora</time>
       </div>
-      {!history.some((p) => p[field] !== null) && (
-        <p className="subtle">
-          El historial aparecerá con las primeras muestras reales.
-        </p>
-      )}
     </div>
   );
 }

@@ -172,11 +172,6 @@ export function FileBrowser({
                 <h3>
                   {search ? "Sin coincidencias" : "Esta carpeta está vacía"}
                 </h3>
-                <p className="subtle">
-                  {search
-                    ? "Prueba con otro nombre."
-                    : "Los archivos aparecerán aquí cuando los añadas a tu NAS."}
-                </p>
               </div>
             )}
             {filtered.slice(0, limit).map((item) => (
@@ -261,9 +256,7 @@ export function FileBrowser({
       ) : (
         <>
           <div className="toolbar wrap">
-            <p className="subtle">
-              Los archivos se conservan 7 días y siguen ocupando espacio.
-            </p>
+            <span />
             <button
               className="secondary danger-text push-end"
               disabled={!connected || !trash.length || busy}
@@ -290,9 +283,6 @@ export function FileBrowser({
               <div className="empty-state">
                 <Trash2 />
                 <h3>La papelera está vacía</h3>
-                <p className="subtle">
-                  Aquí podrás recuperar los archivos que elimines desde hub.
-                </p>
               </div>
             )}
             {trash.map((item) => (
