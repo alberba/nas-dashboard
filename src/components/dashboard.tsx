@@ -314,7 +314,7 @@ export function Dashboard({ name }: { name: string }) {
               </button>
             </div>
           </header>
-          <div className="page-content">
+          <div className="page-content" data-view={view}>
             <div className="page-heading">
               <div>
                 <p className="date-label">

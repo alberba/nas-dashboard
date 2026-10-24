@@ -45,16 +45,27 @@ jobs:
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+      - name: Wait for the server
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          for _ in $(seq 1 12); do
+            nc -z -w 5 "$DEPLOY_HOST" 22 && exit 0
+            sleep 5
+          done
+          echo "El servidor no responde por Tailscale" >&2
+          tailscale status >&2 || true
+          exit 1
       # El `.env` vive solo en el servidor (no está en Git): se conserva al renovar el árbol.
       # `/opt` es de root, así que se sustituye el contenido del directorio, no el directorio.
       - name: Ship the tree
         env:
           DEPLOY_TARGET: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
         run: |
-          git archive "$DEPLOY_REF" | ssh -i ~/.ssh/id_deploy "$DEPLOY_TARGET" bash -s <<'REMOTE'
+          git archive "$DEPLOY_REF" | ssh -i ~/.ssh/id_deploy "$DEPLOY_TARGET" \
+            'rm -rf ~/nas-dashboard.new && mkdir ~/nas-dashboard.new && tar -x -C ~/nas-dashboard.new'
+          ssh -i ~/.ssh/id_deploy "$DEPLOY_TARGET" bash -s <<'REMOTE'
           set -euo pipefail
-          rm -rf ~/nas-dashboard.new && mkdir ~/nas-dashboard.new
-          tar -x -C ~/nas-dashboard.new
           find /opt/nas-dashboard -mindepth 1 -maxdepth 1 ! -name .env -exec rm -rf {} +
           cp -a ~/nas-dashboard.new/. /opt/nas-dashboard/
           rm -rf ~/nas-dashboard.new

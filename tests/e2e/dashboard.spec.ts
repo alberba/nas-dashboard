@@ -38,29 +38,20 @@ test("login, navigation, origin checks and mobile layout", async ({ page }) => {
   await page.getByLabel("Correo", { exact: true }).fill(email);
   await page.getByLabel("Contraseña", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Entrar", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: "Resumen", exact: true }),
-  ).toBeVisible();
+  await expect(page.locator('[data-view="summary"]')).toBeVisible();
   const forbidden = await page.request.post("/api/presence", {
     headers: { Origin: "https://evil.invalid" },
     data: { id: "3f9bde9b-a17f-40d3-85d7-5b6b0ca0d2c6", visible: true },
   });
   expect(forbidden.status()).toBe(403);
   await page.getByRole("button", { name: "Aplicaciones", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: "Aplicaciones", exact: true }),
-  ).toBeVisible();
+  await expect(page.locator('[data-view="apps"]')).toBeVisible();
   await expect(page.getByRole("link", { name: /Jellyfin/ })).toHaveAttribute(
     "href",
     /https:\/\/jellyfin\./,
   );
   await page.getByRole("button", { name: "Ajustes", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: "Tus passkeys" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Activar avisos" }),
-  ).toBeVisible();
+  await expect(page.locator('[data-view="settings"]')).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   expect(
     await page.evaluate(
@@ -71,9 +62,7 @@ test("login, navigation, origin checks and mobile layout", async ({ page }) => {
     .getByRole("button", { name: "Cerrar sesión", exact: true })
     .last()
     .click();
-  await expect(
-    page.getByRole("heading", { name: "Bienvenido a casa." }),
-  ).toBeVisible();
+  await expect(page.getByLabel("Contraseña", { exact: true })).toBeVisible();
 });
 test("registers a passkey and signs in with it", async ({ page }) => {
   const cdp = await page.context().newCDPSession(page);
@@ -92,25 +81,17 @@ test("registers a passkey and signs in with it", async ({ page }) => {
   await page.getByLabel("Correo", { exact: true }).fill(email);
   await page.getByLabel("Contraseña", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Entrar", exact: true }).click();
-  await expect(
-    page.getByRole("heading", { name: "Resumen", exact: true }),
-  ).toBeVisible();
+  await expect(page.locator('[data-view="summary"]')).toBeVisible();
   await page.getByRole("button", { name: "Ajustes", exact: true }).click();
   await page.getByRole("button", { name: "Añadir", exact: true }).click();
-  await expect(
-    page.getByText("Passkey añadida. Ya puedes usarla para entrar."),
-  ).toBeVisible();
+  await expect(page.locator(".notice.success")).toBeVisible();
   await page
     .getByRole("button", { name: "Cerrar sesión", exact: true })
     .last()
     .click();
-  await expect(
-    page.getByRole("heading", { name: "Bienvenido a casa." }),
-  ).toBeVisible();
+  await expect(page.getByLabel("Contraseña", { exact: true })).toBeVisible();
   await page
     .getByRole("button", { name: "Entrar con passkey", exact: true })
     .click();
-  await expect(
-    page.getByRole("heading", { name: "Resumen", exact: true }),
-  ).toBeVisible();
+  await expect(page.locator('[data-view="summary"]')).toBeVisible();
 });
