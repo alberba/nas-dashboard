@@ -1,0 +1,83 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [Checks]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Un despliegue a la vez y sin cancelar el que está en curso: interrumpir
+# `docker compose up --build` a medias dejaría producción a medio actualizar.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Oracle
+    if: ${{ (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.conclusion == 'success') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      DEPLOY_REF: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.DEPLOY_REF }}
+      # El servidor solo es accesible por Tailscale: el runner entra como nodo efímero.
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+      # El `.env` vive solo en el servidor (no está en Git): se conserva al renovar el árbol.
+      # `/opt` es de root, así que se sustituye el contenido del directorio, no el directorio.
+      - name: Ship the tree
+        env:
+          DEPLOY_TARGET: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
+        run: |
+          git archive "$DEPLOY_REF" | ssh -i ~/.ssh/id_deploy "$DEPLOY_TARGET" bash -s <<'REMOTE'
+          set -euo pipefail
+          rm -rf ~/nas-dashboard.new && mkdir ~/nas-dashboard.new
+          tar -x -C ~/nas-dashboard.new
+          find /opt/nas-dashboard -mindepth 1 -maxdepth 1 ! -name .env -exec rm -rf {} +
+          cp -a ~/nas-dashboard.new/. /opt/nas-dashboard/
+          rm -rf ~/nas-dashboard.new
+          REMOTE
+      - name: Build and recreate the containers
+        env:
+          DEPLOY_TARGET: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
+        run: |
+          ssh -i ~/.ssh/id_deploy "$DEPLOY_TARGET" bash -s <<'REMOTE'
+          set -euo pipefail
+          cd /opt/nas-dashboard
+          # Compose aplica las migraciones antes de iniciar app y worker.
+          docker compose up -d --build
+          # El healthcheck de la app comprueba /api/setup.
+          for _ in $(seq 1 30); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' "$(docker compose ps -q app)")
+            if [ "$status" = healthy ]; then
+              docker image prune -f >/dev/null
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "La app no llegó a estar sana" >&2
+          docker compose logs --tail 50 >&2
+          exit 1
+          REMOTE
