@@ -16,11 +16,11 @@
     "worker": "node --env-file-if-exists=.env.local --import tsx src/worker.ts"
   },
   "dependencies": {
-    "@better-auth/drizzle-adapter": "^1.7.12",
-    "@better-auth/passkey": "^1.7.12",
+    "@better-auth/drizzle-adapter": "^1.7.14",
+    "@better-auth/passkey": "^1.7.14",
     "@fontsource-variable/manrope": "^5.3.0",
     "@fontsource-variable/unbounded": "^5.3.0",
-    "better-auth": "^1.7.12",
+    "better-auth": "^1.7.14",
     "drizzle-orm": "^0.45.4",
     "effect": "^4.0.6",
     "lucide-react": "^1.61.0",
