@@ -54,6 +54,29 @@ export type MaintenanceReview = {
   reason: string | null;
 };
 
+export type MaintenanceDiskKind = "sata" | "nvme" | "other";
+
+export type MaintenanceDiskStatus = "ok" | "watch" | "fail" | "unknown";
+
+export type MaintenanceDisk = {
+  device: string;
+  model: string | null;
+  serial: string | null;
+  kind: MaintenanceDiskKind;
+  size: number | null;
+  temperature: number | null;
+  reallocatedSectors: number | null;
+  wear: number | null;
+  status: MaintenanceDiskStatus;
+  /** Stable machine keys that explain a non-ok status, never user copy. */
+  issues: string[];
+};
+
+export type MaintenanceDisks = {
+  available: boolean;
+  devices: MaintenanceDisk[];
+};
+
 export type MaintenanceUnitState =
   | "active"
   | "paused"
@@ -110,6 +133,7 @@ export type MaintenanceSnapshot = {
     status: "ok" | "failed" | "unknown";
     at: string | null;
   };
+  disks: MaintenanceDisks;
   units: MaintenanceUnit[];
   failedUnits: {
     stack: MaintenanceFailedUnit[];
