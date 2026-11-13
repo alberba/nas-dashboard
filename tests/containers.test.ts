@@ -18,6 +18,7 @@ function container(overrides: Partial<Container>): Container {
     recreateOnCompose: false,
     cpu: 1,
     memory: 1,
+    compose: null,
     ...overrides,
   };
 }

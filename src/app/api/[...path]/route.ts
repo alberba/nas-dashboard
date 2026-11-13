@@ -33,11 +33,19 @@ import {
   resolveHost,
   HostConfigError,
   HostNotFound,
+  type HostConfig,
 } from "@/lib/hosts";
 import { hostStatuses } from "@/lib/host-status";
 import { maintenanceForHost } from "@/lib/maintenance";
 import { notify } from "@/lib/push";
-import type { Metrics } from "@/lib/types";
+import {
+  fetchRenovatePullRequests,
+  githubConfig,
+  GithubConfigError,
+  GithubUnavailable,
+  relatePullRequests,
+} from "@/lib/github";
+import type { Metrics, RenovateContainer } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 const json = (value: unknown, status = 200) =>
@@ -59,6 +67,34 @@ function requestHost(value: unknown): string | null {
     if (typeof host === "string" && host) return host;
   }
   return null;
+}
+
+/** Containers that Docker Compose created, with the labels used to join a PR. */
+async function renovateContainers(hosts: HostConfig[]) {
+  const result: RenovateContainer[] = [];
+  for (const host of hosts) {
+    const [latest] = await db
+      .select({ data: samples.data })
+      .from(samples)
+      .where(eq(samples.hostId, host.id))
+      .orderBy(desc(samples.at))
+      .limit(1);
+    const containers = (latest?.data as Metrics | undefined)?.containers ?? [];
+    for (const container of containers) {
+      const project = container.composeProject ?? container.compose?.project;
+      const service = container.composeService ?? container.compose?.service;
+      if (!project || !service) continue;
+      result.push({
+        hostId: host.id,
+        id: container.id,
+        name: container.name,
+        image: container.image,
+        project,
+        service,
+      });
+    }
+  }
+  return result;
 }
 
 async function handle(
@@ -147,6 +183,21 @@ async function handle(
         request.nextUrl.searchParams.get("host"),
       );
       return json(await maintenanceForHost(host));
+    }
+    if (route === "renovate" && !mutation) {
+      const config = githubConfig();
+      if (!config)
+        return json({ enabled: false, repository: null, prs: [] });
+      const hosts = getHosts();
+      const selected = request.nextUrl.searchParams.get("host");
+      const scope = selected ? [resolveHost(hosts, selected)] : hosts;
+      const containers = await renovateContainers(scope);
+      const prs = await fetchRenovatePullRequests(config);
+      return json({
+        enabled: true,
+        repository: config.repository,
+        prs: relatePullRequests(prs, containers),
+      });
     }
     if (route === "overview" && !mutation) {
       const hosts = getHosts();
@@ -500,6 +551,18 @@ async function handle(
         { error: "La configuración de hosts del servidor no es válida" },
         503,
       );
+    if (error instanceof GithubConfigError)
+      return json(
+        { error: "La configuración de GitHub del servidor no es válida" },
+        503,
+      );
+    if (error instanceof GithubUnavailable) {
+      console.error("GitHub error", error.status);
+      return json(
+        { error: "GitHub no está disponible. Inténtalo de nuevo más tarde." },
+        503,
+      );
+    }
     if (error instanceof z.ZodError)
       return json(
         { error: error.issues[0]?.message ?? "Datos no válidos" },
