@@ -83,8 +83,6 @@ export function RenovatePanel() {
                   <tr>
                     <th scope="col">PR</th>
                     <th scope="col">Servicios</th>
-                    <th scope="col">Tipo</th>
-                    <th scope="col">CI</th>
                     <th scope="col">Estado</th>
                   </tr>
                 </thead>
@@ -127,14 +125,20 @@ function Row({ row, control }: { row: PrRow; control: ReactNode }) {
       data-requires-worker={row.requiresWorker || undefined}
     >
       <td className={styles.pr}>
-        <a href={row.url} target="_blank" rel="noreferrer">
-          <strong>#{row.number}</strong>
-          <ExternalLink aria-hidden="true" />
-          <span className="sr-only">Abrir en GitHub</span>
-        </a>
-        <span className={styles.title} title={row.title}>
-          {row.title}
-        </span>
+        <div className={styles.prHead}>
+          <a
+            href={row.url}
+            target="_blank"
+            rel="noreferrer"
+            aria-label={`Abrir PR #${row.number}: ${row.title}`}
+          >
+            <strong>#{row.number}</strong>
+            <ExternalLink aria-hidden="true" />
+          </a>
+          <span className={styles.tag} data-tone={typeTones[row.type]}>
+            {typeLabels[row.type]}
+          </span>
+        </div>
       </td>
       <td>
         <ul className={styles.services}>
@@ -147,25 +151,12 @@ function Row({ row, control }: { row: PrRow; control: ReactNode }) {
             </li>
           ))}
         </ul>
-        {row.containers.length > 0 && (
-          <span className={styles.hostline} data-renovate-containers="">
-            {row.projects.join(", ")} ·{" "}
-            {row.containers.map((c) => c.name).join(", ")}
-          </span>
-        )}
       </td>
-      <td>
-        <span className={styles.tag} data-tone={typeTones[row.type]}>
-          {typeLabels[row.type]}
-        </span>
-      </td>
-      <td>
+      <td className={styles.rowState}>
         <span className={styles.state} data-tone={ciTones[row.ci]}>
           <i aria-hidden="true" />
           {ciLabels[row.ci]}
         </span>
-      </td>
-      <td>
         <div className={styles.tags}>
           <span
             className={styles.tag}

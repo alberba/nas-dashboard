@@ -1380,8 +1380,9 @@ html:has(dialog:modal) {
 }
 .row-title {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.35rem 0.6rem;
 }
 .row-title strong {
   font-weight: 750;
@@ -1479,6 +1480,10 @@ html:has(dialog:modal) {
   }
   .name-cell {
     white-space: normal;
+  }
+  .name-cell .row-title {
+    display: flex;
+    max-inline-size: 100%;
   }
   .row-meta {
     display: block;
@@ -1610,6 +1615,9 @@ html:has(dialog:modal) {
   }
   .filter-chip[aria-pressed="true"]:not(:disabled):hover {
     background: color-mix(in oklch, var(--text), black 6%);
+  }
+  .strip-segment[data-segment-link]:hover {
+    background: var(--row-hover);
   }
   .segmented > a:hover {
     background-color: color-mix(in oklch, var(--text) 6%, transparent);
