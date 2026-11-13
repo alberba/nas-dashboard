@@ -325,7 +325,7 @@ export async function deployProgressForHost({
       };
     });
 
-  const snapshot = merged.length ? await safeSnapshot(host) : null;
+  const snapshot = await safeSnapshot(host);
   const releases = merged.length ? await fetchDeployReleases(config) : [];
 
   const openUpdates: DeployProgressUpdate[] = open.map((pr) =>
