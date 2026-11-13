@@ -220,7 +220,7 @@ test("rebooting the NAS asks for the typed phrase and sends one action that carr
 
   await dialog.locator("[data-typed-confirmation]").fill("REINICIAR NAS");
   await confirm.click();
-  await expect(dialog).toBeHidden();
+  await expect(dialog).toHaveAttribute("data-phase", "pending");
   expect(sent).toHaveLength(1);
   expect(sent[0].key).toMatch(/^[0-9a-f-]{36}$/);
   expect(sent[0].body).toMatchObject({ action: "reboot" });

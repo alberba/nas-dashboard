@@ -109,4 +109,3 @@ describe("pull request rows", () => {
     expect(row.projects).toEqual(["media-stack"]);
   });
 });
-

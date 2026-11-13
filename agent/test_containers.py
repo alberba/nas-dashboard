@@ -36,10 +36,6 @@ class ComposeMetadata(unittest.TestCase):
                 result = server.container_stat(summary(labels))
                 self.assertIsNone(result["compose"])
 
-
-if __name__ == "__main__":
-    unittest.main()
-
 class HealthObservation(unittest.TestCase):
     def test_unhealthy_observation_survives_samples_and_resets_on_recovery(self):
         from unittest.mock import patch
@@ -53,3 +49,7 @@ class HealthObservation(unittest.TestCase):
                 self.assertEqual(server.container_stat(item)["healthObservedSince"], 100)
             item["Status"] = "Up 1 hour (healthy)"
             self.assertIsNone(server.container_stat(item)["healthObservedSince"])
+
+
+if __name__ == "__main__":
+    unittest.main()
