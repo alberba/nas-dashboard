@@ -258,7 +258,15 @@ def container_stat(item, active=None, protected=None):
         active if active is not None else set(),
         protected if protected is not None else PROTECTED,
     )
-    result.update({"image": item["Image"], "status": item["Status"], "cpu": None, "memory": None})
+    project = result["composeProject"]
+    service = result["composeService"]
+    result.update({
+        "image": item["Image"],
+        "status": item["Status"],
+        "cpu": None,
+        "memory": None,
+        "compose": {"project": project, "service": service} if project and service else None,
+    })
     if result["state"] != "running":
         return result
     ident = result["id"]

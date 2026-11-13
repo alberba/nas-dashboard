@@ -108,6 +108,17 @@ Los movimientos se realizan dentro de la raíz seleccionada. No se permiten tran
 
 Si se pierde una respuesta durante una operación, queda pendiente de verificar. Comprueba el estado antes de repetirla. El reinicio del NAS utiliza un contenedor auxiliar privilegiado con un comando fijo; no se expone una consola remota.
 
+## PR de Renovate
+
+El hub puede leer las PR abiertas de Renovate en `alberba/media-stack` sin modificar GitHub. El servidor guarda un token *fine-grained* limitado a ese repositorio con permisos de lectura de *Pull requests*, *Contents* y *Checks*; el token nunca llega al navegador ni a los agentes. Configúralo en el `.env` del servidor:
+
+```sh
+GITHUB_TOKEN=github_pat_...
+GITHUB_REPOSITORY=alberba/media-stack
+```
+
+Si falta `GITHUB_TOKEN`, la sección de Renovate se desactiva sin llamar a GitHub y sin mostrar errores. Solo se listan PR de autor Renovate en ramas `renovate/*` que cambian imágenes de Compose. Cada actualización se relaciona con los contenedores por las etiquetas `com.docker.compose.project` y `com.docker.compose.service` que envía el agente, no por la cadena de la imagen: los pins de seguridad, las versiones retenidas, las imágenes locales y las imágenes sin etiqueta siguen apuntando a su servicio. Las PR agrupadas de Tdarr incluyen el nodo del Worker y se marcan como «requiere Worker». Esta fase es de solo lectura: no fusiona PR ni modifica GitHub.
+
 ## Desarrollo y pruebas
 
 Crea `.env.local` con un PostgreSQL local y las variables del ejemplo. Usa `BETTER_AUTH_URL=http://localhost:3000` y el mismo valor en `TRUSTED_ORIGINS`. Puedes configurar `NAS_HOSTS` con uno o varios agentes, o mantener `NAS_AGENT_URL` y `AGENT_TOKEN` para un único NAS.
