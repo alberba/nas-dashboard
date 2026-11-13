@@ -224,6 +224,33 @@ class CleanImagesTest(ActionsTest):
 
         self.assertEqual(docker.calls, [])
 
+    def test_a_rejected_delete_does_not_stop_the_others_or_retry(self):
+        docker = FakeDocker(
+            {
+                ("GET", "/images/json"): [
+                    image("a", 100, ["first:1"], created=2),
+                    image("b", 200, ["second:1"], created=1),
+                ],
+                ("GET", "/containers/json?all=1"): [],
+                (
+                    "DELETE",
+                    "/images/sha256:" + "a" * 64 + "?force=0&noprune=1",
+                ): OSError("image in use"),
+                (
+                    "DELETE",
+                    "/images/sha256:" + "b" * 64 + "?force=0&noprune=1",
+                ): [],
+            }
+        )
+
+        cleanup = self.actions(docker=docker).execute("clean-images")["cleanup"]
+
+        deletes = [call[1] for call in docker.calls if call[0] == "DELETE"]
+        self.assertEqual(len(deletes), 2)
+        self.assertEqual(cleanup["imagesRemoved"], 1)
+        self.assertEqual(cleanup["imagesFailed"], 1)
+        self.assertEqual(cleanup["reclaimedBytes"], 200)
+
     def test_fails_closed_when_the_active_security_update_has_no_old_image(self):
         monitor = self.appdata / "security-monitor"
         monitor.mkdir()
