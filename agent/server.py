@@ -3,6 +3,7 @@ import concurrent.futures
 import contextlib
 import hmac
 import http.client
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -15,12 +16,54 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, quote
 
-ROOTS = {"media": Path(os.getenv("MEDIA_ROOT", "/nas/media")), "torrents": Path(os.getenv("TORRENTS_ROOT", "/nas/torrents"))}
+
+def configured_roots(enabled, media, torrents):
+    if str(enabled).strip().lower() in ("0", "false", "no", "off"):
+        return {}
+    return {"media": Path(media), "torrents": Path(torrents)}
+
+
+def allowed_networks(value):
+    networks = []
+    for entry in value.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(entry, strict=False))
+        except ValueError:
+            continue
+    return networks
+
+
+def allowed(address):
+    try:
+        client = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    return any(client in network for network in ALLOWED_NETWORKS)
+
+
+ROOTS = configured_roots(
+    os.getenv("FILES_ENABLED", "true"),
+    os.getenv("MEDIA_ROOT", "/nas/media"),
+    os.getenv("TORRENTS_ROOT", "/nas/torrents"),
+)
 PROC = Path(os.getenv("HOST_PROC", "/host/proc"))
 SYS = Path(os.getenv("HOST_SYS", "/host/sys"))
 TOKEN = os.getenv("AGENT_TOKEN", "")
-ALLOWED = set(os.getenv("ALLOWED_IPS", "127.0.0.1").split(","))
-PROTECTED = {"hub-agent", "npm", "tailscale"}
+ALLOWED_NETWORKS = allowed_networks(os.getenv("ALLOWED_IPS", "127.0.0.1"))
+PROTECTED = {"hub-agent", "hub-agent-apps", "npm", "tailscale"} | {
+    name.strip()
+    for name in os.getenv("PROTECTED_CONTAINERS", "").split(",")
+    if name.strip()
+}
+ALLOW_REBOOT = os.getenv("ALLOW_REBOOT", "true").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
 LOCK = threading.RLock()
 
 
@@ -277,6 +320,8 @@ def execute(body):
             raise ValueError("La operación no alcanzó el estado esperado")
         return {"state": state}
     if action == "reboot":
+        if not ALLOW_REBOOT:
+            raise ValueError("Reinicio no permitido en este host")
         helper = docker("POST", "/containers/create", {
             "Image": "hub-agent:1", "Entrypoint": ["nsenter"],
             "Cmd": ["-t", "1", "-m", "-u", "-i", "-n", "-p", "--", "/sbin/reboot"],
@@ -311,7 +356,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
     def handle_request(self):
-        if self.client_address[0] not in ALLOWED or not TOKEN or not hmac.compare_digest(self.headers.get("Authorization", ""), "Bearer " + TOKEN):
+        if not allowed(self.client_address[0]) or not TOKEN or not hmac.compare_digest(self.headers.get("Authorization", ""), "Bearer " + TOKEN):
             self.respond(401, {"error": "No autorizado"})
             return
         route = urlparse(self.path)

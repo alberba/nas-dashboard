@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, afterEach } from "vitest";
+import { describe, expect, it, vi, afterEach, beforeEach } from "vitest";
 import { actionSchema, sampleInterval } from "../src/lib/validation";
 import {
   nas,
@@ -48,6 +48,11 @@ describe("administration boundaries", () => {
 });
 
 describe("Effect NAS errors", () => {
+  beforeEach(() => {
+    process.env.NAS_AGENT_URL = "http://nas.invalid:9450";
+    process.env.AGENT_TOKEN = "c".repeat(32);
+    delete process.env.NAS_HOSTS;
+  });
   afterEach(() => vi.unstubAllGlobals());
   it("does not retry a rejected administrative action", async () => {
     const fetch = vi

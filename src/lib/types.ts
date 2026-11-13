@@ -1,3 +1,13 @@
+export type HostRole = "instance" | "apps-server";
+export type HostInfo = {
+  id: string;
+  name: string;
+  role: HostRole;
+};
+export type HostStatus = HostInfo & {
+  connected: boolean;
+  lastAt: string | null;
+};
 export type Container = {
   id: string;
   name: string;
@@ -53,6 +63,7 @@ export type TrashEntry = {
 };
 export type Alert = {
   id: number;
+  hostId: string;
   key: string;
   title: string;
   detail: string;
@@ -62,6 +73,7 @@ export type Alert = {
 };
 export type Operation = {
   id: string;
+  hostId: string;
   action: string;
   target: string;
   status: string;
@@ -69,6 +81,8 @@ export type Operation = {
   at: string;
 };
 export type Overview = {
+  host: HostInfo;
+  hosts: HostStatus[];
   latest: Metrics | null;
   lastAt: string | null;
   connected: boolean;
