@@ -14,8 +14,10 @@ import threading
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs, quote
+from urllib.parse import urlparse, parse_qs, urlencode
 
+import lifecycle
+import logs
 import maintenance
 
 
@@ -86,6 +88,33 @@ def docker(method, path, body=None):
         if response.status >= 400:
             raise ValueError("Docker no pudo completar la operación (%s)" % response.status)
         return json.loads(data) if data else None
+
+
+def docker_logs(ident, since, lines):
+    """Read one bounded snapshot of a container's logs. Never follows."""
+    query = [("stdout", "1"), ("stderr", "1"), ("timestamps", "1"), ("tail", str(lines))]
+    if since:
+        query.append(("since", since))
+    with contextlib.closing(UnixHTTP("localhost", timeout=15)) as conn:
+        conn.request("GET", "/v1.45/containers/" + ident + "/logs?" + urlencode(query))
+        response = conn.getresponse()
+        data = response.read(logs.MAX_PAYLOAD + 1)
+        if response.status >= 400:
+            raise ValueError("Docker no pudo leer los registros (%s)" % response.status)
+        if len(data) > logs.MAX_PAYLOAD:
+            raise ValueError("Los registros superan el tamaño permitido")
+        return data
+
+
+def container_logs(ident, lines, since):
+    if not isinstance(ident, str) or not re.fullmatch(r"[a-f0-9]{64}", ident):
+        raise ValueError("Contenedor no válido")
+    limit = logs.parse_line_count(lines)
+    mark = logs.parse_since(since)
+    payload = docker_logs(ident, mark.raw if mark else "", limit)
+    entries, truncated, cursor = logs.format_lines(payload, mark, limit)
+    return {"id": ident, "lines": entries, "truncated": truncated,
+            "cursor": cursor or (since or None)}
 
 
 def checked_path(root, relative, allow_root=False):
@@ -225,13 +254,16 @@ container_cache = (0, [])
 container_previous = {}
 
 
-def container_stat(item):
-    ident = item["Id"]
-    name = item["Names"][0].lstrip("/")
-    result = {"id": ident, "name": name, "image": item["Image"], "state": item["State"],
-              "status": item["Status"], "protected": name in PROTECTED, "cpu": None, "memory": None}
-    if item["State"] != "running":
+def container_stat(item, active=None, protected=None):
+    result = lifecycle.classify_one(
+        item,
+        active if active is not None else set(),
+        protected if protected is not None else PROTECTED,
+    )
+    result.update({"image": item["Image"], "status": item["Status"], "cpu": None, "memory": None})
+    if result["state"] != "running":
         return result
+    ident = result["id"]
     try:
         st = docker("GET", "/containers/" + ident + "/stats?stream=false&one-shot=true")
         cpu = st["cpu_stats"]
@@ -297,8 +329,9 @@ def metrics():
             pass
     if now - container_cache[0] > 10:
         items = docker("GET", "/containers/json?all=true")
+        active = lifecycle.active_projects(items, PROTECTED)
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
-            container_cache = (now, list(pool.map(container_stat, items)))
+            container_cache = (now, list(pool.map(lambda item: container_stat(item, active), items)))
     return {"timestamp": now, "hostname": os.getenv("NAS_NAME", "NAS"), "cpu": cpu_percent,
             "memory": {"total": mem["MemTotal"], "used": mem["MemTotal"] - mem["MemAvailable"]},
             "network": {"rx": net_rx, "tx": net_tx}, "io": {"read": disk_read, "write": disk_write},
@@ -307,6 +340,7 @@ def metrics():
 
 
 def execute(body):
+    global container_cache
     action = body.get("action")
     if action in ("start", "stop", "restart"):
         ident = body.get("id", "")
@@ -316,12 +350,23 @@ def execute(body):
         if item["Name"].lstrip("/") in PROTECTED:
             raise ValueError("Servicio de infraestructura protegido")
         docker("POST", "/containers/" + ident + "/" + action + "?t=15")
-        global container_cache
         container_cache = (0, [])
         state = docker("GET", "/containers/" + ident + "/json")["State"]["Status"]
         if (action == "stop" and state == "running") or (action != "stop" and state != "running"):
             raise ValueError("La operación no alcanzó el estado esperado")
         return {"state": state}
+    if action == "remove-container":
+        ident = body.get("id", "")
+        if not lifecycle.valid_id(ident):
+            raise ValueError("Contenedor no válido")
+        item = docker("GET", "/containers/" + ident + "/json")
+        name = lifecycle.require_removable(item, body.get("confirmation"), PROTECTED)
+        items = docker("GET", "/containers/json?all=true")
+        result = lifecycle.removal_result(item, items, PROTECTED, name)
+        # Never pass v=1: named and anonymous volumes stay on the host.
+        docker("DELETE", "/containers/" + ident + "?v=0")
+        container_cache = (0, [])
+        return result
     if action == "reboot":
         if not ALLOW_REBOOT:
             raise ValueError("Reinicio no permitido en este host")
@@ -377,6 +422,11 @@ class Handler(BaseHTTPRequestHandler):
                     result = files(query.get("root", ["media"])[0], query.get("path", [""])[0])
                 elif self.command == "GET" and route.path == "/trash":
                     result = trash_records()
+                elif self.command == "GET" and route.path == "/logs":
+                    query = parse_qs(route.query)
+                    result = container_logs(query.get("id", [""])[0],
+                                            query.get("lines", [str(logs.DEFAULT_LINES)])[0],
+                                            query.get("since", [""])[0])
                 elif self.command == "POST" and route.path == "/action":
                     size = int(self.headers.get("Content-Length", 0))
                     if not 0 < size <= 8192:

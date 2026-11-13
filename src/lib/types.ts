@@ -15,6 +15,12 @@ export type Container = {
   state: string;
   status: string;
   protected: boolean;
+  composeProject: string | null;
+  composeService: string | null;
+  oneShot: boolean;
+  exitCode: number | null;
+  orphan: boolean;
+  recreateOnCompose: boolean;
   cpu: number | null;
   memory: number | null;
 };

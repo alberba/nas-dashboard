@@ -15,10 +15,15 @@ import {
 import { getSettings, saveSettings } from "@/lib/settings";
 import { actionSchema, settingsSchema } from "@/lib/validation";
 import {
+  logsResponseSchema,
+  parseLogsQuery,
+} from "@/lib/logs";
+import {
   guardSensitiveAction,
   handlePasswordVerification,
   handleVerificationStatus,
 } from "@/lib/verification-api";
+import { removeContainer } from "@/lib/lifecycle";
 import { verificationStore } from "@/lib/verification";
 import { nasForHost, NasRejected } from "@/lib/nas";
 import {
@@ -121,6 +126,14 @@ async function handle(
         store: verificationStore,
         verifyPassword: (input) => auth.api.verifyPassword(input),
       });
+    if (route === "containers/remove" && request.method === "POST") {
+      const removed = await removeContainer({
+        request,
+        session: current,
+        hosts: getHosts(),
+      });
+      return removed;
+    }
     if (route === "hosts" && !mutation) {
       const hosts = getHosts();
       return json({
@@ -383,6 +396,23 @@ async function handle(
         request.nextUrl.searchParams.get("host"),
       );
       return json(await nasForHost(host, "/trash"));
+    }
+    if (route === "logs" && !mutation) {
+      const host = resolveHost(
+        getHosts(),
+        request.nextUrl.searchParams.get("host"),
+      );
+      const input = parseLogsQuery(request.nextUrl.searchParams);
+      const query = new URLSearchParams({
+        id: input.id,
+        lines: String(input.lines),
+      });
+      if (input.since) query.set("since", input.since);
+      const result = logsResponseSchema.safeParse(
+        await nasForHost(host, `/logs?${query.toString()}`),
+      );
+      if (!result.success) throw new Error("Respuesta de logs no válida");
+      return json({ host: publicHost(host), ...result.data });
     }
     if (route === "settings" && !mutation) {
       const host = resolveHost(
