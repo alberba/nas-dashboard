@@ -212,6 +212,110 @@ recibe un `argv` fijo y no hay endpoint para comandos arbitrarios. El contrato d
 la lista cerrada para la interfaz están en `src/lib/host-command-contract.ts`; la lista
 de Python, en `agent/host_commands.py`.
 
+## Acciones de mantenimiento (ticket #20)
+
+Las cuatro acciones nuevas usan el mismo `POST /command` del agente y la misma ruta
+`POST /api/host-command` del hub: el cuerpo solo lleva el nombre de la acción, el hub
+mantiene origen, sesión, host, `Idempotency-Key`, fila en `operations` y la regla de no
+reintentar nunca una respuesta incierta. `agent/maintenance_actions.py` contiene las
+líneas de órdenes fijas; no hay argumentos libres.
+
+| Acción | Efecto | Rol |
+| --- | --- | --- |
+| `backup-now` | Ejecuta `media-backup run` con un `exec` fijo en el contenedor `backup` | Ambos |
+| `clean-images` | Borra una a una las imágenes sin contenedor que no sean de rollback | Ambos |
+| `check-health` | Lee la salud de la VPN y de las apps del proyecto Compose del rol | Ambos |
+| `reconnect-apps` | Relanza la Wiring con el comando documentado | Solo `instance` |
+
+### Copia ahora
+
+No usa el auxiliar privilegiado: crea un `exec` de Docker con
+`Cmd: ["media-backup", "run"]` en el contenedor de nombre fijo `backup` y lo arranca
+sin adjuntarse. El contenedor debe existir y estar en ejecución. La respuesta incluye
+`backup.started` y el `last-status` vigente, leído del mismo formato real que la
+instantánea (`ok <ISO>` o `failed <ISO>`); la copia sigue en segundo plano y el estado
+definitivo aparece en la siguiente instantánea.
+
+### Limpiar imágenes
+
+Antes de tocar Docker lee y valida **todo** el estado de rollback. Si falta un dato
+obligatorio o un JSON no se puede leer, la acción falla con `400` y no borra ninguna
+imagen (fail closed). Fuentes reales que se conservan:
+
+| Ruta | Qué se conserva |
+| --- | --- |
+| `security-monitor/images.compose.json` | Todos los `services.*.image` (pins activos) |
+| `security-monitor/active-update.json` | `old_id`, `old_pin` y todos los `before_pins.services.*.image` |
+| `security-monitor/merged-releases/pending.json` | Todos los `images.*.id` y `images.*.reference` del seguidor |
+
+También se conserva cualquier imagen usada por un contenedor, incluidos los detenidos
+(`/containers/json?all=1`), y las que Docker marca con contenedores. Las imágenes
+restantes se borran **por identificador** (`DELETE /images/<id>?force=0&noprune=1`),
+nunca con `docker image prune` ni con un filtro global. Se ordenan de más reciente a
+más antigua para que las capas hijas se borren antes que sus padres; un borrado
+rechazado se cuenta en `imagesFailed` y no se reintenta.
+
+```json
+{
+  "command": "clean-images",
+  "status": "success",
+  "cleanup": {
+    "reclaimedBytes": 30000000000,
+    "imagesRemoved": 12,
+    "imagesPreserved": 4,
+    "imagesFailed": 0
+  }
+}
+```
+
+`reclaimedBytes` suma el `Size` de las imágenes borradas, igual que la estimación de
+`docker system df`; no es una promesa de bloques liberados. La validación de los ~30 GB
+del NAS se hace en despliegue, nunca en los tests.
+
+### Comprobar salud
+
+Lee la lista de contenedores y su `State` con la API de Docker, limitada al proyecto
+Compose del rol (`media-stack` en `instance`, `media-stack-apps` en `apps-server`):
+
+- `vpn`: en `instance` busca el servicio `gluetun`; `connected` es cierto solo si está
+  en ejecución y su healthcheck propio está `healthy`. En `apps-server` no aplica y
+  `connected` es `null`. Si en `instance` falta gluetun, `connected` es `false`.
+- `apps`: todos los servicios del proyecto menos `gluetun`, `wire` y `wire-seed`
+  (los dos últimos son one-shot). Cada app lleva `name`, `service`, `state`, `health`
+  y `healthy`; una app está sana si está en ejecución y su salud es `healthy` o no
+  declara healthcheck. `healthy` global es cierto si lo están todas y la VPN no falla.
+
+```json
+{
+  "command": "check-health",
+  "status": "success",
+  "health": {
+    "vpn": { "applicable": true, "connected": true, "state": "running", "health": "healthy" },
+    "apps": [
+      { "name": "jellyfin", "service": "jellyfin", "state": "running", "health": "healthy", "healthy": true }
+    ],
+    "healthy": true
+  }
+}
+```
+
+### Reconectar apps
+
+En `instance` ejecuta el comando documentado por media-stack, con la ruta del checkout
+tomada de `MEDIA_STACK_CHECKOUT_PATH` y sin argumentos de la petición:
+
+```text
+docker compose --project-directory <checkout> --env-file <checkout>/.env up -d --no-deps wire
+```
+
+Se ejecuta en el auxiliar privilegiado con `argv` fijo y no se reintenta. En
+`apps-server` no hay Wiring: la acción responde `400` sin ejecutar nada. Una salida
+distinta de cero responde `502` y deja la operación pendiente de verificar.
+
+```json
+{ "command": "reconnect-apps", "status": "success", "wiring": { "started": true } }
+```
+
 ## Fallos, caché y seguridad
 
 - La instantánea se cachea `MAINTENANCE_CACHE_SECONDS` (60 s por defecto). Varias
@@ -235,7 +339,13 @@ de Python, en `agent/host_commands.py`.
 - `agent/test_host_commands.py`: nombres de unidad por rol, `argv` fijo para cada
   comando, rechazo de nombres y argumentos libres, código de salida del auxiliar, caché
   invalidada tras la acción y rutas HTTP del agente.
+- `agent/test_maintenance_actions.py`: Docker y ejecutor falsos, archivos de estado
+  temporales. Comprueba el `exec` fijo de la copia sin auxiliar, el borrado selectivo de
+  imágenes sin contenedor, la conservación de todos los pins de rollback, el fallo
+  cerrado ante JSON ilegible, la salud de VPN/apps por rol y el comando fijo de la
+  Wiring con rechazo en `apps-server`.
 - `tests/api-maintenance.test.ts`: agente HTTP falso por host, selección de host, ausencia
   de credenciales en la respuesta y no reintento cuando el agente falla.
 - `tests/api-host-commands.test.ts`: comandos permitidos por host, origen, idempotencia,
-  `operations`, rechazo del agente y resultado incierto sin reintento.
+  `operations`, resultado estructurado de las cuatro acciones nuevas, rechazo del agente
+  y resultado incierto sin reintento.
