@@ -21,6 +21,7 @@ import host_commands
 import lifecycle
 import logs
 import maintenance
+import maintenance_actions
 
 
 def configured_roots(enabled, media, torrents):
@@ -76,6 +77,7 @@ COMMANDS = host_commands.HostCommands(
     unit_names=MAINTENANCE.unit_names,
     executor=maintenance.HostExecutor(),
 )
+ACTIONS = maintenance_actions.MaintenanceActions.from_env()
 DEPLOYMENTS = deployments.Deployments.from_env()
 LOCK = threading.RLock()
 
@@ -460,7 +462,15 @@ class Handler(BaseHTTPRequestHandler):
                     if not isinstance(body, dict) or set(body) != {"command"}:
                         raise ValueError("Solicitud no válida")
                     try:
-                        result = COMMANDS.execute(body["command"])
+                        command = body["command"]
+                        if not isinstance(command, str):
+                            raise ValueError("Comando de host no permitido")
+                        if command in host_commands.COMMAND_NAMES:
+                            result = COMMANDS.execute(command)
+                        elif command in maintenance_actions.COMMAND_NAMES:
+                            result = ACTIONS.execute(command)
+                        else:
+                            raise ValueError("Comando de host no permitido")
                     finally:
                         MAINTENANCE.invalidate()
                 elif self.command == "POST" and route.path == "/action":

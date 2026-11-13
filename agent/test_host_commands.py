@@ -239,17 +239,28 @@ class FakeDocker:
         }
 
 
+class StubActions:
+    def __init__(self):
+        self.commands = []
+
+    def execute(self, command):
+        self.commands.append(command)
+        return {"command": command, "status": "success", "wiring": {"started": True}}
+
+
 class HostCommandRouteTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.appdata = Path(self.temp.name)
         self.host = FakeHost()
         self.executor = RecordingExecutor()
+        self.actions = StubActions()
         self.previous = (
             server.TOKEN,
             server.ALLOWED_NETWORKS,
             server.MAINTENANCE,
             server.COMMANDS,
+            server.ACTIONS,
         )
         server.TOKEN = "t" * 32
         server.ALLOWED_NETWORKS = server.allowed_networks("127.0.0.1")
@@ -265,6 +276,7 @@ class HostCommandRouteTest(unittest.TestCase):
             unit_names=maintenance.INSTANCE_UNITS,
             executor=self.executor,
         )
+        server.ACTIONS = self.actions
         self.httpd = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self.thread.start()
@@ -278,6 +290,7 @@ class HostCommandRouteTest(unittest.TestCase):
             server.ALLOWED_NETWORKS,
             server.MAINTENANCE,
             server.COMMANDS,
+            server.ACTIONS,
         ) = self.previous
         self.temp.cleanup()
 
@@ -319,6 +332,16 @@ class HostCommandRouteTest(unittest.TestCase):
         self.assertEqual(cached_until["timestamp"], 2000.0)
         self.assertEqual(cached_until["units"][0]["state"], "paused")
         self.assertTrue(cached_until["units"][0]["paused"])
+
+    def test_runs_a_whitelisted_maintenance_action_without_the_helper(self):
+        status, body = self.request(
+            "POST", "/command", {"command": "reconnect-apps"}
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["wiring"], {"started": True})
+        self.assertEqual(self.actions.commands, ["reconnect-apps"])
+        self.assertEqual(self.executor.calls, [])
 
     def test_rejects_unknown_commands_without_calling_the_helper(self):
         status, body = self.request(

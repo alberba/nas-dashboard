@@ -110,12 +110,49 @@ async function fakeAgent(token: string): Promise<FakeAgent> {
       return;
     }
     response.writeHead(200, { "Content-Type": "application/json" });
-    response.end(
-      JSON.stringify({
-        command: (body as { command: string }).command,
-        status: "success",
-      }),
-    );
+    const command = (body as { command: string }).command;
+    const extra =
+      command === "backup-now"
+        ? {
+            backup: {
+              started: true,
+              lastStatus: { status: "ok", at: "2026-11-13T04:04:49Z" },
+            },
+          }
+        : command === "clean-images"
+          ? {
+              cleanup: {
+                reclaimedBytes: 30_000_000_000,
+                imagesRemoved: 12,
+                imagesPreserved: 4,
+                imagesFailed: 0,
+              },
+            }
+          : command === "check-health"
+            ? {
+                health: {
+                  vpn: {
+                    applicable: true,
+                    connected: true,
+                    state: "running",
+                    health: "healthy",
+                  },
+                  apps: [
+                    {
+                      name: "jellyfin",
+                      service: "jellyfin",
+                      state: "running",
+                      health: "healthy",
+                      healthy: true,
+                    },
+                  ],
+                  healthy: true,
+                },
+              }
+            : command === "reconnect-apps"
+              ? { wiring: { started: true } }
+              : {};
+    response.end(JSON.stringify({ command, status: "success", ...extra }));
   });
   await new Promise<void>((resolve) =>
     server.listen(0, "127.0.0.1", resolve),
@@ -130,6 +167,10 @@ const commands = [
   "pause-follower",
   "resume-follower",
   "run-security",
+  "backup-now",
+  "clean-images",
+  "check-health",
+  "reconnect-apps",
 ];
 
 describe.skipIf(!baseUrl)("host command API", () => {
@@ -270,6 +311,35 @@ describe.skipIf(!baseUrl)("host command API", () => {
       });
     },
   );
+
+  it("returns the structured result of the maintenance actions", async () => {
+    async function send(command: string) {
+      const response = await api(
+        "/api/host-command?host=nas-home",
+        { command },
+        { "Idempotency-Key": crypto.randomUUID() },
+      );
+      expect(response.status).toBe(200);
+      return (await response.json()).result;
+    }
+
+    expect(await send("backup-now")).toMatchObject({
+      command: "backup-now",
+      backup: { started: true, lastStatus: { status: "ok" } },
+    });
+    expect(await send("clean-images")).toMatchObject({
+      command: "clean-images",
+      cleanup: { reclaimedBytes: 30_000_000_000, imagesPreserved: 4 },
+    });
+    expect(await send("check-health")).toMatchObject({
+      command: "check-health",
+      health: { healthy: true, vpn: { connected: true } },
+    });
+    expect(await send("reconnect-apps")).toMatchObject({
+      command: "reconnect-apps",
+      wiring: { started: true },
+    });
+  });
 
   it("replays an idempotency key without running the command twice", async () => {
     const key = crypto.randomUUID();
