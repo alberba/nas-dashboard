@@ -37,6 +37,7 @@ import {
 } from "@/lib/hosts";
 import { deploymentsForHost } from "@/lib/deployments";
 import { eventsForHost } from "@/lib/events";
+import { saveDeploymentSettings } from "@/lib/deployment-settings";
 import { hostStatuses } from "@/lib/host-status";
 import { maintenanceForHost } from "@/lib/maintenance";
 import { runHostCommand } from "@/lib/host-commands";
@@ -215,6 +216,13 @@ async function handle(
         request.nextUrl.searchParams.get("host"),
       );
       return json(await eventsForHost(host));
+    }
+    if (route === "deployments/settings" && request.method === "POST") {
+      return await saveDeploymentSettings({
+        request,
+        session: current,
+        hosts: getHosts(),
+      });
     }
     if (route === "renovate" && !mutation) {
       const config = githubConfig();

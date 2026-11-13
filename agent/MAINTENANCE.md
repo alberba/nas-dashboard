@@ -1,32 +1,52 @@
 # Instantánea de mantenimiento del agente
 
-Contrato backend de los tickets #17, #18, #19, #23 y #25 para la franja **Mantenimiento ·
-Estado**, la tabla de **Automatismos**, el panel **Discos**, las acciones de host, el panel
-**Despliegues** y los avisos y eventos de hoy de `DESIGN.md`. El hub lo consume con
-`GET /api/maintenance?host=<id>`, `GET /api/deployments?host=<id>` y
-`GET /api/events?host=<id>`; el agente publica `GET /maintenance` y `GET /deployments`.
+Contrato backend de los tickets #17, #18, #19, #20, #23, #24 y #25 para la franja
+**Mantenimiento · Estado**, la tabla de **Automatismos**, el panel **Discos**, las acciones
+de host y mantenimiento, el panel **Despliegues**, los avisos y eventos de hoy y el
+formulario de **ajustes de una release retenida** de `DESIGN.md`. El hub lo consume con
+`GET /api/maintenance?host=<id>`, `GET /api/deployments?host=<id>`,
+`GET /api/events?host=<id>` y `POST /api/deployments/settings?host=<id>`; el agente
+publica `GET /maintenance`, `GET /deployments` y `POST /deployments/settings`.
 
 ## Configuración y montajes
 
 Las lecturas del agente son de solo lectura: no escribe en el checkout ni en el estado de
 media-stack. Incluye Git de solo lectura y la consulta del journal a través del auxiliar
-privilegiado. Las únicas acciones son los comandos cerrados de la sección «Comandos de
-host».
+privilegiado. Las únicas acciones son los comandos cerrados de «Comandos de host» y
+«Acciones de mantenimiento», y la escritura de ajustes ausentes de una release retenida,
+que solo existe en la Instancia.
 
 | Variable del agente | Efecto | Valor del NAS |
 | --- | --- | --- |
 | `MEDIA_STACK_CHECKOUT_PATH` | Montaje de solo lectura del checkout en `/media-stack` | `/volume2/media-stack` |
 | `MEDIA_STACK_APPDATA_PATH` | Montaje de solo lectura del estado en `/media-stack-appdata` | `/volume2/media-stack-appdata` |
+| `MEDIA_STACK_ENV_PATH` | Directorio dedicado del `.env`, montado con escritura en `/media-stack-env` | `/volume2/media-stack-env` |
+| `MEDIA_STACK_ENV_FILE` | Fichero que el agente lee y reemplaza; por defecto, el `.env` del rol | `/media-stack-env/.env` |
 | `HOST_ROLE` | `instance` o `apps-server`; decide las unidades por defecto | `instance` |
 | `MAINTENANCE_UNITS` | Lista de unidades base separadas por comas; opcional | ver abajo |
 | `MAINTENANCE_CACHE_SECONDS` | Vida de la caché en segundos; por defecto `60` | `60` |
 | `MAINTENANCE_STACK_PREFIX` | Prefijo para separar unidades del stack de las ajenas | `media-stack` |
 | `DEPLOYMENTS_CACHE_SECONDS` | Vida de la caché de Despliegues en segundos; por defecto `30` | `30` |
 
-`agent/compose.yaml` y `agent/compose.apps.yaml` montan ambos directorios con `:ro` y
-fijan dentro del contenedor `MEDIA_STACK_ROOT=/media-stack` y
-`APPDATA_ROOT=/media-stack-appdata`. `scripts/configure.mjs` escribe las dos rutas del
-host (`--stack-path`, `--appdata-path`, `--apps-stack-path`, `--apps-appdata-path`).
+`agent/compose.yaml` y `agent/compose.apps.yaml` montan el checkout y el estado con `:ro`
+y fijan dentro del contenedor `MEDIA_STACK_ROOT=/media-stack` y
+`APPDATA_ROOT=/media-stack-appdata`. Solo `agent/compose.yaml` (Instancia) monta además
+`MEDIA_STACK_ENV_PATH` con `:rw` y fija `MEDIA_STACK_ENV_FILE=/media-stack-env/.env`.
+`scripts/configure.mjs` escribe las rutas del host (`--stack-path`, `--appdata-path`,
+`--env-path`, `--apps-stack-path`, `--apps-appdata-path`).
+
+Un montaje de fichero suelto no permite `rename`, así que el `.env` real se mueve a un
+directorio dedicado y el checkout lo enlaza. El montaje con escritura no alcanza ni al
+checkout ni a APPDATA:
+
+```sh
+sudo install -d -m 0700 /volume2/media-stack-env
+sudo mv /volume2/media-stack/.env /volume2/media-stack-env/.env
+sudo ln -s /volume2/media-stack-env/.env /volume2/media-stack/.env
+```
+
+El seguidor sigue leyendo el mismo fichero a través del enlace; el agente lo reemplaza en
+el directorio dedicado y el siguiente ciclo ya ve los valores nuevos.
 
 Unidades por defecto:
 
@@ -446,6 +466,9 @@ distinta de cero responde `502` y deja la operación pendiente de verificar.
 - `agent/test_deployments.py`: repositorio Git temporal con etiquetas y manifiestos,
   estado real del seguidor, checkout sucio con rename, bloqueos, configuración ausente,
   release fallida, servicios previstos, journal y caché.
+- `agent/test_env_settings.py`: catálogo y release temporales, faltantes, rechazos,
+  secretos write-only, pasos manuales, symlinks, concurrencia, copia previa, escritura
+  atómica, caché de Despliegues invalidada y ruta HTTP del agente.
 - `tests/api-maintenance.test.ts`: agente HTTP falso por host, selección de host, extensión
   `disks` del contrato, ausencia de credenciales en la respuesta y no reintento cuando el
   agente falla.
@@ -454,14 +477,16 @@ distinta de cero responde `502` y deja la operación pendiente de verificar.
   y resultado incierto sin reintento.
 - `tests/api-deployments.test.ts`: agente HTTP falso, host seleccionado, cola del journal,
   validación de `lines`, host desconocido y ausencia de reintentos.
+- `tests/api-deployment-settings.test.ts`: verificación reciente, origen, idempotencia,
+  operaciones sin valores, rechazo e incertidumbre sin reintento y cuerpo estricto.
 
 ## Despliegues (#23)
 
 Contrato de lectura para **Mantenimiento · Despliegues**. El hub lo consume con
 `GET /api/deployments?host=<id>&lines=<1..500>`; el agente lo publica en
 `GET /deployments?lines=<1..500>`. Por defecto devuelve las últimas 100 líneas del
-registro. No existe ningún endpoint de escritura: los ajustes de una release retenida
-llegan en el ticket #24.
+registro. La escritura de los ajustes que faltan en una release retenida se documenta en
+la sección final «Ajustes de una release retenida (#24)».
 
 La instantánea se cachea `DEPLOYMENTS_CACHE_SECONDS` (30 s por defecto), porque cada
 petición ejecuta Git y lee el journal. Un fallo aislado deja su sección vacía y añade
@@ -511,6 +536,7 @@ el nombre a `degraded`; no oculta el resto.
       "breaking": false,
       "manualSteps": ["Fill NEW_SETTING in .env."],
       "missingSettings": ["NEW_SETTING"],
+      "secretSettings": [],
       "services": ["radarr"],
       "sourceCommit": "0123456789abcdef0123456789abcdef01234567",
       "at": "2026-11-12T02:00:00Z"
@@ -588,7 +614,9 @@ descartan. `breaking` refleja `Breaking changes: yes`.
 
 `missingSettings` son solo nombres de variables, nunca valores. Para la Instancia se
 lee `.env`; para el servidor de apps, `apps-server/.env`. La lista respeta el orden de
-`.env.example`.
+`.env.example`. `secretSettings` es el subconjunto de `missingSettings` que
+`env/catalog.json` marca con `"secret": true` para ese rol; la interfaz lo usa para
+pintar el campo como contraseña.
 
 `services` son los servicios que la release recreará. Si una transacción ya intentó esa
 release, se usa su `changed` real. Si no, se comparan las definiciones efectivas de
@@ -633,6 +661,116 @@ y un doble del módulo.
 
 `tests/api-deployments.test.ts`: agente HTTP falso, host seleccionado, cola del journal,
 validación de `lines`, host desconocido y ausencia de reintentos.
+
+## Ajustes de una release retenida (#24)
+
+Formulario de la fila expandible de una release `missing-configuration`. Solo la
+Instancia escribe: el Servidor de apps rechaza la petición. La autoridad es el agente,
+que relee el catálogo, la release y el `.env` en el momento de guardar.
+
+### Catálogo y nombres permitidos
+
+Un nombre se acepta solo si cumple las tres condiciones a la vez:
+
+1. Está en `env/catalog.json` de la etiqueta con un `scopes.instance`.
+2. Aparece como asignación activa en `.env.example` de la etiqueta (es decir, la release
+   lo pide).
+3. No existe ya en el `.env` actual: una clave presente nunca se sobrescribe, ni siquiera
+   con el mismo valor.
+
+La lista se recalcula dentro del bloqueo justo antes de escribir, así que una petición
+concurrente o un `.env` cambiado entre la lectura de la instantánea y el guardado no
+permite pisar una clave. La release debe seguir en `retained`; si no, se rechaza. Se
+validan además `pattern`, `choices` y `required` del catálogo, el tamaño y los caracteres
+de control del valor. Un cuerpo con campos extra, más de 64 ajustes, nombres fuera de
+`[A-Z_][A-Z0-9_]*`, valores de más de 4096 caracteres o `acknowledgedManualSteps` no
+booleano se rechaza entero sin escribir nada. Si `retained[].manualSteps` no está vacío,
+el cuerpo debe traer `"acknowledgedManualSteps": true`.
+
+### Escritura atómica, copia previa y secretos
+
+`env_settings.py` abre el directorio dedicado, crea o reutiliza `.env.lock` y toma un
+`flock` exclusivo. Rechaza symlinks (`O_NOFOLLOW`) y exige que `.env` sea un fichero
+regular. Con el bloqueo tomado:
+
+1. Lee el `.env` actual y recalcula los nombres que faltan.
+2. Crea `.env.tmp-<pid>-<aleatorio>` con `O_EXCL|O_NOFOLLOW`, conserva modo y propietario,
+   escribe y hace `fsync`.
+3. Crea `.env.backup-<UTC>-<aleatorio>` con los bytes originales, `O_EXCL|O_NOFOLLOW` y
+   `fsync`. El nombre es único; nunca se sobrescribe una copia anterior.
+4. Comprueba que el `.env` sigue siendo el mismo inodo y tiene los mismos bytes que se
+   leyeron; si cambió, aborta sin reemplazar.
+5. `os.replace` mueve el temporal sobre `.env` en el mismo directorio y hace `fsync` del
+   directorio. Un fallo deja intacto el `.env` anterior y limpia el temporal.
+
+Los valores se escriben con la sintaxis de `scripts/env_contract.py` de media-stack
+(comillas simples, o dobles escapando `\`, `"` y `$`). Nunca se devuelven, registran ni
+copian a una fila de `operations`: las respuestas solo contienen nombres. Los mensajes de
+error hablan del nombre de la variable, jamás de su valor.
+
+### Contrato HTTP
+
+Agente: `POST /deployments/settings` con `Authorization: Bearer <AGENT_TOKEN>` y cuerpo
+estricto:
+
+```json
+{
+  "release": "v2.5.0",
+  "values": { "NEW_SETTING": "value", "SECRET_SETTING": "write-only" },
+  "acknowledgedManualSteps": true
+}
+```
+
+Respuesta `200`:
+
+```json
+{
+  "release": "v2.5.0",
+  "saved": ["NEW_SETTING", "SECRET_SETTING"],
+  "missingSettings": ["ANOTHER_SETTING"]
+}
+```
+
+Un nombre, valor o release inválidos, una clave existente, una release no retenida o la
+falta del reconocimiento de pasos manuales responden `400` con un texto que no contiene
+valores. Un fallo de disco no confirmado responde `502`; el hub no reintenta.
+
+Hub: `POST /api/deployments/settings?host=<id>` con `Idempotency-Key: <uuid>` y el mismo
+cuerpo. Mantiene la comprobación de origen y de sesión y exige una verificación reciente
+(passkey en el dominio principal, contraseña en el alternativo). Reglas:
+
+- Solo acepta hosts con rol `instance`; en `apps-server` responde `400` sin llamar al
+  agente.
+- Crea una fila `operations` con `action: "deployment-settings"` y estado `pending` antes
+  de llamar al agente.
+- La clave de idempotencia es por host: repetirla devuelve la operación existente sin
+  volver a escribir; usarla en otro host responde `409`.
+- Si el host no está conectado, responde `503` sin crear operación.
+- Un rechazo del agente queda `failed` y responde `400`; el mensaje del agente no se
+  reenvía, para que ni una versión futura pueda convertir un valor en respuesta.
+- Si la respuesta se pierde o el agente responde `5xx`, la operación queda `pending` y se
+  responde `502`. No hay reintento automático.
+- La respuesta correcta es
+  `{ "ok": true, "status": "success", "operation": {…}, "result": { "release", "saved", "missingSettings" } }`.
+  `saved` solo contiene nombres de la petición; un nombre ajeno en la respuesta del
+  agente se descarta.
+
+Tras el reemplazo, el agente invalida la caché de `/deployments`. La siguiente lectura
+recalcula `retained` y ya no muestra `missing-configuration` para esa release, por lo que
+el siguiente ciclo del seguidor encuentra el `.env` completo. El agente no lanza el
+seguidor ni modifica el checkout.
+
+### Pruebas
+
+`agent/test_env_settings.py`: catálogo realista y repositorio Git temporal, aceptación
+solo de faltantes, rechazo de desconocidos/existentes/no pedidos, valores inválidos sin
+filtrarlos, pasos manuales, rol de apps, symlinks, escrituras concurrentes, copia previa,
+modo del fichero, comillas, caché invalidada y ruta HTTP con secreto que no aparece en la
+respuesta.
+
+`tests/api-deployment-settings.test.ts`: sesión, origen, verificación reciente, host
+`instance`, idempotencia, operaciones sin valores, rechazo del agente, respuesta incierta
+sin reintento, host desconectado, respuestas incompletas y cuerpo estricto.
 
 ## Avisos y eventos de hoy (#25)
 

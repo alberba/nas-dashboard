@@ -113,14 +113,10 @@ def parse_line_count(value):
     return number
 
 
-def read_env(path):
-    """Return the assignments of a Compose .env file without exposing values."""
+def parse_env(text):
+    """Return the assignments of Compose .env text without exposing values."""
     values = {}
-    try:
-        lines = Path(path).read_text(errors="replace").splitlines()
-    except OSError:
-        return values
-    for line in lines:
+    for line in text.splitlines():
         match = ENV_ASSIGNMENT.match(line)
         if not match:
             continue
@@ -129,6 +125,14 @@ def read_env(path):
             value = value[1:-1]
         values[name] = value
     return values
+
+
+def read_env(path):
+    """Return the assignments of a Compose .env file without exposing values."""
+    try:
+        return parse_env(Path(path).read_text(errors="replace"))
+    except OSError:
+        return {}
 
 
 def _file_hash(path):
@@ -441,12 +445,14 @@ class GitReader:
         )
         return [path for path in raw.split("\x00") if path]
 
-    def compose_files(self, revision, role):
+    def compose_files(self, revision, role, env_file=None):
         """The Compose files this host actually enables, following ``include``."""
         revision = self._revision(revision)
         project = "apps-server" if role == "apps-server" else ""
         root = posixpath.join(project, "compose.yaml")
-        configured = read_env(self.checkout / _env_path(role)).get("COMPOSE_FILE", "")
+        configured = read_env(env_file or self.checkout / _env_path(role)).get(
+            "COMPOSE_FILE", ""
+        )
         selected = [
             name
             for name in configured.split(":")
@@ -487,6 +493,40 @@ class GitReader:
 
 def _env_path(role):
     return "apps-server/.env" if role == "apps-server" else ".env"
+
+
+def catalog_setting(document, name, role):
+    """The media-stack catalog entry for this role, or None when not allowed."""
+    if not isinstance(document, dict):
+        return None
+    entry = document.get(name)
+    if not isinstance(entry, dict):
+        return None
+    scopes = entry.get("scopes")
+    if not isinstance(scopes, dict) or role not in scopes:
+        return None
+    setting = scopes.get(role)
+    return setting if isinstance(setting, dict) else None
+
+
+def catalog_secrets(document, role, names=None):
+    """Secret catalog names for this role, in the given order when provided."""
+    if not isinstance(document, dict):
+        return []
+    source = names if names is not None else document.keys()
+    result = []
+    for name in source:
+        if not isinstance(name, str):
+            continue
+        setting = catalog_setting(document, name, role)
+        if setting is None:
+            continue
+        entry = document.get(name)
+        if isinstance(entry, dict) and (
+            entry.get("secret") is True or setting.get("secret") is True
+        ):
+            result.append(name)
+    return result
 
 
 def _env_example(role):
@@ -535,9 +575,9 @@ def _compose_document(git, revision, path):
     return services if isinstance(services, dict) else {}
 
 
-def _compose_services(git, revision, role, profiles):
+def _compose_services(git, revision, role, profiles, env_file=None):
     result = {}
-    for path in git.compose_files(revision, role):
+    for path in git.compose_files(revision, role, env_file):
         services = _compose_document(git, revision, path)
         for name, definition in services.items():
             if not isinstance(name, str) or not isinstance(definition, dict):
@@ -564,12 +604,12 @@ def _build_context(entry):
     return posixpath.normpath(posixpath.join(posixpath.dirname(entry["file"]), context))
 
 
-def affected_services(git, base, target, role, profiles):
+def affected_services(git, base, target, role, profiles, env_file=None):
     """Services whose effective Compose definition or built code changed."""
     if not base or not target:
         return []
-    before = _compose_services(git, base, role, profiles)
-    after = _compose_services(git, target, role, profiles)
+    before = _compose_services(git, base, role, profiles, env_file)
+    after = _compose_services(git, target, role, profiles, env_file)
     changed = {
         name
         for name in before.keys() | after.keys()
@@ -718,10 +758,16 @@ class Deployments:
         journal_reader=None,
         clock=time.time,
         cache_seconds=30,
+        env_file=None,
     ):
         self.appdata = Path(appdata)
         self.checkout = Path(checkout)
         self.role = role if role in maintenance.DEFAULT_UNITS else "instance"
+        self.env_file = (
+            Path(env_file)
+            if env_file
+            else self.checkout / _env_path(self.role)
+        )
         self.unit_names = unit_names or maintenance.parse_unit_names(None, self.role)
         self.journal_units = journal_units(self.unit_names)
         self.git = git or GitReader(self.checkout)
@@ -748,7 +794,14 @@ class Deployments:
                 os.getenv("MAINTENANCE_UNITS"), os.getenv("HOST_ROLE", "instance")
             ),
             cache_seconds=os.getenv("DEPLOYMENTS_CACHE_SECONDS", "30"),
+            env_file=os.getenv("MEDIA_STACK_ENV_FILE") or None,
         )
+
+    def invalidate(self):
+        with self._lock:
+            self._cached = None
+            self._cached_lines = None
+            self._expires = 0.0
 
     def snapshot(self, lines=DEFAULT_JOURNAL_LINES):
         lines = parse_line_count(lines)
@@ -791,7 +844,7 @@ class Deployments:
         candidates = [tag for tag in tags if version(tag) > version(baseline)]
         if not candidates:
             return []
-        env_path = self.checkout / _env_path(self.role)
+        env_path = self.env_file
         profiles = _profiles(env_path)
         pinned = configuration_key(
             env_path, self.appdata / "security-monitor" / "images.compose.json"
@@ -821,6 +874,7 @@ class Deployments:
             manifest = self.git.json_at(
                 release, f"docs/releases/{release}.deploy.json"
             )
+            catalog = self.git.json_at(release, "env/catalog.json")
             source, manifest_state = _manifest_state(
                 self.git, release, manifest, self.role
             )
@@ -845,7 +899,12 @@ class Deployments:
                 base = baseline_commit or self.git.commit(baseline)
                 try:
                     services = affected_services(
-                        self.git, base, release, self.role, profiles
+                        self.git,
+                        base,
+                        release,
+                        self.role,
+                        profiles,
+                        self.env_file,
                     )
                 except GitError:
                     services = []
@@ -858,6 +917,7 @@ class Deployments:
                     "breaking": breaking_changes(notes),
                     "manualSteps": manual_steps(notes),
                     "missingSettings": missing,
+                    "secretSettings": catalog_secrets(catalog, self.role, missing),
                     "services": services,
                     "sourceCommit": source,
                     "at": self.git.commit_date(release),

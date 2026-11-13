@@ -17,6 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, urlencode
 
 import deployments
+import env_settings
 import host_commands
 import lifecycle
 import logs
@@ -79,6 +80,7 @@ COMMANDS = host_commands.HostCommands(
 )
 ACTIONS = maintenance_actions.MaintenanceActions.from_env()
 DEPLOYMENTS = deployments.Deployments.from_env()
+ENV_SETTINGS = env_settings.EnvSettings(DEPLOYMENTS)
 LOCK = threading.RLock()
 
 
@@ -440,6 +442,13 @@ class Handler(BaseHTTPRequestHandler):
                     )[0]
                 )
                 self.respond(200, DEPLOYMENTS.snapshot(lines))
+                return
+            if self.command == "POST" and route.path == "/deployments/settings":
+                size = int(self.headers.get("Content-Length", 0))
+                if not 0 < size <= env_settings.MAX_REQUEST_BYTES:
+                    raise ValueError("Solicitud no válida")
+                body = json.loads(self.rfile.read(size))
+                self.respond(200, ENV_SETTINGS.save(body))
                 return
             with LOCK:
                 if self.command == "GET" and route.path == "/metrics":

@@ -55,6 +55,8 @@ export type DeploymentsRetained = {
   breaking: boolean;
   manualSteps: string[];
   missingSettings: string[];
+  /** Missing names the catalog marks as secrets; render those as password. */
+  secretSettings: string[];
   /** Services the release is expected to recreate. */
   services: string[];
   sourceCommit: string | null;

@@ -255,6 +255,7 @@ describe("deployment alert signals", () => {
               breaking: false,
               manualSteps: [],
               missingSettings: ["NEW_SETTING"],
+              secretSettings: [],
               services: [],
               sourceCommit: null,
               at: "2026-11-13T02:00:00Z",

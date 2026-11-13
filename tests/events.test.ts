@@ -173,6 +173,7 @@ describe.skipIf(!baseUrl)("today's host events", () => {
           breaking: false,
           manualSteps: [],
           missingSettings: ["NEW_SETTING"],
+          secretSettings: [],
           services: ["radarr"],
           sourceCommit: null,
           at: "2026-11-13T07:00:00Z",

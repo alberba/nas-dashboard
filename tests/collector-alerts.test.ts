@@ -193,6 +193,7 @@ describe.skipIf(!baseUrl)("collector maintenance alerts", () => {
           breaking: false,
           manualSteps: [],
           missingSettings: ["NEW_SETTING"],
+          secretSettings: [],
           services: ["radarr"],
           sourceCommit: null,
           at: "2026-11-13T02:00:00Z",
