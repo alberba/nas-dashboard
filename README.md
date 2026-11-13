@@ -78,6 +78,8 @@ cd agent
 docker compose -f compose.apps.yaml up -d --build
 ```
 
+La instantánea de Mantenimiento monta en solo lectura el checkout y el estado de media-stack. Configura `MEDIA_STACK_CHECKOUT_PATH` y `MEDIA_STACK_APPDATA_PATH` en el NAS; en el Servidor de apps usa `--apps-stack-path` y `--apps-appdata-path` al generar la configuración. El contrato completo está en `agent/MAINTENANCE.md`.
+
 Compose aplica las migraciones antes de iniciar la aplicación y el recolector. PostgreSQL utiliza un volumen persistente y no publica su puerto. La aplicación escucha en la IP configurada, puerto 4323, y en `127.0.0.1:4324` para una entrada HTTPS privada alternativa. Mantén una sola réplica web y un solo recolector; un bloqueo de PostgreSQL impide recolectores simultáneos. La migración de varios hosts asigna las muestras, avisos, operaciones y ajustes existentes al host `nas-home`.
 
 Configura Nginx Proxy Manager para dirigir el dominio HTTPS a `APP_SERVER_TAILSCALE_IP:4323`. Conserva la ruta anterior para poder revertir el cambio. Cambiar la ruta no requiere borrar el hub anterior.

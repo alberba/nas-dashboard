@@ -18,6 +18,7 @@ from urllib.parse import urlparse, parse_qs, urlencode
 
 import lifecycle
 import logs
+import maintenance
 
 
 def configured_roots(enabled, media, torrents):
@@ -67,6 +68,7 @@ ALLOW_REBOOT = os.getenv("ALLOW_REBOOT", "true").strip().lower() not in (
     "no",
     "off",
 )
+MAINTENANCE = maintenance.Maintenance.from_env()
 LOCK = threading.RLock()
 
 
@@ -415,6 +417,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         route = urlparse(self.path)
         try:
+            if self.command == "GET" and route.path == "/maintenance":
+                # Snapshot reads run outside the global lock so metrics and actions
+                # are not blocked by the slower host/Docker queries.
+                self.respond(200, MAINTENANCE.snapshot())
+                return
             with LOCK:
                 if self.command == "GET" and route.path == "/metrics":
                     result = metrics()
