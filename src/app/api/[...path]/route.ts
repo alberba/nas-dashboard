@@ -23,6 +23,7 @@ import {
   handlePasswordVerification,
   handleVerificationStatus,
 } from "@/lib/verification-api";
+import { removeContainer } from "@/lib/lifecycle";
 import { verificationStore } from "@/lib/verification";
 import { nasForHost, NasRejected } from "@/lib/nas";
 import {
@@ -124,6 +125,14 @@ async function handle(
         store: verificationStore,
         verifyPassword: (input) => auth.api.verifyPassword(input),
       });
+    if (route === "containers/remove" && request.method === "POST") {
+      const removed = await removeContainer({
+        request,
+        session: current,
+        hosts: getHosts(),
+      });
+      return removed;
+    }
     if (route === "hosts" && !mutation) {
       const hosts = getHosts();
       return json({

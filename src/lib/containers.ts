@@ -12,6 +12,12 @@ export function containerHealth(container: Container): ContainerHealth {
 }
 
 export function needsAttention(container: Container, expected: string[]) {
+  if (
+    container.oneShot &&
+    container.state !== "running" &&
+    (container.exitCode ?? 0) > 0
+  )
+    return true;
   if (container.state === "running")
     return containerHealth(container) === "unhealthy";
   return (
