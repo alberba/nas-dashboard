@@ -176,3 +176,182 @@ misma lista.
   reinicio disponible/no disponible, lista cerrada de unidades y ejecutor `nsenter`.
 - `tests/api-maintenance.test.ts`: agente HTTP falso por host, selección de host, ausencia
   de credenciales en la respuesta y no reintento cuando el agente falla.
+
+## Despliegues (#23)
+
+Contrato de lectura para **Mantenimiento · Despliegues**. El hub lo consume con
+`GET /api/deployments?host=<id>&lines=<1..500>`; el agente lo publica en
+`GET /deployments?lines=<1..500>`. Por defecto devuelve las últimas 100 líneas del
+registro. No existe ningún endpoint de escritura: los ajustes de una release retenida
+llegan en el ticket #24.
+
+La instantánea se cachea `DEPLOYMENTS_CACHE_SECONDS` (30 s por defecto), porque cada
+petición ejecuta Git y lee el journal. Un fallo aislado deja su sección vacía y añade
+el nombre a `degraded`; no oculta el resto.
+
+### Respuesta
+
+```json
+{
+  "timestamp": 1763040000,
+  "role": "instance",
+  "available": true,
+  "follower": {
+    "available": true,
+    "state": "idle",
+    "installed": {
+      "release": "v2.4.1",
+      "commit": "0123456789abcdef0123456789abcdef01234567",
+      "bootstrap": false,
+      "installedAt": "2026-11-13T03:04:49Z"
+    },
+    "pending": null,
+    "failed": null
+  },
+  "blocker": {
+    "code": "dirty-checkout",
+    "release": null,
+    "files": [
+      { "status": "M", "path": "stacks/wire/compose.yaml", "from": null }
+    ],
+    "missingSettings": []
+  },
+  "history": [
+    {
+      "release": "v2.4.1",
+      "outcome": "success",
+      "at": "2026-11-13T03:04:49Z",
+      "previousRelease": "v2.4.0",
+      "services": ["radarr", "sonarr"]
+    }
+  ],
+  "retained": [
+    {
+      "release": "v2.5.0",
+      "reason": "missing-configuration",
+      "blockedBy": null,
+      "breaking": false,
+      "manualSteps": ["Fill NEW_SETTING in .env."],
+      "missingSettings": ["NEW_SETTING"],
+      "services": ["radarr"],
+      "sourceCommit": "0123456789abcdef0123456789abcdef01234567",
+      "at": "2026-11-12T02:00:00Z"
+    }
+  ],
+  "journal": {
+    "entries": [
+      {
+        "at": "2026-11-13T17:01:00Z",
+        "unit": "media-stack-merged-updates.service",
+        "priority": 6,
+        "level": "info",
+        "message": "v2.4.1: radarr, sonarr"
+      }
+    ]
+  },
+  "degraded": []
+}
+```
+
+`follower` usa el mismo contrato que #17. `blocker` puede ser `null`. Los códigos son
+estables para la interfaz; los textos visibles se escriben en el hub. La celda
+**Seguridad** de la franja se lee de la instantánea #17 (`GET /api/maintenance`); este
+contrato no duplica pins, actualización pendiente ni revisión. El **último fallo** es
+`follower.failed`.
+
+### Historia del seguidor
+
+| Origen real | Campo | Regla |
+| --- | --- | --- |
+| `security-monitor/merged-releases/<uuid>/result.json` | `history[]` | Una entrada por transacción terminada |
+| `status: "updated"` | `outcome` | `success` |
+| `status: "rolled_back"` | `outcome` | `rolled-back` |
+| mtime de `result.json` | `at` | Fecha ISO 8601 en UTC |
+| `changed` | `services` | Servicios recreados por el seguidor |
+| `previous_installed.release` | `previousRelease` | Release anterior |
+
+`follower` reutiliza la sección ya documentada de #17 (`installed`, `pending`,
+`failed`). Nunca se publican `folder`, `environment`, `snapshots`, `pins` ni
+`previous_commit`. Las entradas se ordenan de más reciente a más antigua y se limitan
+a 20.
+
+### Bloqueo y releases retenidas
+
+`blocker` explica por qué el seguidor no puede desplegar ahora. Se elige por este
+orden: transacción pendiente, recuperación de seguridad pendiente, checkout no
+disponible, checkout sucio y, por último, ajuste que falta en la siguiente release.
+`files` solo se rellena con el checkout sucio: cada entrada lleva `status`, `path` y
+`from` (ruta original de un rename/copia). Los archivos se listan con
+`git status --porcelain=v1 -z --untracked-files=all`, hasta 200.
+
+Cada release posterior a la instalada que no puede aplicarse aparece en `retained`:
+
+| `reason` | Cuándo | Campos útiles |
+| --- | --- | --- |
+| `release-recovery-pending` | Existe `pending.json` | `follower.pending` |
+| `security-recovery-pending` | Existe `security-monitor/active-update.json` | — |
+| `checkout-unavailable` | No se puede leer el checkout | `available: false` |
+| `dirty-checkout` | `git status` no está limpio | `blocker.files` |
+| `missing-manifest` | La etiqueta no tiene `docs/releases/<tag>.deploy.json` o no autoriza este rol | `sourceCommit: null` |
+| `invalid-manifest` | El `source_commit` no es ancestro de la etiqueta, o la etiqueta queda fuera de `origin/main` | `sourceCommit: null` |
+| `missing-configuration` | Claves de `.env.example` de la release ausentes en el `.env` | `missingSettings` |
+| `previously-failed` | `failed-release.json` coincide con release y configuración actual | — |
+| `blocked-by-previous-release` | Una release anterior necesita ajustes o tiene un manifiesto inválido | `blockedBy` |
+
+El manifiesto se considera válido con `schema: 1`, `approved_merge: true`, el rol del
+host en `roles` y un `source_commit` SHA-1 de 40 hex. Si existe
+`refs/remotes/origin/main`, la etiqueta debe estar dentro de esa rama; además, el
+`source_commit` debe ser ancestro de la etiqueta. El seguidor repite estas mismas
+comprobaciones al aplicar.
+
+`manualSteps` son los bullets de `## Manual steps` de
+`docs/releases/<tag>.md`; los placeholders `None` de las releases automáticas se
+descartan. `breaking` refleja `Breaking changes: yes`.
+
+`missingSettings` son solo nombres de variables, nunca valores. Para la Instancia se
+lee `.env`; para el servidor de apps, `apps-server/.env`. La lista respeta el orden de
+`.env.example`.
+
+`services` son los servicios que la release recreará. Si una transacción ya intentó esa
+release, se usa su `changed` real. Si no, se comparan las definiciones efectivas de
+Compose entre el commit instalado y la etiqueta: se excluyen los perfiles no activos en
+`COMPOSE_PROFILES` y los servicios con `restart: "no"`, y se añaden los consumidores de
+un espacio de red (`network_mode: service:<gateway>`) cuando cambia su gateway. Es una
+previsión para la fila expandible; el seguidor confirma la lista al aplicar.
+
+### Registro
+
+`journal.entries` solo puede contener unidades del rol cuyo tipo sea `follower`,
+`security` o `backup` (los mismos nombres por defecto o `MAINTENANCE_UNITS` de #17),
+tanto `.service` como `.timer`. Se leen con una orden fija en el auxiliar privilegiado:
+
+```
+journalctl --no-pager --output=json --utc --lines <N> --unit=<permitida>...
+```
+
+No hay parámetro para elegir unidad ni argumentos libres. Cada entrada publica solo
+`at`, `unit`, `priority`, `level` (`error`, `warning`, `info`, `debug`) y `message`.
+Se eliminan códigos ANSI y caracteres de control, se limita el tamaño y se redactan
+valores tras `token`, `password`, `secret`, `api_key`, `authorization` o `Bearer`.
+Los mensajes del journal nunca se copian a `operations` ni a los logs del hub.
+
+### Lectura de Git
+
+`GitReader` ejecuta una lista cerrada de órdenes sin shell (`status`, `tag`, `show`,
+`diff`, `ls-tree`, `log`, `rev-parse`, `merge-base`), siempre con
+`--no-optional-locks`, `safe.directory=<checkout>`, `core.hooksPath=/dev/null`,
+`GIT_CONFIG_NOSYSTEM=1`, `GIT_OPTIONAL_LOCKS=0` y un tiempo máximo. Las revisiones se
+validan contra un patrón cerrado y las rutas son constantes del contrato. El checkout
+se monta en solo lectura; esta lectura no crea worktrees, índices ni etiquetas.
+
+### Pruebas
+
+`agent/test_deployments.py`: repositorio Git temporal con etiquetas y manifiestos,
+estado real del seguidor, checkout sucio con rename y archivos sin seguimiento,
+bloqueos pendientes, configuración ausente, release fallida con la misma configuración,
+servicios por definición y por espacio de red, journal simulado con unidades ajenas y
+secretos, degradación y caché. La ruta `/deployments` se prueba con un agente HTTP real
+y un doble del módulo.
+
+`tests/api-deployments.test.ts`: agente HTTP falso, host seleccionado, cola del journal,
+validación de `lines`, host desconocido y ausencia de reintentos.

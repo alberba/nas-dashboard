@@ -16,6 +16,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, urlencode
 
+import deployments
 import lifecycle
 import logs
 import maintenance
@@ -69,6 +70,7 @@ ALLOW_REBOOT = os.getenv("ALLOW_REBOOT", "true").strip().lower() not in (
     "off",
 )
 MAINTENANCE = maintenance.Maintenance.from_env()
+DEPLOYMENTS = deployments.Deployments.from_env()
 LOCK = threading.RLock()
 
 
@@ -421,6 +423,15 @@ class Handler(BaseHTTPRequestHandler):
                 # Snapshot reads run outside the global lock so metrics and actions
                 # are not blocked by the slower host/Docker queries.
                 self.respond(200, MAINTENANCE.snapshot())
+                return
+            if self.command == "GET" and route.path == "/deployments":
+                query = parse_qs(route.query)
+                lines = deployments.parse_line_count(
+                    query.get(
+                        "lines", [str(deployments.DEFAULT_JOURNAL_LINES)]
+                    )[0]
+                )
+                self.respond(200, DEPLOYMENTS.snapshot(lines))
                 return
             with LOCK:
                 if self.command == "GET" and route.path == "/metrics":
