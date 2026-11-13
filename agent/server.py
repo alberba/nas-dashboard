@@ -14,7 +14,9 @@ import threading
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs, quote
+from urllib.parse import urlparse, parse_qs, urlencode
+
+import logs
 
 
 def configured_roots(enabled, media, torrents):
@@ -83,6 +85,33 @@ def docker(method, path, body=None):
         if response.status >= 400:
             raise ValueError("Docker no pudo completar la operación (%s)" % response.status)
         return json.loads(data) if data else None
+
+
+def docker_logs(ident, since, lines):
+    """Read one bounded snapshot of a container's logs. Never follows."""
+    query = [("stdout", "1"), ("stderr", "1"), ("timestamps", "1"), ("tail", str(lines))]
+    if since:
+        query.append(("since", since))
+    with contextlib.closing(UnixHTTP("localhost", timeout=15)) as conn:
+        conn.request("GET", "/v1.45/containers/" + ident + "/logs?" + urlencode(query))
+        response = conn.getresponse()
+        data = response.read(logs.MAX_PAYLOAD + 1)
+        if response.status >= 400:
+            raise ValueError("Docker no pudo leer los registros (%s)" % response.status)
+        if len(data) > logs.MAX_PAYLOAD:
+            raise ValueError("Los registros superan el tamaño permitido")
+        return data
+
+
+def container_logs(ident, lines, since):
+    if not isinstance(ident, str) or not re.fullmatch(r"[a-f0-9]{64}", ident):
+        raise ValueError("Contenedor no válido")
+    limit = logs.parse_line_count(lines)
+    mark = logs.parse_since(since)
+    payload = docker_logs(ident, mark.raw if mark else "", limit)
+    entries, truncated, cursor = logs.format_lines(payload, mark, limit)
+    return {"id": ident, "lines": entries, "truncated": truncated,
+            "cursor": cursor or (since or None)}
 
 
 def checked_path(root, relative, allow_root=False):
@@ -373,6 +402,11 @@ class Handler(BaseHTTPRequestHandler):
                     result = files(query.get("root", ["media"])[0], query.get("path", [""])[0])
                 elif self.command == "GET" and route.path == "/trash":
                     result = trash_records()
+                elif self.command == "GET" and route.path == "/logs":
+                    query = parse_qs(route.query)
+                    result = container_logs(query.get("id", [""])[0],
+                                            query.get("lines", [str(logs.DEFAULT_LINES)])[0],
+                                            query.get("since", [""])[0])
                 elif self.command == "POST" and route.path == "/action":
                     size = int(self.headers.get("Content-Length", 0))
                     if not 0 < size <= 8192:
