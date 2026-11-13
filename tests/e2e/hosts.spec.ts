@@ -283,18 +283,18 @@ test("only an instance host can be rebooted", async ({ page }) => {
     sent += 1;
     return route.fulfill({ json: { status: "pending" } });
   });
-  await page.locator('[data-command="reboot"]').click();
-  const dialog = page.locator("dialog[open]");
-  await expect(dialog).toHaveAttribute("data-blocked", "true");
-  await dialog.locator("input").fill("REINICIAR NAS");
-  await expect(dialog.locator("button[type=submit]")).toBeDisabled();
-  await dialog.locator("button[type=button]").last().click();
+  const reboot = page.locator('[data-command="reboot"]');
+  await expect(reboot).toBeDisabled();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
 
   await option(page, "nas-home").click();
   await expect(content(page)).toHaveAttribute("data-host", "nas-home");
-  await page.locator('[data-command="reboot"]').click();
-  await expect(dialog).toHaveAttribute("data-blocked", "false");
-  await dialog.locator("input").fill("REINICIAR NAS");
-  await expect(dialog.locator("button[type=submit]")).toBeEnabled();
+  await expect(reboot).toBeEnabled();
+  await reboot.click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator("[data-confirm]")).toBeDisabled();
+  await dialog.locator("[data-typed-confirmation]").fill("REINICIAR NAS");
+  await expect(dialog.locator("[data-confirm]")).toBeEnabled();
   expect(sent).toBe(0);
 });

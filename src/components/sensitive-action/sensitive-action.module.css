@@ -1,0 +1,274 @@
+/* Sensitive-action confirmation (DESIGN.md · Diálogos de confirmación).
+   Only tokens from :root in globals.css; no new colours. */
+
+.dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  inline-size: min(31rem, calc(100% - 2rem));
+  block-size: fit-content;
+  max-block-size: min(40rem, calc(100dvh - 2rem));
+  padding: 0;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  opacity: 0;
+  transition:
+    opacity 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+    translate 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+    display 0.18s allow-discrete,
+    overlay 0.18s allow-discrete;
+}
+.dialog::backdrop {
+  background: oklch(0% 0 none / 0.68);
+  opacity: 0;
+  transition:
+    opacity 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+    display 0.18s allow-discrete,
+    overlay 0.18s allow-discrete;
+}
+.dialog[open],
+.dialog[open]::backdrop {
+  opacity: 1;
+}
+@starting-style {
+  .dialog[open],
+  .dialog[open]::backdrop {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .dialog {
+    translate: 0 0.5rem;
+  }
+  .dialog[open] {
+    translate: 0 0;
+  }
+  @starting-style {
+    .dialog[open] {
+      translate: 0 0.5rem;
+    }
+  }
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: clamp(16px, 4vw, 22px);
+}
+
+/* Header: icon in its semantic colour, Unbounded title, close button. */
+.head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 14px;
+}
+.icon {
+  display: grid;
+  place-items: center;
+  inline-size: 44px;
+  block-size: 44px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel2);
+}
+.icon svg {
+  inline-size: 20px;
+  block-size: 20px;
+}
+.icon[data-tone="loss"] {
+  color: var(--loss);
+}
+.icon[data-tone="accent"] {
+  color: var(--accent);
+}
+.heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-inline-size: 0;
+  padding-block-start: 6px;
+}
+.title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(18px, 4.6vw, 21px);
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+.description {
+  margin: 0;
+  color: var(--soft);
+  overflow-wrap: anywhere;
+}
+.close {
+  inline-size: 44px;
+  min-block-size: 44px;
+  border-radius: 12px;
+  color: var(--muted);
+}
+
+/* Consequences: ✓ in --gain, ⚠ in --peach. Rows separated by --row-line. */
+.consequences {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-block: 1px solid var(--row-line);
+}
+.consequences li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding-block: 10px;
+  color: var(--soft);
+  overflow-wrap: anywhere;
+}
+.consequences li + li {
+  border-block-start: 1px solid var(--row-line);
+}
+.consequences svg {
+  inline-size: 16px;
+  block-size: 16px;
+  margin-block-start: 0.15em;
+}
+.consequences [data-tone="gain"] {
+  color: var(--gain);
+}
+.consequences [data-tone="peach"] {
+  color: var(--peach);
+}
+
+/* Fields: 44–46px, variable names and typed names in monospace. */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.field label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--soft);
+}
+.field input {
+  min-block-size: 46px;
+}
+.field input[aria-invalid="true"] {
+  border-color: var(--loss);
+}
+.mono {
+  font-family: var(--font-mono);
+}
+.help {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  min-block-size: 44px;
+  font-size: 13.5px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.check input {
+  inline-size: 18px;
+  min-block-size: 18px;
+  block-size: 18px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+/* Verification hint and outcome notices. */
+.hint,
+.notice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.hint {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.hint[data-tone="expired"] {
+  color: var(--peach);
+}
+.notice {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+}
+.notice[data-tone="loss"] {
+  color: var(--loss);
+}
+.notice[data-tone="peach"] {
+  color: var(--peach);
+}
+.hint svg,
+.notice svg {
+  inline-size: 16px;
+  block-size: 16px;
+  margin-block-start: 0.15em;
+}
+
+/* Buttons on the right: Cancel (ghost) and the action. */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.cancel,
+.confirm {
+  flex: 0 1 auto;
+  min-block-size: 44px;
+  padding-inline: 18px;
+  border-radius: 999px;
+}
+.cancel {
+  color: var(--soft);
+}
+.confirm {
+  color: var(--bg);
+  font-weight: 850;
+  background: var(--accent);
+}
+.confirm[data-tone="loss"] {
+  background: var(--loss);
+}
+.confirm svg {
+  inline-size: 17px;
+  block-size: 17px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .close:not(:disabled):hover,
+  .cancel:not(:disabled):hover {
+    color: var(--text);
+    background-color: color-mix(in oklch, var(--text) 6%, transparent);
+  }
+  .confirm:not(:disabled):hover {
+    background: color-mix(in oklch, var(--accent), white 10%);
+  }
+  .confirm[data-tone="loss"]:not(:disabled):hover {
+    background: color-mix(in oklch, var(--loss), white 10%);
+  }
+}
