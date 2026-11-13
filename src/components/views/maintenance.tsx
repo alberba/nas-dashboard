@@ -7,10 +7,11 @@ import {
   type ContainerFilterId,
   type ContainerHealth,
 } from "@/lib/containers";
-import { bytes, percent, uptime } from "@/lib/format";
+import { bytes, percent } from "@/lib/format";
 import type { Container, Metrics } from "@/lib/types";
 import type { ActionRequest } from "../file-browser";
-import { FilterChips, Panel, StatusDot, StatusStrip, type Tone } from "../ui";
+import { FilterChips, Panel, StatusDot, type Tone } from "../ui";
+import { MaintenanceSnapshotStatus } from "./maintenance-status";
 
 const filterLabels: Record<ContainerFilterId, string> = {
   all: "Todos",
@@ -33,9 +34,7 @@ const healthTones: Record<ContainerHealth, Tone> = {
 export function MaintenanceStatus({
   metrics,
   expected,
-  connected,
   disabled,
-  lastAt,
   request,
 }: {
   metrics: Metrics;
@@ -52,48 +51,10 @@ export function MaintenanceStatus({
   const filters = containerFilters(containers, expected);
   const visible = filters.find((f) => f.id === filter)?.items ?? containers;
   const running = containers.filter((c) => c.state === "running").length;
-  const problems = filters.find((f) => f.id === "problems")?.items.length ?? 0;
-  const stopped = filters.find((f) => f.id === "stopped")?.items.length ?? 0;
 
   return (
     <div className="page-stack">
-      <StatusStrip
-        label="Estado de NAS-HOME"
-        segments={[
-          {
-            id: "connection",
-            label: "Conexión",
-            tone: connected ? "gain" : "muted",
-            value: connected ? "Conectado" : "Sin conexión",
-            detail: lastAt
-              ? new Date(lastAt).toLocaleTimeString("es", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })
-              : undefined,
-          },
-          {
-            id: "running",
-            label: "Contenedores",
-            value: `${running}/${containers.length}`,
-            detail: "activos",
-          },
-          {
-            id: "problems",
-            label: "Problemas",
-            tone: problems ? "loss" : "gain",
-            value: problems,
-            detail: problems ? "requieren atención" : "todo en orden",
-          },
-          {
-            id: "stopped",
-            label: "Detenidos",
-            tone: "muted",
-            value: stopped,
-          },
-          { id: "uptime", label: "En marcha", value: uptime(metrics.uptime) },
-        ]}
-      />
+      <MaintenanceSnapshotStatus />
       <div className="columns">
         <Panel
           id="containers-title"
