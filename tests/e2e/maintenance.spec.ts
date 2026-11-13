@@ -184,3 +184,42 @@ test("on a phone the container table becomes compact rows without page scroll", 
   expect(box && box.x + box.width).toBeLessThanOrEqual(390);
   await expect(row.locator('[data-action="restart"]')).toBeInViewport();
 });
+
+test("rebooting the NAS asks for the typed phrase and sends one action that carries its idempotency key", async ({
+  page,
+}) => {
+  await signIn(page);
+  await page.route("**/api/verification", (route) =>
+    route.fulfill({
+      json: {
+        method: "passkey",
+        recent: true,
+        reason: null,
+        verifiedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+        ttlSeconds: 300,
+      },
+    }),
+  );
+  const sent: { key: string | undefined; body: unknown }[] = [];
+  await page.route("**/api/action*", async (route) => {
+    sent.push({
+      key: route.request().headers()["idempotency-key"],
+      body: route.request().postDataJSON(),
+    });
+    await route.fulfill({ json: { status: "pending" } });
+  });
+  await page.goto("/?view=maintenance&tab=status");
+  await page.locator('[data-command="reboot"]').click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toHaveAttribute("data-verification-recent", "true");
+  const confirm = dialog.locator("[data-confirm]");
+  await expect(confirm).toBeDisabled();
+
+  await dialog.locator("[data-typed-confirmation]").fill("REINICIAR NAS");
+  await confirm.click();
+  await expect(dialog).toBeHidden();
+  expect(sent).toHaveLength(1);
+  expect(sent[0].key).toMatch(/^[0-9a-f-]{36}$/);
+  expect(sent[0].body).toMatchObject({ action: "reboot" });
+});
