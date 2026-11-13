@@ -15,6 +15,7 @@ services:
       MEDIA_STACK_ROOT: /media-stack
       APPDATA_ROOT: /media-stack-appdata
       HOST_ROLE: instance
+      MEDIA_STACK_ENV_FILE: /media-stack-env/.env
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
@@ -23,3 +24,5 @@ services:
       - ${NAS_TORRENTS_PATH:?Set NAS_TORRENTS_PATH}:/nas/torrents
       - ${MEDIA_STACK_CHECKOUT_PATH:?Set MEDIA_STACK_CHECKOUT_PATH}:/media-stack:ro
       - ${MEDIA_STACK_APPDATA_PATH:?Set MEDIA_STACK_APPDATA_PATH}:/media-stack-appdata:ro
+      # Only the dedicated .env directory is writable: rename needs the directory.
+      - ${MEDIA_STACK_ENV_PATH:?Set MEDIA_STACK_ENV_PATH}:/media-stack-env:rw

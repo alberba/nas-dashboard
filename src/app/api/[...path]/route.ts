@@ -36,6 +36,7 @@ import {
   type HostConfig,
 } from "@/lib/hosts";
 import { deploymentsForHost } from "@/lib/deployments";
+import { saveDeploymentSettings } from "@/lib/deployment-settings";
 import { hostStatuses } from "@/lib/host-status";
 import { maintenanceForHost } from "@/lib/maintenance";
 import { runHostCommand } from "@/lib/host-commands";
@@ -205,6 +206,13 @@ async function handle(
         .max(500)
         .parse(request.nextUrl.searchParams.get("lines") ?? "100");
       return json(await deploymentsForHost(host, lines));
+    }
+    if (route === "deployments/settings" && request.method === "POST") {
+      return await saveDeploymentSettings({
+        request,
+        session: current,
+        hosts: getHosts(),
+      });
     }
     if (route === "renovate" && !mutation) {
       const config = githubConfig();

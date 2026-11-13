@@ -11,6 +11,7 @@ const { values } = parseArgs({
     torrents: { type: "string", default: "/path/to/torrents" },
     "stack-path": { type: "string", default: "/volume2/media-stack" },
     "appdata-path": { type: "string", default: "/volume2/media-stack-appdata" },
+    "env-path": { type: "string", default: "/volume2/media-stack-env" },
     output: { type: "string", default: ".env" },
     "agent-output": { type: "string", default: "agent/.env" },
     "apps-url": { type: "string" },
@@ -88,6 +89,7 @@ const agent = {
   NAS_TORRENTS_PATH: values.torrents,
   MEDIA_STACK_CHECKOUT_PATH: values["stack-path"],
   MEDIA_STACK_APPDATA_PATH: values["appdata-path"],
+  MEDIA_STACK_ENV_PATH: values["env-path"],
 };
 const apps = {
   AGENT_TOKEN: appsToken,
