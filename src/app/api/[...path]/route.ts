@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
-import { and, count, desc, eq, gt, sql } from "drizzle-orm";
+import { and, count, desc, eq, gt, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { auth, bootstrapAuth, origins } from "@/lib/auth";
 import { db, pool } from "@/lib/db";
@@ -14,9 +14,44 @@ import {
 } from "@/lib/schema";
 import { getSettings, saveSettings } from "@/lib/settings";
 import { actionSchema, settingsSchema } from "@/lib/validation";
-import { nas, NasRejected } from "@/lib/nas";
+import {
+  logsResponseSchema,
+  parseLogsQuery,
+} from "@/lib/logs";
+import {
+  guardSensitiveAction,
+  handlePasswordVerification,
+  handleVerificationStatus,
+} from "@/lib/verification-api";
+import { removeContainer } from "@/lib/lifecycle";
+import { verificationStore } from "@/lib/verification";
+import { nasForHost, NasRejected } from "@/lib/nas";
+import {
+  getHosts,
+  primaryHost,
+  publicHost,
+  resolveHost,
+  HostConfigError,
+  HostNotFound,
+  type HostConfig,
+} from "@/lib/hosts";
+import { deploymentsForHost } from "@/lib/deployments";
+import { eventsForHost } from "@/lib/events";
+import { saveDeploymentSettings } from "@/lib/deployment-settings";
+import { hostStatuses } from "@/lib/host-status";
+import { maintenanceForHost } from "@/lib/maintenance";
+import { runHostCommand } from "@/lib/host-commands";
 import { notify } from "@/lib/push";
-import type { Metrics } from "@/lib/types";
+import {
+  fetchRenovatePullRequests,
+  githubConfig,
+  GithubConfigError,
+  GithubUnavailable,
+  relatePullRequests,
+} from "@/lib/github";
+import { deployProgressForHost } from "@/lib/deploy-progress";
+import { mergeRenovatePullRequest } from "@/lib/renovate-merge";
+import type { Metrics, RenovateContainer } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 const json = (value: unknown, status = 200) =>
@@ -31,6 +66,42 @@ const ranges = {
   "7d": [604800, 900],
   "30d": [2592000, 3600],
 } as const;
+
+function requestHost(value: unknown): string | null {
+  if (value && typeof value === "object" && "host" in value) {
+    const host = (value as { host?: unknown }).host;
+    if (typeof host === "string" && host) return host;
+  }
+  return null;
+}
+
+/** Containers that Docker Compose created, with the labels used to join a PR. */
+async function renovateContainers(hosts: HostConfig[]) {
+  const result: RenovateContainer[] = [];
+  for (const host of hosts) {
+    const [latest] = await db
+      .select({ data: samples.data })
+      .from(samples)
+      .where(eq(samples.hostId, host.id))
+      .orderBy(desc(samples.at))
+      .limit(1);
+    const containers = (latest?.data as Metrics | undefined)?.containers ?? [];
+    for (const container of containers) {
+      const project = container.composeProject ?? container.compose?.project;
+      const service = container.composeService ?? container.compose?.service;
+      if (!project || !service) continue;
+      result.push({
+        hostId: host.id,
+        id: container.id,
+        name: container.name,
+        image: container.image,
+        project,
+        service,
+      });
+    }
+  }
+  return result;
+}
 
 async function handle(
   request: NextRequest,
@@ -84,20 +155,141 @@ async function handle(
     const current = await auth.api.getSession({ headers: request.headers });
     if (!current) return json({ error: "Inicia sesión para continuar" }, 401);
 
+    if (route === "verification" && !mutation)
+      return handleVerificationStatus({
+        request,
+        session: current,
+        store: verificationStore,
+      });
+    if (route === "verification/password" && request.method === "POST")
+      return handlePasswordVerification({
+        request,
+        session: current,
+        store: verificationStore,
+        verifyPassword: (input) => auth.api.verifyPassword(input),
+      });
+    if (route === "containers/remove" && request.method === "POST") {
+      const removed = await removeContainer({
+        request,
+        session: current,
+        hosts: getHosts(),
+      });
+      return removed;
+    }
+    if (route === "hosts" && !mutation) {
+      const hosts = getHosts();
+      return json({
+        default: primaryHost(hosts).id,
+        hosts: await hostStatuses(hosts),
+      });
+    }
+    if (route === "maintenance" && !mutation) {
+      const host = resolveHost(
+        getHosts(),
+        request.nextUrl.searchParams.get("host"),
+      );
+      return json(await maintenanceForHost(host));
+    }
+    if (route === "host-command" && request.method === "POST") {
+      return await runHostCommand({
+        request,
+        session: current,
+        hosts: getHosts(),
+      });
+    }
+    if (route === "deployments" && !mutation) {
+      const host = resolveHost(
+        getHosts(),
+        request.nextUrl.searchParams.get("host"),
+      );
+      const lines = z.coerce
+        .number()
+        .int()
+        .min(1)
+        .max(500)
+        .parse(request.nextUrl.searchParams.get("lines") ?? "100");
+      return json(await deploymentsForHost(host, lines));
+    }
+    if (route === "events" && !mutation) {
+      const host = resolveHost(
+        getHosts(),
+        request.nextUrl.searchParams.get("host"),
+      );
+      return json(await eventsForHost(host));
+    }
+    if (route === "deployments/settings" && request.method === "POST") {
+      return await saveDeploymentSettings({
+        request,
+        session: current,
+        hosts: getHosts(),
+      });
+    }
+    if (route === "renovate" && !mutation) {
+      const config = githubConfig();
+      if (!config)
+        return json({ enabled: false, repository: null, prs: [] });
+      const hosts = getHosts();
+      const selected = request.nextUrl.searchParams.get("host");
+      const scope = selected ? [resolveHost(hosts, selected)] : hosts;
+      const containers = await renovateContainers(scope);
+      const prs = await fetchRenovatePullRequests(config);
+      return json({
+        enabled: true,
+        repository: config.repository,
+        prs: relatePullRequests(prs, containers),
+      });
+    }
+    if (route === "renovate/merge" && request.method === "POST") {
+      return await mergeRenovatePullRequest({
+        request,
+        session: current,
+        hosts: getHosts(),
+      });
+    }
+    if (route === "renovate/progress" && !mutation) {
+      const host = resolveHost(
+        getHosts(),
+        request.nextUrl.searchParams.get("host"),
+      );
+      const config = githubConfig();
+      if (!config)
+        return json({
+          enabled: false,
+          repository: null,
+          host: publicHost(host),
+          snapshotAvailable: false,
+          updates: [],
+        });
+      return json(await deployProgressForHost({ config, host }));
+    }
     if (route === "overview" && !mutation) {
+      const hosts = getHosts();
+      const host = resolveHost(
+        hosts,
+        request.nextUrl.searchParams.get("host"),
+      );
       const [latest] = await db
         .select()
         .from(samples)
+        .where(eq(samples.hostId, host.id))
         .orderBy(desc(samples.at))
         .limit(1);
       const recentAlerts = await db
         .select()
         .from(alerts)
+        .where(eq(alerts.hostId, host.id))
         .orderBy(desc(alerts.at))
         .limit(100);
+      const [openAlerts] = await db
+        .select({ value: count() })
+        .from(alerts)
+        .where(
+          and(eq(alerts.hostId, host.id), isNull(alerts.resolvedAt)),
+        );
       const recentOperations = await db
         .select()
         .from(operations)
+        .where(eq(operations.hostId, host.id))
         .orderBy(desc(operations.at))
         .limit(30);
       const [active] = await db
@@ -118,17 +310,22 @@ async function handle(
           avg((data->>'cpu')::float) AS cpu,
           avg((data->'memory'->>'used')::float / nullif((data->'memory'->>'total')::float, 0) * 100) AS memory,
           avg((data->'network'->>'rx')::float) AS rx, avg((data->'network'->>'tx')::float) AS tx
-          FROM samples WHERE at > now() - make_interval(secs => ${seconds}) GROUP BY 1)
+          FROM samples WHERE "hostId" = ${host.id} AND at > now() - make_interval(secs => ${seconds}) GROUP BY 1)
         SELECT series.at, grouped.cpu, grouped.memory, grouped.rx, grouped.tx FROM series LEFT JOIN grouped USING(at) ORDER BY series.at`);
+      const statuses = await hostStatuses(hosts);
       return json({
+        host: publicHost(host),
+        hosts: statuses,
         latest: latest?.data ?? null,
         lastAt: latest?.at ?? null,
-        connected: Boolean(latest && Date.now() - latest.at.getTime() < 75000),
+        connected:
+          statuses.find((status) => status.id === host.id)?.connected ?? false,
         interval: active ? 5 : 30,
         alerts: recentAlerts,
+        openAlerts: openAlerts.value,
         operations: recentOperations,
         history: history.rows,
-        settings: await getSettings(),
+        settings: await getSettings(host.id),
       });
     }
     if (route === "presence" && mutation) {
@@ -162,7 +359,12 @@ async function handle(
       return json({ ok: true });
     }
     if (route === "action" && mutation) {
-      const body = actionSchema.parse(await request.json());
+      const raw = await request.json();
+      const body = actionSchema.parse(raw);
+      const host = resolveHost(
+        getHosts(),
+        request.nextUrl.searchParams.get("host") ?? requestHost(raw),
+      );
       const operationId = z
         .uuid()
         .parse(request.headers.get("idempotency-key"));
@@ -170,23 +372,42 @@ async function handle(
         .select()
         .from(operations)
         .where(eq(operations.id, operationId));
-      if (existing) return json(existing);
+      if (existing) {
+        if (existing.hostId !== host.id)
+          return json(
+            { error: "La clave de idempotencia ya se usó en otro host" },
+            409,
+          );
+        return json(existing);
+      }
+      if (body.action === "reboot") {
+        const denied = await guardSensitiveAction({
+          request,
+          session: current,
+          store: verificationStore,
+        });
+        if (denied) return denied;
+      }
       const latest = await db
         .select()
         .from(samples)
+        .where(eq(samples.hostId, host.id))
         .orderBy(desc(samples.at))
         .limit(1);
       if (!latest[0] || Date.now() - latest[0].at.getTime() > 75000)
         return json(
-          { error: "El NAS no está conectado. No se ha enviado la acción." },
+          {
+            error: `${host.name} no está conectado. No se ha enviado la acción.`,
+          },
           503,
         );
       const target =
-        "id" in body ? body.id : "path" in body ? body.path : "NAS";
+        "id" in body ? body.id : "path" in body ? body.path : host.name;
       const inserted = await db
         .insert(operations)
         .values({
           id: operationId,
+          hostId: host.id,
           userId: current.user.id,
           action: body.action,
           target,
@@ -202,7 +423,11 @@ async function handle(
         .returning();
       if (!inserted.length) return json({ status: "pending" });
       try {
-        const result = await nas<{ state?: string }>("/action", body);
+        const result = await nasForHost<{ state?: string }>(
+          host,
+          "/action",
+          body,
+        );
         const status = body.action === "reboot" ? "pending" : "success";
         await db
           .update(operations)
@@ -210,7 +435,7 @@ async function handle(
             status,
             detail:
               status === "pending"
-                ? "Reinicio solicitado; esperando que el NAS vuelva a responder."
+                ? "Reinicio solicitado; esperando que el host vuelva a responder."
                 : "Operación completada y comprobada.",
           })
           .where(eq(operations.id, operationId));
@@ -218,7 +443,7 @@ async function handle(
           ["start", "stop", "restart"].includes(body.action) &&
           "id" in body
         ) {
-          const settings = await getSettings();
+          const settings = await getSettings(host.id);
           const metrics = latest[0].data as Metrics;
           const name = metrics.containers.find((c) => c.id === body.id)?.name;
           if (name) {
@@ -226,13 +451,14 @@ async function handle(
               (n) => n !== name,
             );
             if (body.action !== "stop") settings.expectedContainers.push(name);
-            await saveSettings(settings);
+            await saveSettings(host.id, settings);
             if (body.action === "stop")
               await db
                 .update(alerts)
                 .set({ resolvedAt: new Date() })
                 .where(
                   and(
+                    eq(alerts.hostId, host.id),
                     eq(alerts.key, "container:" + name),
                     sql`${alerts.resolvedAt} IS NULL`,
                   ),
@@ -267,6 +493,10 @@ async function handle(
       }
     }
     if (route === "files" && !mutation) {
+      const host = resolveHost(
+        getHosts(),
+        request.nextUrl.searchParams.get("host"),
+      );
       const root = z
         .enum(["media", "torrents"])
         .parse(request.nextUrl.searchParams.get("root") ?? "media");
@@ -275,14 +505,61 @@ async function handle(
         .max(2048)
         .parse(request.nextUrl.searchParams.get("path") ?? "");
       return json(
-        await nas(`/files?root=${root}&path=${encodeURIComponent(path)}`),
+        await nasForHost(
+          host,
+          `/files?root=${root}&path=${encodeURIComponent(path)}`,
+        ),
       );
     }
-    if (route === "trash" && !mutation) return json(await nas("/trash"));
+    if (route === "trash" && !mutation) {
+      const host = resolveHost(
+        getHosts(),
+        request.nextUrl.searchParams.get("host"),
+      );
+      return json(await nasForHost(host, "/trash"));
+    }
+    if (route === "logs" && !mutation) {
+      const host = resolveHost(
+        getHosts(),
+        request.nextUrl.searchParams.get("host"),
+      );
+      const input = parseLogsQuery(request.nextUrl.searchParams);
+      const query = new URLSearchParams({
+        id: input.id,
+        lines: String(input.lines),
+      });
+      if (input.since) query.set("since", input.since);
+      const result = logsResponseSchema.safeParse(
+        await nasForHost(host, `/logs?${query.toString()}`),
+      );
+      if (!result.success) throw new Error("Respuesta de logs no válida");
+      return json({ host: publicHost(host), ...result.data });
+    }
+    if (route === "settings" && !mutation) {
+      const host = resolveHost(
+        getHosts(),
+        request.nextUrl.searchParams.get("host"),
+      );
+      return json({
+        host: publicHost(host),
+        settings: await getSettings(host.id),
+      });
+    }
     if (route === "settings" && mutation) {
-      const input = settingsSchema.parse(await request.json());
-      await saveSettings({ ...(await getSettings()), ...input });
-      return json({ ok: true });
+      const raw = await request.json();
+      const input = settingsSchema.parse(raw);
+      const host = resolveHost(
+        getHosts(),
+        request.nextUrl.searchParams.get("host") ?? requestHost(raw),
+      );
+      await saveSettings(host.id, {
+        ...(await getSettings(host.id)),
+        ...input,
+      });
+      return json({
+        host: publicHost(host),
+        settings: await getSettings(host.id),
+      });
     }
     if (route === "push" && !mutation)
       return json({ publicKey: process.env.VAPID_PUBLIC_KEY ?? null });
@@ -337,6 +614,25 @@ async function handle(
     }
     return json({ error: "No encontrado" }, 404);
   } catch (error) {
+    if (error instanceof HostNotFound)
+      return json({ error: "Host no configurado" }, 404);
+    if (error instanceof HostConfigError)
+      return json(
+        { error: "La configuración de hosts del servidor no es válida" },
+        503,
+      );
+    if (error instanceof GithubConfigError)
+      return json(
+        { error: "La configuración de GitHub del servidor no es válida" },
+        503,
+      );
+    if (error instanceof GithubUnavailable) {
+      console.error("GitHub error", error.status);
+      return json(
+        { error: "GitHub no está disponible. Inténtalo de nuevo más tarde." },
+        503,
+      );
+    }
     if (error instanceof z.ZodError)
       return json(
         { error: error.issues[0]?.message ?? "Datos no válidos" },

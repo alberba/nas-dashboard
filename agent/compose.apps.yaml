@@ -1,0 +1,33 @@
+# Agente del Servidor de apps (Oracle). Se une a la red privada del hub, sin
+# publicar puertos. Ejecuta desde agent/: docker compose --env-file .env.apps -f compose.apps.yaml up -d --build
+name: hub-agent-apps
+services:
+  agent:
+    build: .
+    image: hub-agent:1
+    container_name: hub-agent-apps
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    env_file: .env.apps
+    environment:
+      MEDIA_STACK_ROOT: /media-stack
+      APPDATA_ROOT: /media-stack-appdata
+      HOST_ROLE: apps-server
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${MEDIA_STACK_CHECKOUT_PATH:?Set MEDIA_STACK_CHECKOUT_PATH}:/media-stack:ro
+      - ${MEDIA_STACK_APPDATA_PATH:?Set MEDIA_STACK_APPDATA_PATH}:/media-stack-appdata:ro
+    networks:
+      hub:
+        aliases:
+          - hub-agent-apps
+networks:
+  hub:
+    external: true
+    name: nas-dashboard_default

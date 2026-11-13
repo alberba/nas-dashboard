@@ -1,0 +1,250 @@
+/* Resumen y Recursos (DESIGN.md · Páginas). Shared shell pieces
+   (.page-stack, .columns, .status-strip, .data-panel, .data-table) stay global. */
+
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: 1.125rem;
+}
+
+.viewLink {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 2.75rem;
+  color: var(--soft);
+  font-size: 0.8rem;
+  font-weight: 750;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklch, currentColor 35%, transparent);
+  text-underline-offset: 0.25em;
+}
+.viewLink:active {
+  color: var(--text);
+}
+
+/* A strip segment that leads to another page: the whole segment is the target. */
+.summary :global(.strip-detail) .viewLink {
+  min-block-size: 0;
+  color: inherit;
+  font-size: inherit;
+  font-weight: 700;
+}
+.summary :global(.strip-detail) .viewLink::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+.summary [data-segment="health"],
+.summary [data-segment="services"] {
+  position: relative;
+}
+
+/* Charts */
+.chartBody,
+.chartCell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding-block: 1rem 1.125rem;
+  padding-inline: 1.125rem;
+}
+.historyGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr));
+  gap: 1px;
+  background: var(--line);
+}
+.chartCell {
+  background: var(--panel);
+}
+.seriesKeys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.5rem;
+}
+.seriesKey {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+}
+.seriesName {
+  font-weight: 750;
+}
+.seriesValue {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Lists inside side panels */
+.feed,
+.volumes,
+.shortcuts {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.feedRow {
+  display: grid;
+  grid-template-columns: 3.25rem 7px minmax(0, 1fr);
+  align-items: center;
+  gap: 0.75rem;
+  min-block-size: 2.875rem;
+  padding-block: 0.6rem;
+  padding-inline: 1.125rem;
+  border-block-end: 1px solid var(--row-line);
+  font-size: 0.82rem;
+}
+.feedTime {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+.feedText {
+  overflow-wrap: anywhere;
+}
+.feedText strong {
+  font-weight: 700;
+}
+.volume {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding-block: 0.85rem;
+  padding-inline: 1.125rem;
+  border-block-end: 1px solid var(--row-line);
+}
+.volumeLine {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.85rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+.volumeMeta {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+.shortcut {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-block-size: 3.375rem;
+  padding-inline: 1.125rem;
+  border-block-end: 1px solid var(--row-line);
+}
+.shortcut:active {
+  background: var(--row-hover);
+}
+.shortcut:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.feed > li:last-child,
+.volumes > li:last-child,
+.shortcuts > li:last-child > .shortcut {
+  border-block-end: 0;
+}
+.letter {
+  display: grid;
+  place-items: center;
+  flex: none;
+  inline-size: 2rem;
+  block-size: 2rem;
+  border-radius: 0.6rem;
+  background: var(--panel2);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+.shortcutName {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-inline-size: 0;
+}
+.shortcutName strong {
+  font-size: 0.85rem;
+  font-weight: 750;
+}
+.shortcutName span {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+.shortcut > svg {
+  inline-size: 1rem;
+  color: var(--muted);
+}
+
+/* Capacity */
+.meter {
+  display: block;
+  block-size: 0.375rem;
+  border-radius: 999px;
+  background: var(--panel2);
+  overflow: clip;
+}
+.meter > i {
+  display: block;
+  block-size: 100%;
+  border-radius: inherit;
+  background: currentColor;
+}
+.usage {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+.usage .meter {
+  inline-size: 6rem;
+}
+
+/* Phone: the shared table rule keeps the name cell; the value worth
+   seeing at a glance stays at the end of the compact row. */
+@container (inline-size < 36rem) {
+  /* Segmented controls take the whole width in equal columns. */
+  .range {
+    inline-size: 100%;
+  }
+  .range > :global(.segmented) {
+    display: grid;
+    grid-auto-columns: minmax(0, 1fr);
+    grid-auto-flow: column;
+    inline-size: 100%;
+  }
+  .table td.compactValue {
+    display: block;
+    text-align: end;
+    font-weight: 750;
+  }
+  .table .usage .meter {
+    inline-size: 3.5rem;
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .viewLink:hover {
+    color: var(--text);
+  }
+  .shortcut:hover {
+    background: var(--row-hover);
+  }
+  .shortcut:hover > svg {
+    color: var(--accent);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .meter > i {
+    transition: inline-size 400ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .shortcut,
+  .viewLink {
+    transition:
+      background-color 140ms ease-out,
+      color 140ms ease-out;
+  }
+}

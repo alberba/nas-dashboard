@@ -1,0 +1,116 @@
+/* Hosts in the sidebar and the host selector of Mantenimiento (DESIGN.md). */
+
+.dot {
+  display: inline-block;
+  flex: none;
+  inline-size: 7px;
+  block-size: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.dot[data-tone="gain"],
+.state[data-tone="gain"] {
+  color: var(--gain);
+}
+.dot[data-tone="muted"],
+.state[data-tone="muted"] {
+  color: var(--muted);
+}
+
+/* Selector: the segmented control itself is the global `.segmented`. */
+.switcher > button {
+  font-variant-numeric: tabular-nums;
+}
+.switcher > button:active {
+  scale: 0.97;
+}
+.offline {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .switcher > button {
+    transition: scale 160ms ease-out;
+  }
+}
+
+/* Sidebar block */
+.hosts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.hosts ul {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.heading {
+  padding-inline: 0.85rem;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.host {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-block-size: 44px;
+  padding-inline: 0.85rem;
+  padding-block: 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  color: var(--soft);
+  text-decoration: none;
+}
+.host > svg {
+  flex: none;
+  inline-size: 1rem;
+  block-size: 1rem;
+  color: var(--muted);
+}
+.host[aria-current="true"] {
+  background: var(--panel2);
+  border-color: var(--line);
+  color: var(--text);
+}
+.host:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.host:active {
+  background: var(--panel2);
+}
+@media (hover: hover) and (pointer: fine) {
+  .host:hover {
+    background: var(--row-hover);
+  }
+  .host[aria-current="true"]:hover {
+    background: var(--panel2);
+  }
+}
+.name {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.name strong {
+  overflow: hidden;
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+}

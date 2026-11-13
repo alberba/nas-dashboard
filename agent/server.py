@@ -3,6 +3,7 @@ import concurrent.futures
 import contextlib
 import hmac
 import http.client
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -13,14 +14,73 @@ import threading
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs, quote
+from urllib.parse import urlparse, parse_qs, urlencode
 
-ROOTS = {"media": Path(os.getenv("MEDIA_ROOT", "/nas/media")), "torrents": Path(os.getenv("TORRENTS_ROOT", "/nas/torrents"))}
+import deployments
+import env_settings
+import host_commands
+import lifecycle
+import logs
+import maintenance
+import maintenance_actions
+
+
+def configured_roots(enabled, media, torrents):
+    if str(enabled).strip().lower() in ("0", "false", "no", "off"):
+        return {}
+    return {"media": Path(media), "torrents": Path(torrents)}
+
+
+def allowed_networks(value):
+    networks = []
+    for entry in value.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(entry, strict=False))
+        except ValueError:
+            continue
+    return networks
+
+
+def allowed(address):
+    try:
+        client = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    return any(client in network for network in ALLOWED_NETWORKS)
+
+
+ROOTS = configured_roots(
+    os.getenv("FILES_ENABLED", "true"),
+    os.getenv("MEDIA_ROOT", "/nas/media"),
+    os.getenv("TORRENTS_ROOT", "/nas/torrents"),
+)
 PROC = Path(os.getenv("HOST_PROC", "/host/proc"))
 SYS = Path(os.getenv("HOST_SYS", "/host/sys"))
 TOKEN = os.getenv("AGENT_TOKEN", "")
-ALLOWED = set(os.getenv("ALLOWED_IPS", "127.0.0.1").split(","))
-PROTECTED = {"hub-agent", "npm", "tailscale"}
+ALLOWED_NETWORKS = allowed_networks(os.getenv("ALLOWED_IPS", "127.0.0.1"))
+PROTECTED = {"hub-agent", "hub-agent-apps", "npm", "tailscale"} | {
+    name.strip()
+    for name in os.getenv("PROTECTED_CONTAINERS", "").split(",")
+    if name.strip()
+}
+ALLOW_REBOOT = os.getenv("ALLOW_REBOOT", "true").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
+MAINTENANCE = maintenance.Maintenance.from_env()
+COMMANDS = host_commands.HostCommands(
+    role=MAINTENANCE.role,
+    unit_names=MAINTENANCE.unit_names,
+    executor=maintenance.HostExecutor(),
+)
+ACTIONS = maintenance_actions.MaintenanceActions.from_env()
+DEPLOYMENTS = deployments.Deployments.from_env()
+ENV_SETTINGS = env_settings.EnvSettings(DEPLOYMENTS)
 LOCK = threading.RLock()
 
 
@@ -40,6 +100,33 @@ def docker(method, path, body=None):
         if response.status >= 400:
             raise ValueError("Docker no pudo completar la operación (%s)" % response.status)
         return json.loads(data) if data else None
+
+
+def docker_logs(ident, since, lines):
+    """Read one bounded snapshot of a container's logs. Never follows."""
+    query = [("stdout", "1"), ("stderr", "1"), ("timestamps", "1"), ("tail", str(lines))]
+    if since:
+        query.append(("since", since))
+    with contextlib.closing(UnixHTTP("localhost", timeout=15)) as conn:
+        conn.request("GET", "/v1.45/containers/" + ident + "/logs?" + urlencode(query))
+        response = conn.getresponse()
+        data = response.read(logs.MAX_PAYLOAD + 1)
+        if response.status >= 400:
+            raise ValueError("Docker no pudo leer los registros (%s)" % response.status)
+        if len(data) > logs.MAX_PAYLOAD:
+            raise ValueError("Los registros superan el tamaño permitido")
+        return data
+
+
+def container_logs(ident, lines, since):
+    if not isinstance(ident, str) or not re.fullmatch(r"[a-f0-9]{64}", ident):
+        raise ValueError("Contenedor no válido")
+    limit = logs.parse_line_count(lines)
+    mark = logs.parse_since(since)
+    payload = docker_logs(ident, mark.raw if mark else "", limit)
+    entries, truncated, cursor = logs.format_lines(payload, mark, limit)
+    return {"id": ident, "lines": entries, "truncated": truncated,
+            "cursor": cursor or (since or None)}
 
 
 def checked_path(root, relative, allow_root=False):
@@ -179,13 +266,33 @@ container_cache = (0, [])
 container_previous = {}
 
 
-def container_stat(item):
-    ident = item["Id"]
-    name = item["Names"][0].lstrip("/")
-    result = {"id": ident, "name": name, "image": item["Image"], "state": item["State"],
-              "status": item["Status"], "protected": name in PROTECTED, "cpu": None, "memory": None}
-    if item["State"] != "running":
+unhealthy_observed_since = {}
+
+
+def container_stat(item, active=None, protected=None):
+    result = lifecycle.classify_one(
+        item,
+        active if active is not None else set(),
+        protected if protected is not None else PROTECTED,
+    )
+    ident = result["id"]
+    if result["state"] == "running" and "(unhealthy)" in item.get("Status", ""):
+        unhealthy_observed_since.setdefault(ident, time.time())
+    else:
+        unhealthy_observed_since.pop(ident, None)
+    result["healthObservedSince"] = unhealthy_observed_since.get(ident)
+    project = result["composeProject"]
+    service = result["composeService"]
+    result.update({
+        "image": item["Image"],
+        "status": item["Status"],
+        "cpu": None,
+        "memory": None,
+        "compose": {"project": project, "service": service} if project and service else None,
+    })
+    if result["state"] != "running":
         return result
+    ident = result["id"]
     try:
         st = docker("GET", "/containers/" + ident + "/stats?stream=false&one-shot=true")
         cpu = st["cpu_stats"]
@@ -251,8 +358,9 @@ def metrics():
             pass
     if now - container_cache[0] > 10:
         items = docker("GET", "/containers/json?all=true")
+        active = lifecycle.active_projects(items, PROTECTED)
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
-            container_cache = (now, list(pool.map(container_stat, items)))
+            container_cache = (now, list(pool.map(lambda item: container_stat(item, active), items)))
     return {"timestamp": now, "hostname": os.getenv("NAS_NAME", "NAS"), "cpu": cpu_percent,
             "memory": {"total": mem["MemTotal"], "used": mem["MemTotal"] - mem["MemAvailable"]},
             "network": {"rx": net_rx, "tx": net_tx}, "io": {"read": disk_read, "write": disk_write},
@@ -261,6 +369,7 @@ def metrics():
 
 
 def execute(body):
+    global container_cache
     action = body.get("action")
     if action in ("start", "stop", "restart"):
         ident = body.get("id", "")
@@ -270,13 +379,26 @@ def execute(body):
         if item["Name"].lstrip("/") in PROTECTED:
             raise ValueError("Servicio de infraestructura protegido")
         docker("POST", "/containers/" + ident + "/" + action + "?t=15")
-        global container_cache
         container_cache = (0, [])
         state = docker("GET", "/containers/" + ident + "/json")["State"]["Status"]
         if (action == "stop" and state == "running") or (action != "stop" and state != "running"):
             raise ValueError("La operación no alcanzó el estado esperado")
         return {"state": state}
+    if action == "remove-container":
+        ident = body.get("id", "")
+        if not lifecycle.valid_id(ident):
+            raise ValueError("Contenedor no válido")
+        item = docker("GET", "/containers/" + ident + "/json")
+        name = lifecycle.require_removable(item, body.get("confirmation"), PROTECTED)
+        items = docker("GET", "/containers/json?all=true")
+        result = lifecycle.removal_result(item, items, PROTECTED, name)
+        # Never pass v=1: named and anonymous volumes stay on the host.
+        docker("DELETE", "/containers/" + ident + "?v=0")
+        container_cache = (0, [])
+        return result
     if action == "reboot":
+        if not ALLOW_REBOOT:
+            raise ValueError("Reinicio no permitido en este host")
         helper = docker("POST", "/containers/create", {
             "Image": "hub-agent:1", "Entrypoint": ["nsenter"],
             "Cmd": ["-t", "1", "-m", "-u", "-i", "-n", "-p", "--", "/sbin/reboot"],
@@ -311,11 +433,32 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
     def handle_request(self):
-        if self.client_address[0] not in ALLOWED or not TOKEN or not hmac.compare_digest(self.headers.get("Authorization", ""), "Bearer " + TOKEN):
+        if not allowed(self.client_address[0]) or not TOKEN or not hmac.compare_digest(self.headers.get("Authorization", ""), "Bearer " + TOKEN):
             self.respond(401, {"error": "No autorizado"})
             return
         route = urlparse(self.path)
         try:
+            if self.command == "GET" and route.path == "/maintenance":
+                # Snapshot reads run outside the global lock so metrics and actions
+                # are not blocked by the slower host/Docker queries.
+                self.respond(200, MAINTENANCE.snapshot())
+                return
+            if self.command == "GET" and route.path == "/deployments":
+                query = parse_qs(route.query)
+                lines = deployments.parse_line_count(
+                    query.get(
+                        "lines", [str(deployments.DEFAULT_JOURNAL_LINES)]
+                    )[0]
+                )
+                self.respond(200, DEPLOYMENTS.snapshot(lines))
+                return
+            if self.command == "POST" and route.path == "/deployments/settings":
+                size = int(self.headers.get("Content-Length", 0))
+                if not 0 < size <= env_settings.MAX_REQUEST_BYTES:
+                    raise ValueError("Solicitud no válida")
+                body = json.loads(self.rfile.read(size))
+                self.respond(200, ENV_SETTINGS.save(body))
+                return
             with LOCK:
                 if self.command == "GET" and route.path == "/metrics":
                     result = metrics()
@@ -324,6 +467,30 @@ class Handler(BaseHTTPRequestHandler):
                     result = files(query.get("root", ["media"])[0], query.get("path", [""])[0])
                 elif self.command == "GET" and route.path == "/trash":
                     result = trash_records()
+                elif self.command == "GET" and route.path == "/logs":
+                    query = parse_qs(route.query)
+                    result = container_logs(query.get("id", [""])[0],
+                                            query.get("lines", [str(logs.DEFAULT_LINES)])[0],
+                                            query.get("since", [""])[0])
+                elif self.command == "POST" and route.path == "/command":
+                    size = int(self.headers.get("Content-Length", 0))
+                    if not 0 < size <= 2048:
+                        raise ValueError("Solicitud no válida")
+                    body = json.loads(self.rfile.read(size))
+                    if not isinstance(body, dict) or set(body) != {"command"}:
+                        raise ValueError("Solicitud no válida")
+                    try:
+                        command = body["command"]
+                        if not isinstance(command, str):
+                            raise ValueError("Comando de host no permitido")
+                        if command in host_commands.COMMAND_NAMES:
+                            result = COMMANDS.execute(command)
+                        elif command in maintenance_actions.COMMAND_NAMES:
+                            result = ACTIONS.execute(command)
+                        else:
+                            raise ValueError("Comando de host no permitido")
+                    finally:
+                        MAINTENANCE.invalidate()
                 elif self.command == "POST" and route.path == "/action":
                     size = int(self.headers.get("Content-Length", 0))
                     if not 0 < size <= 8192:

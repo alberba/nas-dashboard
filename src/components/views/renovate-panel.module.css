@@ -1,0 +1,161 @@
+/* Renovate pull requests (Mantenimiento · Despliegues) and the update pill on
+   container rows. Only tokens from :root in globals.css. */
+
+.table {
+  min-inline-size: 44rem;
+}
+
+.pr {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-inline-size: 11rem;
+  max-inline-size: 22rem;
+}
+.pr a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-block-size: 1.5rem;
+  color: var(--text);
+  text-decoration: none;
+}
+.pr a:hover strong {
+  text-decoration: underline;
+}
+.pr svg {
+  inline-size: 0.8125rem;
+  block-size: 0.8125rem;
+  color: var(--muted);
+}
+.title {
+  overflow: hidden;
+  color: var(--soft);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.services {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.services li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 0.5rem;
+}
+.hostline {
+  display: block;
+  margin-block-start: 0.125rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding-block: 0.125rem;
+  padding-inline: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.6875rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.tag[data-tone="loss"] {
+  color: var(--loss);
+}
+.tag[data-tone="peach"] {
+  color: var(--peach);
+}
+.tag[data-tone="lilac"] {
+  color: var(--lilac);
+}
+.tag[data-tone="accent"] {
+  color: var(--accent);
+}
+
+.state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4375rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.state i {
+  inline-size: 7px;
+  block-size: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.state[data-tone="gain"] {
+  color: var(--gain);
+}
+.state[data-tone="loss"] {
+  color: var(--loss);
+}
+.state[data-tone="accent"] {
+  color: var(--accent);
+}
+
+.note {
+  color: var(--peach);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+.empty {
+  margin: 0;
+  padding: 1.125rem;
+  color: var(--muted);
+}
+
+/* "nueva versión · #PR" on a container row: a link to the pull request. */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 1.25rem;
+  margin-inline-start: 0.5rem;
+  padding-inline: 0.5rem;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  color: var(--accent);
+  font-size: 0.6875rem;
+  font-weight: 800;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.pill:hover {
+  background: var(--row-hover);
+}
+
+@container (width < 36rem) {
+  .table {
+    min-inline-size: 0;
+  }
+  .table:global(.data-table) td {
+    display: block;
+    min-inline-size: 0;
+    overflow-wrap: anywhere;
+  }
+  .table:global(.data-table) td:first-child {
+    grid-column: 1 / -1;
+  }
+  .table:global(.data-table) td:last-child {
+    grid-column: 1 / -1;
+  }
+  .pr {
+    max-inline-size: 100%;
+  }
+}

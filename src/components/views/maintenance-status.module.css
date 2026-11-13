@@ -1,0 +1,111 @@
+/* Mantenimiento · Estado: snapshot strip notes, automatismos and failed units.
+   The strip itself uses the shared .status-strip / .strip-segment shell pieces
+   (2 columns on a phone), so only what is new lives here. */
+
+.status {
+  display: flex;
+  flex-direction: column;
+  gap: 1.125rem;
+}
+
+.note {
+  margin: 0;
+  color: var(--peach);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+  gap: 1px;
+  background: var(--line);
+}
+.cell {
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  min-inline-size: 0;
+}
+
+.subhead {
+  margin: 0;
+  padding-block: 0.6rem;
+  padding-inline: 1.125rem;
+  border-block-end: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 0.75rem;
+  min-block-size: 3.5rem;
+  padding-block: 0.4rem;
+  padding-inline: 1.125rem;
+  border-block-end: 1px solid var(--row-line);
+  font-size: 0.85rem;
+}
+.list > .row:last-child {
+  border-block-end: 0;
+}
+.name {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-inline-size: 0;
+}
+.name strong {
+  font-weight: 750;
+  overflow-wrap: anywhere;
+}
+.state {
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+.meta {
+  grid-column: 1 / -1;
+  padding-inline-start: calc(7px + 0.6rem);
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.group + .group {
+  border-block-start: 1px solid var(--line);
+}
+.groupHead {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0;
+  padding-block: 0.75rem 0.25rem;
+  padding-inline: 1.125rem;
+  font-size: 0.8rem;
+  font-weight: 750;
+  color: var(--soft);
+}
+.groupCount {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.empty {
+  margin: 0;
+  padding-block: 0.75rem 1rem;
+  padding-inline: 1.125rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}

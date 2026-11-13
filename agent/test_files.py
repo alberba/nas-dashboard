@@ -69,6 +69,36 @@ class FileBoundaries(unittest.TestCase):
             with self.assertRaises(ValueError):
                 server.execute(body)
 
+    def test_reboot_can_be_disabled_on_a_shared_apps_server(self):
+        previous = server.ALLOW_REBOOT
+        server.ALLOW_REBOOT = False
+        try:
+            with self.assertRaises(ValueError):
+                server.execute({"action": "reboot"})
+        finally:
+            server.ALLOW_REBOOT = previous
+
+    def test_allowed_networks_accept_the_hub_bridge_without_opening_other_hosts(self):
+        previous = server.ALLOWED_NETWORKS
+        server.ALLOWED_NETWORKS = server.allowed_networks("127.0.0.1,172.16.0.0/12")
+        try:
+            self.assertTrue(server.allowed("127.0.0.1"))
+            self.assertTrue(server.allowed("172.18.0.7"))
+            self.assertFalse(server.allowed("192.168.1.20"))
+            self.assertFalse(server.allowed("not-an-ip"))
+        finally:
+            server.ALLOWED_NETWORKS = previous
+
+    def test_apps_agent_has_no_file_roots_until_enabled(self):
+        previous = server.ROOTS
+        server.ROOTS = server.configured_roots("false", "/nas/media", "/nas/torrents")
+        try:
+            self.assertEqual(server.ROOTS, {})
+            with self.assertRaises(ValueError):
+                server.files("media", "")
+        finally:
+            server.ROOTS = previous
+
 
 if __name__ == "__main__":
     unittest.main()

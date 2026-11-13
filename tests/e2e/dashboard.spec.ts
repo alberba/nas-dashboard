@@ -1,3 +1,4 @@
+import { submitLogin } from "./login";
 import { expect, test } from "@playwright/test";
 const email = "ci@hub.invalid",
   password = "Ci-only-password-not-used-in-production!";
@@ -37,7 +38,7 @@ test("login, navigation, origin checks and mobile layout", async ({ page }) => {
   await page.goto("/");
   await page.getByLabel("Correo", { exact: true }).fill(email);
   await page.getByLabel("Contraseña", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Entrar", exact: true }).click();
+  await submitLogin(page);
   await expect(page.locator('[data-view="summary"]')).toBeVisible();
   const forbidden = await page.request.post("/api/presence", {
     headers: { Origin: "https://evil.invalid" },
@@ -58,6 +59,30 @@ test("login, navigation, origin checks and mobile layout", async ({ page }) => {
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
+  const missing = await page.request.get("/api/verification");
+  expect(await missing.json()).toMatchObject({
+    method: "passkey",
+    recent: false,
+    reason: "missing",
+  });
+  const denied = await page.request.post("/api/action", {
+    headers: {
+      Origin: "http://localhost:3000",
+      "Idempotency-Key": crypto.randomUUID(),
+    },
+    data: {
+      action: "reboot",
+      confirmation: "REINICIAR NAS",
+      verified: true,
+      verifiedAt: new Date().toISOString(),
+    },
+  });
+  expect(denied.status()).toBe(403);
+  expect(await denied.json()).toMatchObject({
+    code: "recent_verification_required",
+    reason: "missing",
+    method: "passkey",
+  });
   await page
     .getByRole("button", { name: "Cerrar sesión", exact: true })
     .last()
@@ -80,7 +105,7 @@ test("registers a passkey and signs in with it", async ({ page }) => {
   await page.goto("/");
   await page.getByLabel("Correo", { exact: true }).fill(email);
   await page.getByLabel("Contraseña", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Entrar", exact: true }).click();
+  await submitLogin(page);
   await expect(page.locator('[data-view="summary"]')).toBeVisible();
   await page.getByRole("button", { name: "Ajustes", exact: true }).click();
   await page.getByRole("button", { name: "Añadir", exact: true }).click();
@@ -94,4 +119,10 @@ test("registers a passkey and signs in with it", async ({ page }) => {
     .getByRole("button", { name: "Entrar con passkey", exact: true })
     .click();
   await expect(page.locator('[data-view="summary"]')).toBeVisible();
+  const verified = await page.request.get("/api/verification");
+  expect(await verified.json()).toMatchObject({
+    method: "passkey",
+    recent: true,
+    reason: null,
+  });
 });

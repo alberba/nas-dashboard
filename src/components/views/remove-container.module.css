@@ -1,0 +1,40 @@
+/* Container removal (DESIGN.md · Eliminar). Tokens from :root only. */
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.125rem 0.5rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  font-weight: 750;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.tag[data-tone="lilac"] {
+  color: var(--lilac);
+  background: color-mix(in oklch, var(--lilac) 12%, transparent);
+}
+.tag[data-tone="muted"] {
+  color: var(--muted);
+}
+
+.remove {
+  color: var(--loss);
+}
+@media (hover: hover) and (pointer: fine) {
+  .remove:not(:disabled):hover {
+    background: color-mix(in oklch, var(--loss) 12%, transparent);
+  }
+}
+
+.pending {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 2.75rem;
+  padding-inline: 0.5rem;
+  color: var(--peach);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-align: end;
+}

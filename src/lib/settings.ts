@@ -1,6 +1,6 @@
 import { db } from "./db";
 import { configuration } from "./schema";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Settings } from "./types";
 export const defaults: Settings = {
   cpu: 90,
@@ -11,16 +11,21 @@ export const defaults: Settings = {
   expectedContainers: [],
   initialized: false,
 };
-export async function getSettings() {
+export async function getSettings(hostId: string) {
   const [row] = await db
     .select()
     .from(configuration)
-    .where(eq(configuration.id, "settings"));
-  return row?.value ?? defaults;
+    .where(
+      and(eq(configuration.hostId, hostId), eq(configuration.id, "settings")),
+    );
+  return row?.value ?? structuredClone(defaults);
 }
-export async function saveSettings(value: Settings) {
+export async function saveSettings(hostId: string, value: Settings) {
   await db
     .insert(configuration)
-    .values({ id: "settings", value })
-    .onConflictDoUpdate({ target: configuration.id, set: { value } });
+    .values({ hostId, id: "settings", value })
+    .onConflictDoUpdate({
+      target: [configuration.hostId, configuration.id],
+      set: { value },
+    });
 }
