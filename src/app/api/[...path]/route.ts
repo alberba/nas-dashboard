@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
-import { and, count, desc, eq, gt, sql } from "drizzle-orm";
+import { and, count, desc, eq, gt, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { auth, bootstrapAuth, origins } from "@/lib/auth";
 import { db, pool } from "@/lib/db";
@@ -36,6 +36,7 @@ import {
   type HostConfig,
 } from "@/lib/hosts";
 import { deploymentsForHost } from "@/lib/deployments";
+import { eventsForHost } from "@/lib/events";
 import { hostStatuses } from "@/lib/host-status";
 import { maintenanceForHost } from "@/lib/maintenance";
 import { runHostCommand } from "@/lib/host-commands";
@@ -206,6 +207,13 @@ async function handle(
         .parse(request.nextUrl.searchParams.get("lines") ?? "100");
       return json(await deploymentsForHost(host, lines));
     }
+    if (route === "events" && !mutation) {
+      const host = resolveHost(
+        getHosts(),
+        request.nextUrl.searchParams.get("host"),
+      );
+      return json(await eventsForHost(host));
+    }
     if (route === "renovate" && !mutation) {
       const config = githubConfig();
       if (!config)
@@ -239,6 +247,12 @@ async function handle(
         .where(eq(alerts.hostId, host.id))
         .orderBy(desc(alerts.at))
         .limit(100);
+      const [openAlerts] = await db
+        .select({ value: count() })
+        .from(alerts)
+        .where(
+          and(eq(alerts.hostId, host.id), isNull(alerts.resolvedAt)),
+        );
       const recentOperations = await db
         .select()
         .from(operations)
@@ -275,6 +289,7 @@ async function handle(
           statuses.find((status) => status.id === host.id)?.connected ?? false,
         interval: active ? 5 : 30,
         alerts: recentAlerts,
+        openAlerts: openAlerts.value,
         operations: recentOperations,
         history: history.rows,
         settings: await getSettings(host.id),
