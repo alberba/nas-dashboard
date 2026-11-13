@@ -201,7 +201,7 @@ export function ReleaseDetails({ children }: { children?: React.ReactNode }) {
           </Panel>
           <Panel title="Releases" id="releases">
             <div className="table-scroll">
-              <table className="data-table" data-releases="">
+              <table className={`data-table ${styles.releaseTable}`} data-releases="">
                 <thead>
                   <tr>
                     <th>Release</th>

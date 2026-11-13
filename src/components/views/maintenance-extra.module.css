@@ -115,3 +115,14 @@
 .dialog::backdrop {
   background: color-mix(in oklch, var(--bg) 80%, transparent);
 }
+
+@container (width < 36rem) {
+  .releaseTable:global(.data-table) td {
+    display: block;
+    min-inline-size: 0;
+    overflow-wrap: anywhere;
+  }
+  .releaseTable:global(.data-table) td[colspan] {
+    grid-column: 1 / -1;
+  }
+}

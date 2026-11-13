@@ -159,3 +159,5 @@ Dependabot revisa paquetes, Docker y GitHub Actions semanalmente. CI ejecuta tip
 ## Copias y recuperación
 
 Haz copias del PostgreSQL, del `.env` de ambos servidores y de las carpetas del NAS. La papelera no sustituye a una copia de seguridad. Para recuperar el acceso si pierdes contraseña y passkeys, accede por SSH al servidor y usa el comando administrativo documentado en `scripts/reset-password.ts`; las sesiones existentes se revocan.
+
+Las pruebas Python del agente necesitan `python -m pip install -r agent/requirements.txt` en un entorno virtual. Docker y CI usan ese mismo archivo.

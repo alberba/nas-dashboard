@@ -86,13 +86,13 @@ test.beforeAll(async ({ request }) => {
 test.beforeEach(async ({ page }) => {
   await page.context().addCookies(cookies);
   await page.route("**/api/overview?*", (r) => r.fulfill({ json: overview }));
-  await page.route("**/api/renovate?*", (r) =>
+  await page.route(/\/api\/renovate(?:\?.*)?$/, (r) =>
     r.fulfill({ json: { enabled: false, prs: [] } }),
   );
-  await page.route("**/api/maintenance?*", (r) =>
+  await page.route(/\/api\/maintenance(?:\?.*)?$/, (r) =>
     r.fulfill({ status: 503, json: { error: "offline" } }),
   );
-  await page.route("**/api/events?*", (r) =>
+  await page.route(/\/api\/events(?:\?.*)?$/, (r) =>
     r.fulfill({
       json: {
         host,
@@ -140,7 +140,18 @@ test("retained releases expose missing secrets only as write-only inputs and req
   const release = page.locator('[data-release="v9.0.0"] button');
   await release.click();
   await expect(release).toHaveAttribute("aria-expanded", "true");
+  await page.setViewportSize({ width: 390, height: 844 });
   const form = page.locator('[data-release-settings="v9.0.0"]');
+  await expect(form).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: "test-results/deployments-mobile.png",
+    fullPage: true,
+  });
   await expect(form.locator('input[name="NEW_TOKEN"]')).toHaveAttribute(
     "type",
     "password",
@@ -157,7 +168,7 @@ test("search toggles with Ctrl K, shortcuts ignore inputs and removal always ope
   page,
 }) => {
   let calls = 0;
-  await page.route("**/api/host-command?*", (r) => {
+  await page.route(/\/api\/host-command(?:\?.*)?$/, (r) => {
     calls++;
     return r.fulfill({ json: { status: "success" } });
   });
@@ -179,20 +190,46 @@ test("search toggles with Ctrl K, shortcuts ignore inputs and removal always ope
   expect(calls).toBe(0);
 });
 
-test("merge sends the reviewed SHA once, with explicit major acknowledgement and a stable idempotency key",async({page})=>{
- const sha="b".repeat(40);
- const pr={number:17,title:"Update image",url:"https://github.com/alberba/media-stack/pull/17",branch:"renovate/example",author:"renovate[bot]",headSha:sha,draft:false,automerge:false,requiresWorker:true,ci:"success",type:"major",updates:[],containers:[]};
- await page.route("**/api/renovate?*",r=>r.fulfill({json:{enabled:true,repository:"alberba/media-stack",prs:[pr]}}));
- const calls:{body:unknown;key:string|undefined}[]=[];
- await page.route("**/api/renovate/merge?*",r=>{calls.push({body:r.request().postDataJSON(),key:r.request().headers()["idempotency-key"]});return r.fulfill({status:502,json:{status:"pending"}});});
- await page.goto("/?view=maintenance&tab=deployments");
- await page.locator('[data-merge-pr="17"]').click();
- const dialog=page.getByRole("dialog");
- await expect(dialog.locator('[data-confirm]')).toBeDisabled();
- await dialog.locator('input[type="checkbox"]').check();
- await dialog.locator('[data-confirm]').click();
- await expect(dialog).toHaveAttribute("data-phase","pending");
- expect(calls).toHaveLength(1);
- expect(calls[0].body).toEqual({number:17,headSha:sha,deployNow:false});
- expect(calls[0].key).toMatch(/^[0-9a-f-]{36}$/);
+test("merge sends the reviewed SHA once, with explicit major acknowledgement and a stable idempotency key", async ({
+  page,
+}) => {
+  const sha = "b".repeat(40);
+  const pr = {
+    number: 17,
+    title: "Update image",
+    url: "https://github.com/alberba/media-stack/pull/17",
+    branch: "renovate/example",
+    author: "renovate[bot]",
+    headSha: sha,
+    draft: false,
+    automerge: false,
+    requiresWorker: true,
+    ci: "success",
+    type: "major",
+    updates: [],
+    containers: [],
+  };
+  await page.route(/\/api\/renovate(?:\?.*)?$/, (r) =>
+    r.fulfill({
+      json: { enabled: true, repository: "alberba/media-stack", prs: [pr] },
+    }),
+  );
+  const calls: { body: unknown; key: string | undefined }[] = [];
+  await page.route(/\/api\/renovate\/merge(?:\?.*)?$/, (r) => {
+    calls.push({
+      body: r.request().postDataJSON(),
+      key: r.request().headers()["idempotency-key"],
+    });
+    return r.fulfill({ status: 502, json: { status: "pending" } });
+  });
+  await page.goto("/?view=maintenance&tab=deployments");
+  await page.locator('[data-merge-pr="17"]').click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.locator("[data-confirm]")).toBeDisabled();
+  await dialog.locator('input[type="checkbox"]').check();
+  await dialog.locator("[data-confirm]").click();
+  await expect(dialog).toHaveAttribute("data-phase", "pending");
+  expect(calls).toHaveLength(1);
+  expect(calls[0].body).toEqual({ number: 17, headSha: sha, deployNow: false });
+  expect(calls[0].key).toMatch(/^[0-9a-f-]{36}$/);
 });
