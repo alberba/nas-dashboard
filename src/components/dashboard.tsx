@@ -97,6 +97,7 @@ export function Dashboard({ name }: { name: string }) {
   const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
+  const nav = useRef<HTMLElement>(null);
   const tabId = useRef("");
   /** What the page wants right now; answers for anything else are dropped. */
   const wanted = useRef({ scope, range, route });
@@ -109,6 +110,22 @@ export function Dashboard({ name }: { name: string }) {
     window.history.replaceState(null, "", routeHref(next));
     if (scroll) window.scrollTo({ top: 0 });
   }, []);
+
+  /** On a phone the navigation scrolls sideways: keep the current item whole. */
+  useEffect(() => {
+    const center = () => {
+      const bar = nav.current;
+      const active = bar?.querySelector<HTMLElement>('[aria-current="page"]');
+      if (bar && active)
+        bar.scrollTo({
+          left: active.offsetLeft - (bar.clientWidth - active.clientWidth) / 2,
+          behavior: "auto",
+        });
+    };
+    center();
+    window.addEventListener("resize", center);
+    return () => window.removeEventListener("resize", center);
+  }, [view]);
 
   const refresh = useCallback(
     async (signal?: AbortSignal) => {
@@ -378,7 +395,7 @@ export function Dashboard({ name }: { name: string }) {
                 hub<span>.</span>
               </Link>
             </div>
-            <nav aria-label="Navegación principal">
+            <nav aria-label="Navegación principal" ref={nav}>
               {navigation.map((item) => (
                 <button
                   key={item.id}

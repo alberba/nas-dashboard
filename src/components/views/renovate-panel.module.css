@@ -2,15 +2,22 @@
    container rows. Only tokens from :root in globals.css. */
 
 .table {
-  min-inline-size: 44rem;
+  min-inline-size: 34rem;
+}
+.table:global(.data-table) td {
+  block-size: auto;
+  padding-block: 0.55rem;
+  vertical-align: top;
 }
 
 .pr {
+  min-inline-size: 7rem;
+}
+.prHead {
   display: flex;
-  flex-direction: column;
-  gap: 0.125rem;
-  min-inline-size: 11rem;
-  max-inline-size: 22rem;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
 }
 .pr a {
   display: inline-flex;
@@ -28,13 +35,6 @@
   block-size: 0.8125rem;
   color: var(--muted);
 }
-.title {
-  overflow: hidden;
-  color: var(--soft);
-  font-size: 0.75rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 .services {
   display: flex;
@@ -50,13 +50,13 @@
   align-items: baseline;
   column-gap: 0.5rem;
 }
-.hostline {
-  display: block;
-  margin-block-start: 0.125rem;
-  color: var(--muted);
-  font-size: 0.75rem;
-}
 
+.rowState {
+  display: flex;
+  flex-direction: column;
+  align-items: start;
+  gap: 0.35rem;
+}
 .tags {
   display: flex;
   flex-wrap: wrap;
@@ -149,13 +149,12 @@
     min-inline-size: 0;
     overflow-wrap: anywhere;
   }
-  .table:global(.data-table) td:first-child {
-    grid-column: 1 / -1;
-  }
+  .table:global(.data-table) td:first-child,
+  .table:global(.data-table) td:nth-child(2),
   .table:global(.data-table) td:last-child {
     grid-column: 1 / -1;
   }
-  .pr {
-    max-inline-size: 100%;
+  .rowState {
+    align-items: stretch;
   }
 }

@@ -1,11 +1,22 @@
-/* Mantenimiento · Estado: snapshot strip notes, automatismos and failed units.
-   The strip itself uses the shared .status-strip / .strip-segment shell pieces
-   (2 columns on a phone), so only what is new lives here. */
+/* Mantenimiento · Estado: snapshot strip notes and the compact failed-unit
+   alert. The strip itself uses the shared .status-strip / .strip-segment shell
+   pieces (2 columns on a phone), so only what is new lives here. */
 
 .status {
   display: flex;
   flex-direction: column;
   gap: 1.125rem;
+}
+
+.labelLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+.linkChevron {
+  inline-size: 0.7rem;
+  block-size: 0.7rem;
+  color: var(--muted);
 }
 
 .note {
@@ -14,98 +25,80 @@
   font-size: 0.75rem;
   font-weight: 700;
 }
-
-.body {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
-  gap: 1px;
-  background: var(--line);
-}
-.cell {
-  display: flex;
-  flex-direction: column;
-  background: var(--panel);
-  min-inline-size: 0;
+.retry {
+  min-block-size: 1.75rem;
+  padding: 0;
+  margin-inline-start: 0.6rem;
+  color: var(--peach);
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
 }
 
-.subhead {
+/* A failure of the host's own systemd units is an alert, not a dashboard
+   section: it only exists while something is broken. */
+.failed {
+  display: block;
   margin: 0;
-  padding-block: 0.6rem;
-  padding-inline: 1.125rem;
-  border-block-end: 1px solid var(--line);
+}
+.failed summary {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  cursor: pointer;
+  font-weight: 750;
+  list-style: none;
+}
+.failed summary::-webkit-details-marker {
+  display: none;
+}
+.failed summary svg {
+  flex: none;
+  inline-size: 1rem;
+  block-size: 1rem;
+}
+.failedChevron {
+  margin-inline-start: auto;
+  transition: rotate 160ms ease-out;
+}
+.failed[open] .failedChevron {
+  rotate: 180deg;
+}
+.failed[open] summary {
+  margin-block-end: 0.75rem;
+}
+.failedGroup + .failedGroup {
+  margin-block-start: 0.75rem;
+}
+.failedHead {
+  margin: 0 0 0.25rem;
   color: var(--muted);
   font-size: 0.66rem;
   font-weight: 800;
   letter-spacing: 0.07em;
   text-transform: uppercase;
 }
-
-.list {
+.failedList {
   display: flex;
   flex-direction: column;
   margin: 0;
   padding: 0;
   list-style: none;
 }
-.row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  column-gap: 0.75rem;
-  min-block-size: 3.5rem;
-  padding-block: 0.4rem;
-  padding-inline: 1.125rem;
-  border-block-end: 1px solid var(--row-line);
-  font-size: 0.85rem;
-}
-.list > .row:last-child {
-  border-block-end: 0;
-}
-.name {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.6rem;
-  min-inline-size: 0;
-}
-.name strong {
-  font-weight: 750;
-  overflow-wrap: anywhere;
-}
-.state {
-  font-size: 0.75rem;
-  font-weight: 800;
-}
-.meta {
-  grid-column: 1 / -1;
-  padding-inline-start: calc(7px + 0.6rem);
-  color: var(--muted);
-  font-size: 0.75rem;
-  font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
-}
-
-.group + .group {
-  border-block-start: 1px solid var(--line);
-}
-.groupHead {
+.failedList li {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 0.5rem;
-  margin: 0;
-  padding-block: 0.75rem 0.25rem;
-  padding-inline: 1.125rem;
+  gap: 0.45rem;
+  padding-block: 0.2rem;
   font-size: 0.8rem;
-  font-weight: 750;
-  color: var(--soft);
 }
-.groupCount {
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
+.failedList li strong {
+  font-weight: 700;
+  overflow-wrap: anywhere;
 }
-.empty {
-  margin: 0;
-  padding-block: 0.75rem 1rem;
-  padding-inline: 1.125rem;
+.failedList li span {
   color: var(--muted);
-  font-size: 0.8rem;
+  font-size: 0.75rem;
 }

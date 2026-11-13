@@ -1,14 +1,16 @@
 "use client";
 import { bytes } from "@/lib/format";
-import type { MaintenanceUnit } from "@/lib/maintenance";
+import type { MaintenanceFailedUnit } from "@/lib/maintenance";
 import {
-  automationRows,
   failedUnitGroups,
   statusCells,
   type StatusCells,
   type StatusTone,
 } from "@/lib/maintenance-status";
-import { Panel, StatusDot } from "../ui";
+import { ChevronDown, ChevronRight, TriangleAlert } from "lucide-react";
+import { StatusDot } from "../ui";
+import { useHostScope } from "../host-context";
+import { routeHref } from "./routes";
 import styles from "./maintenance-status.module.css";
 import { useMaintenanceSnapshot } from "./use-maintenance-snapshot";
 
@@ -164,19 +166,10 @@ function placeholders(phase: "loading" | "ready" | "error"): Segment[] {
   }));
 }
 
-const unitStates: Record<
-  MaintenanceUnit["state"],
-  { label: string; tone: StatusTone }
-> = {
-  active: { label: "Activo", tone: "gain" },
-  paused: { label: "Pausado", tone: "peach" },
-  inactive: { label: "Detenido", tone: "muted" },
-  failed: { label: "Fallo", tone: "loss" },
-};
-
 /**
- * Estado strip of Mantenimiento plus the host's automations and failed
- * systemd units, from one cached snapshot of the selected host.
+ * Estado strip of Mantenimiento plus a single alert when a systemd unit is
+ * failing. Routine automation listings stay out of the page: the strip already
+ * answers whether the host is healthy.
  */
 export function MaintenanceSnapshotStatus({
   vpn,
@@ -184,6 +177,12 @@ export function MaintenanceSnapshotStatus({
   vpn?: "healthy" | "unhealthy" | "starting" | "none";
 }) {
   const { phase, snapshot, stale } = useMaintenanceSnapshot();
+  const scope = useHostScope();
+  const deploymentsHref = routeHref({
+    view: "maintenance",
+    tab: "deployments",
+    host: scope.host?.id,
+  });
   const nowMs = (snapshot?.timestamp ?? 0) * 1000;
   const cells = snapshot ? statusCells(snapshot) : null;
   const readAt = snapshot
@@ -192,6 +191,10 @@ export function MaintenanceSnapshotStatus({
         minute: "2-digit",
       })
     : "";
+  const failed = snapshot ? failedUnitGroups(snapshot) : null;
+  const failedCount = failed
+    ? failed.stack.length + failed.other.length
+    : 0;
 
   return (
     <div
@@ -207,23 +210,38 @@ export function MaintenanceSnapshotStatus({
         aria-busy={phase === "loading"}
       >
         {(cells ? segments(cells, nowMs) : placeholders(phase)).map(
-          (segment) => (
-            <div
-              className="strip-segment"
-              key={segment.id}
-              data-segment={segment.id}
-              data-state={segment.state}
-            >
-              <span className="strip-label">{segment.label}</span>
-              <span className="strip-value">
-                {cells && <StatusDot tone={segment.tone} />}
-                {segment.value}
-              </span>
-              {segment.detail && (
-                <span className="strip-detail">{segment.detail}</span>
-              )}
-            </div>
-          ),
+          (segment) => {
+            const linked =
+              segment.id === "release" || segment.id === "security";
+            const Tag = (linked ? "a" : "div") as "a" | "div";
+            return (
+              <Tag
+                className="strip-segment"
+                key={segment.id}
+                data-segment={segment.id}
+                data-state={segment.state}
+                data-segment-link={linked || undefined}
+                {...(linked ? { href: deploymentsHref } : {})}
+              >
+                <span className={`strip-label ${styles.labelLink}`}>
+                  {segment.label}
+                  {linked && (
+                    <ChevronRight
+                      className={styles.linkChevron}
+                      aria-hidden="true"
+                    />
+                  )}
+                </span>
+                <span className="strip-value">
+                  {cells && <StatusDot tone={segment.tone} />}
+                  {segment.value}
+                </span>
+                {segment.detail && (
+                  <span className="strip-detail">{segment.detail}</span>
+                )}
+              </Tag>
+            );
+          },
         )}
         {vpn && (
           <div className="strip-segment" data-segment="vpn">
@@ -257,95 +275,44 @@ export function MaintenanceSnapshotStatus({
           {phase === "error"
             ? "No se pudo leer el estado de mantenimiento de este host."
             : `No se pudo actualizar: se muestran los datos de las ${readAt}.`}
+          <button
+            type="button"
+            className={`text-button ${styles.retry}`}
+            onClick={() =>
+              window.dispatchEvent(new Event("maintenance-refresh"))
+            }
+          >
+            Reintentar
+          </button>
         </p>
       )}
-      {snapshot && <Automations snapshot={snapshot} nowMs={nowMs} />}
+      {failed && failedCount > 0 && (
+        <details className={`notice warning ${styles.failed}`} data-failed-units="">
+          <summary>
+            <TriangleAlert aria-hidden="true" />
+            {failedCount}{" "}
+            {failedCount === 1 ? "unidad fallida" : "unidades fallidas"}
+            <ChevronDown className={styles.failedChevron} aria-hidden="true" />
+          </summary>
+          {failed.stack.length > 0 && (
+            <FailedGroup
+              id="stack"
+              title="Del stack"
+              tone="loss"
+              units={failed.stack}
+            />
+          )}
+          {failed.other.length > 0 && (
+            <FailedGroup
+              id="other"
+              title="Ajenas al stack"
+              tone="muted"
+              units={failed.other}
+            />
+          )}
+        </details>
+      )}
     </div>
-  );
-}
-
-function Automations({
-  snapshot,
-  nowMs,
-}: {
-  snapshot: NonNullable<ReturnType<typeof useMaintenanceSnapshot>["snapshot"]>;
-  nowMs: number;
-}) {
-  const automations = automationRows(snapshot);
-  const failed = failedUnitGroups(snapshot);
-  return (
-    <Panel
-      id="automations-title"
-      title="Automatismos"
-      count={automations.available ? automations.items.length : undefined}
-    >
-      <div className={styles.body}>
-        <div className={styles.cell} data-automations="">
-          {!automations.available ? (
-            <p className={styles.empty} data-empty="absent">
-              {NO_DATA}
-            </p>
-          ) : !automations.items.length ? (
-            <p className={styles.empty} data-empty="none">
-              Este host no tiene automatismos.
-            </p>
-          ) : (
-            <ul className={styles.list}>
-              {automations.items.map((unit) => {
-                const { label, tone } = unitStates[unit.state];
-                const last = relative(unit.lastRun, nowMs);
-                const next = relative(unit.nextRun, nowMs);
-                return (
-                  <li
-                    key={unit.name}
-                    className={styles.row}
-                    data-unit={unit.name}
-                    data-kind={unit.kind}
-                    data-state={unit.state}
-                  >
-                    <span className={styles.name}>
-                      <StatusDot tone={tone} />
-                      <strong>{unit.name}</strong>
-                    </span>
-                    <span className={`${styles.state} ${tone}`}>{label}</span>
-                    <span className={styles.meta}>
-                      {[last && `última ${last}`, next && `próxima ${next}`]
-                        .filter(Boolean)
-                        .join(" · ") || "sin ejecuciones"}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
-        <div className={styles.cell} data-failed-units="">
-          <h3 className={styles.subhead}>Unidades fallidas</h3>
-          {!failed.available ? (
-            <p className={styles.empty} data-empty="absent">
-              {NO_DATA}
-            </p>
-          ) : (
-            <>
-              <FailedGroup
-                id="stack"
-                title="Del stack"
-                tone="loss"
-                units={failed.stack}
-                none="Ninguna."
-              />
-              <FailedGroup
-                id="other"
-                title="Ajenas al stack"
-                tone="muted"
-                units={failed.other}
-                none="Ninguna."
-              />
-            </>
-          )}
-        </div>
-      </div>
-    </Panel>
   );
 }
 
@@ -354,46 +321,29 @@ function FailedGroup({
   title,
   tone,
   units,
-  none,
 }: {
   id: "stack" | "other";
   title: string;
   tone: StatusTone;
-  units: { name: string; description: string | null }[];
-  none: string;
+  units: MaintenanceFailedUnit[];
 }) {
   return (
     <section
-      className={styles.group}
+      className={styles.failedGroup}
       data-failed-group={id}
       data-count={units.length}
       aria-label={title}
     >
-      <h4 className={styles.groupHead}>
-        {title}
-        <span className={styles.groupCount}>{units.length}</span>
-      </h4>
-      {units.length ? (
-        <ul className={styles.list}>
-          {units.map((unit) => (
-            <li
-              key={unit.name}
-              className={styles.row}
-              data-failed-unit={unit.name}
-            >
-              <span className={styles.name}>
-                <StatusDot tone={tone} />
-                <strong>{unit.name}</strong>
-              </span>
-              {unit.description && (
-                <span className={styles.meta}>{unit.description}</span>
-              )}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className={styles.empty}>{none}</p>
-      )}
+      <h3 className={styles.failedHead}>{title}</h3>
+      <ul className={styles.failedList}>
+        {units.map((unit) => (
+          <li key={unit.name} data-failed-unit={unit.name}>
+            <StatusDot tone={tone} />
+            <strong>{unit.name}</strong>
+            {unit.description && <span>{unit.description}</span>}
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

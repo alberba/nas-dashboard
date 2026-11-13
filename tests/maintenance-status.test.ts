@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MaintenanceSnapshot, MaintenanceUnit } from "@/lib/maintenance";
-import {
-  automationRows,
-  failedUnitGroups,
-  statusCells,
-} from "@/lib/maintenance-status";
+import { failedUnitGroups, statusCells } from "@/lib/maintenance-status";
 
 function unit(overrides: Partial<MaintenanceUnit> = {}): MaintenanceUnit {
   return {
@@ -204,31 +200,7 @@ describe("status cells", () => {
   });
 });
 
-describe("automations and failed units", () => {
-  it("lists every unit with its state and marks an absent list", () => {
-    const rows = automationRows(
-      snapshot({
-        units: [
-          unit(),
-          unit({
-            name: "media-stack-evidence",
-            kind: "automation",
-            state: "paused",
-            paused: true,
-          }),
-        ],
-      }),
-    );
-    expect(rows.available).toBe(true);
-    expect(rows.items.map((i) => [i.name, i.state])).toEqual([
-      ["media-stack-merged-updates", "active"],
-      ["media-stack-evidence", "paused"],
-    ]);
-    expect(
-      automationRows(snapshot({ degraded: ["units"], units: [] })).available,
-    ).toBe(false);
-  });
-
+describe("failed units", () => {
   it("keeps stack and foreign failed units apart", () => {
     const groups = failedUnitGroups(
       snapshot({
