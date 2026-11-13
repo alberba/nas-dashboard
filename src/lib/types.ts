@@ -135,6 +135,70 @@ export type RenovateOverview = {
   repository: string | null;
   prs: RenovatePullRequest[];
 };
+/** Fixed order of the six progress segments shown by the UI. */
+export const deployStepIds = [
+  "pr",
+  "merge",
+  "ci",
+  "release",
+  "deploy",
+  "health",
+] as const;
+export type DeployStepId = (typeof deployStepIds)[number];
+export type DeployStepState = "pending" | "current" | "done" | "failed";
+export type DeployStep = {
+  id: DeployStepId;
+  state: DeployStepState;
+  detail: string;
+  at: string | null;
+};
+export type DeployRelease = {
+  tag: string;
+  url: string;
+  publishedAt: string | null;
+  sourceCommit: string;
+  roles: HostRole[];
+};
+export type DeployContainer = RenovateContainer & {
+  state: string;
+  status: string;
+};
+export type DeployProgressPullRequest = RenovatePullRequest & {
+  merged: boolean;
+  mergedAt: string | null;
+  mergeCommitSha: string | null;
+};
+export type DeployProgressUpdate = {
+  number: number;
+  title: string;
+  url: string;
+  branch: string;
+  author: string;
+  state: "open" | "merged";
+  headSha: string;
+  mergeCommitSha: string | null;
+  mergedAt: string | null;
+  draft: boolean;
+  automerge: boolean;
+  requiresWorker: boolean;
+  type: RenovateUpdateType;
+  prCi: RenovateCi;
+  mainCi: RenovateCi | null;
+  release: DeployRelease | null;
+  steps: DeployStep[];
+  currentStep: DeployStepId;
+  failed: boolean;
+  restored: boolean;
+  updates: RenovateUpdate[];
+  containers: DeployContainer[];
+};
+export type DeployProgressOverview = {
+  enabled: boolean;
+  repository: string | null;
+  host: HostInfo | null;
+  snapshotAvailable: boolean;
+  updates: DeployProgressUpdate[];
+};
 export type Overview = {
   host: HostInfo;
   hosts: HostStatus[];

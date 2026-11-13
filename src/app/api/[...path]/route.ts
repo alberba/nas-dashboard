@@ -46,6 +46,8 @@ import {
   GithubUnavailable,
   relatePullRequests,
 } from "@/lib/github";
+import { deployProgressForHost } from "@/lib/deploy-progress";
+import { mergeRenovatePullRequest } from "@/lib/renovate-merge";
 import type { Metrics, RenovateContainer } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -206,6 +208,29 @@ async function handle(
         repository: config.repository,
         prs: relatePullRequests(prs, containers),
       });
+    }
+    if (route === "renovate/merge" && request.method === "POST") {
+      return await mergeRenovatePullRequest({
+        request,
+        session: current,
+        hosts: getHosts(),
+      });
+    }
+    if (route === "renovate/progress" && !mutation) {
+      const host = resolveHost(
+        getHosts(),
+        request.nextUrl.searchParams.get("host"),
+      );
+      const config = githubConfig();
+      if (!config)
+        return json({
+          enabled: false,
+          repository: null,
+          host: publicHost(host),
+          snapshotAvailable: false,
+          updates: [],
+        });
+      return json(await deployProgressForHost({ config, host }));
     }
     if (route === "overview" && !mutation) {
       const hosts = getHosts();

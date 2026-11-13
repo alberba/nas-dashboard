@@ -53,10 +53,142 @@ function response(
   });
 }
 
+export type HostCommandOutcome = {
+  status: "success" | "failed" | "pending" | "unavailable" | "conflict";
+  operation: typeof operations.$inferSelect | null;
+  result?: HostCommandResult;
+  error?: string;
+  replayed?: boolean;
+};
+
+function storedStatus(value: string): "success" | "failed" | "pending" {
+  return value === "success" || value === "failed" ? value : "pending";
+}
+
 /**
- * Runs one named host command. The body only carries the command name; the
- * agent owns the unit names and the fixed argv. Idempotency is per host and a
- * lost response stays pending, never retried automatically.
+ * Runs exactly one host command and records it in `operations`. It is shared
+ * by the direct host-command route and by "deploy now" after a merge. A lost
+ * response stays pending and is never sent again: callers only catch the
+ * outcome and report it.
+ */
+export async function executeHostCommand({
+  host,
+  userId,
+  command,
+  operationId,
+}: {
+  host: HostConfig;
+  userId: string;
+  command: HostCommand;
+  operationId: string;
+}): Promise<HostCommandOutcome> {
+  const [existing] = await db
+    .select()
+    .from(operations)
+    .where(eq(operations.id, operationId))
+    .limit(1);
+  if (existing) {
+    if (existing.hostId !== host.id)
+      return {
+        status: "conflict",
+        operation: null,
+        error: "La clave de idempotencia ya se usó en otro host",
+      };
+    return {
+      status: storedStatus(existing.status),
+      operation: existing,
+      replayed: true,
+    };
+  }
+
+  const [latest] = await db
+    .select()
+    .from(samples)
+    .where(eq(samples.hostId, host.id))
+    .orderBy(desc(samples.at))
+    .limit(1);
+  if (!latest || Date.now() - latest.at.getTime() > CONNECTION_STALE_MS)
+    return {
+      status: "unavailable",
+      operation: null,
+      error: `${host.name} no está conectado. No se ha enviado el comando.`,
+    };
+
+  const inserted = await db
+    .insert(operations)
+    .values({
+      id: operationId,
+      hostId: host.id,
+      userId,
+      action: command,
+      target: host.name,
+      status: "pending",
+    })
+    .onConflictDoNothing()
+    .returning();
+  if (!inserted.length) {
+    const [current] = await db
+      .select()
+      .from(operations)
+      .where(eq(operations.id, operationId))
+      .limit(1);
+    if (current && current.hostId !== host.id)
+      return {
+        status: "conflict",
+        operation: null,
+        error: "La clave de idempotencia ya se usó en otro host",
+      };
+    return current
+      ? {
+          status: storedStatus(current.status),
+          operation: current,
+          replayed: true,
+        }
+      : {
+          status: "unavailable",
+          operation: null,
+          error: "No se pudo registrar la operación",
+        };
+  }
+
+  try {
+    const raw = await nasForHost<unknown>(host, "/command", { command });
+    const parsed = resultSchema.safeParse(raw);
+    if (!parsed.success) throw new Error("Respuesta del agente no válida");
+    const [operation] = await db
+      .update(operations)
+      .set({ status: "success", detail: completedDetail[command] })
+      .where(eq(operations.id, operationId))
+      .returning();
+    return { status: "success", operation, result: parsed.data };
+  } catch (error) {
+    if (error instanceof NasRejected && error.status < 500) {
+      const [operation] = await db
+        .update(operations)
+        .set({ status: "failed", detail: error.message })
+        .where(eq(operations.id, operationId))
+        .returning();
+      return { status: "failed", operation, error: error.message };
+    }
+    // The command may have reached the host before its response was lost.
+    const [operation] = await db
+      .update(operations)
+      .set({ detail: pendingDetail })
+      .where(eq(operations.id, operationId))
+      .returning();
+    return {
+      status: "pending",
+      operation,
+      error:
+        "Resultado pendiente de verificar. No se ha repetido el comando.",
+    };
+  }
+}
+
+/**
+ * Runs one named host command from the HTTP route. The body only carries the
+ * command name; the agent owns the unit names and the fixed argv. Idempotency
+ * is per host and a lost response stays pending, never retried automatically.
  */
 export async function runHostCommand({
   request,
@@ -70,100 +202,33 @@ export async function runHostCommand({
   const input = hostCommandRequestSchema.parse(await request.json());
   const host = resolveHost(hosts, request.nextUrl?.searchParams.get("host"));
   const operationId = z.uuid().parse(request.headers.get("idempotency-key"));
-  const [existing] = await db
-    .select()
-    .from(operations)
-    .where(eq(operations.id, operationId))
-    .limit(1);
-  if (existing) {
-    if (existing.hostId !== host.id)
+  const outcome = await executeHostCommand({
+    host,
+    userId: session.user.id,
+    command: input.command,
+    operationId,
+  });
+  if (outcome.replayed && outcome.operation) return response(outcome.operation);
+  switch (outcome.status) {
+    case "success":
+      return response(outcome.operation!, outcome.result);
+    case "failed":
       return json(
-        { error: "La clave de idempotencia ya se usó en otro host" },
-        409,
-      );
-    return response(existing);
-  }
-
-  const [latest] = await db
-    .select()
-    .from(samples)
-    .where(eq(samples.hostId, host.id))
-    .orderBy(desc(samples.at))
-    .limit(1);
-  if (!latest || Date.now() - latest.at.getTime() > CONNECTION_STALE_MS)
-    return json(
-      {
-        error: `${host.name} no está conectado. No se ha enviado el comando.`,
-      },
-      503,
-    );
-
-  const inserted = await db
-    .insert(operations)
-    .values({
-      id: operationId,
-      hostId: host.id,
-      userId: session.user.id,
-      action: input.command,
-      target: host.name,
-      status: "pending",
-    })
-    .onConflictDoNothing()
-    .returning();
-  if (!inserted.length) {
-    const [current] = await db
-      .select()
-      .from(operations)
-      .where(eq(operations.id, operationId))
-      .limit(1);
-    if (current && current.hostId !== host.id)
-      return json(
-        { error: "La clave de idempotencia ya se usó en otro host" },
-        409,
-      );
-    return current
-      ? response(current)
-      : json({ error: "No se pudo registrar la operación" }, 503);
-  }
-
-  try {
-    const raw = await nasForHost<unknown>(host, "/command", {
-      command: input.command,
-    });
-    const parsed = resultSchema.safeParse(raw);
-    if (!parsed.success) throw new Error("Respuesta del agente no válida");
-    const [operation] = await db
-      .update(operations)
-      .set({ status: "success", detail: completedDetail[input.command] })
-      .where(eq(operations.id, operationId))
-      .returning();
-    return response(operation, parsed.data);
-  } catch (error) {
-    if (error instanceof NasRejected && error.status < 500) {
-      const [operation] = await db
-        .update(operations)
-        .set({ status: "failed", detail: error.message })
-        .where(eq(operations.id, operationId))
-        .returning();
-      return json(
-        { error: error.message, status: "failed", operation },
+        { error: outcome.error, status: "failed", operation: outcome.operation },
         400,
       );
-    }
-    // The command may have reached the host before its response was lost.
-    const [operation] = await db
-      .update(operations)
-      .set({ detail: pendingDetail })
-      .where(eq(operations.id, operationId))
-      .returning();
-    return json(
-      {
-        error:
-          "Resultado pendiente de verificar. No se ha repetido el comando.",
-        status: "pending",
-        operation,
-      },
-      502,
-    );
+    case "pending":
+      return json(
+        {
+          error: outcome.error,
+          status: "pending",
+          operation: outcome.operation,
+        },
+        502,
+      );
+    case "conflict":
+      return json({ error: outcome.error }, 409);
+    default:
+      return json({ error: outcome.error }, 503);
   }
 }
