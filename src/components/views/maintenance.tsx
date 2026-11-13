@@ -10,6 +10,7 @@ import {
 import { bytes, percent, uptime } from "@/lib/format";
 import type { Container, Metrics } from "@/lib/types";
 import type { ActionRequest } from "../file-browser";
+import { useHostScope } from "../host-context";
 import {
   useSensitiveAction,
   type SensitiveActionOutcome,
@@ -41,7 +42,6 @@ export function MaintenanceStatus({
   disabled,
   lastAt,
   request,
-  host,
   onSensitiveSettled,
 }: {
   metrics: Metrics;
@@ -50,12 +50,11 @@ export function MaintenanceStatus({
   disabled: boolean;
   lastAt: string | null;
   request: (action: ActionRequest) => void;
-  /** Host id the sensitive actions target; the hub's default host when omitted. */
-  host?: string;
   /** Called when a sensitive action finishes, so the shell can refresh. */
   onSensitiveSettled?: (outcome: SensitiveActionOutcome) => void;
 }) {
   const sensitive = useSensitiveAction();
+  const { canReboot, withHost } = useHostScope();
   const [filter, setFilter] = useState<ContainerFilterId>("all");
   const containers = [...metrics.containers].sort((a, b) =>
     a.name.localeCompare(b.name),
@@ -169,7 +168,7 @@ export function MaintenanceStatus({
                 type="button"
                 className="command danger"
                 data-command="reboot"
-                disabled={disabled}
+                disabled={disabled || !canReboot}
                 onClick={() =>
                   sensitive.request({
                     title: "Reiniciar el NAS",
@@ -188,7 +187,7 @@ export function MaintenanceStatus({
                     ],
                     confirmLabel: "Reiniciar NAS",
                     destructive: true,
-                    endpoint: `/api/action${host ? `?host=${encodeURIComponent(host)}` : ""}`,
+                    endpoint: withHost("/api/action"),
                     body: { action: "reboot", confirmation: "REINICIAR NAS" },
                     typedConfirmation: {
                       label: "Escribe REINICIAR NAS para confirmar",
