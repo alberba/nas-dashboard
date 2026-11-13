@@ -1,5 +1,12 @@
-import { useState } from "react";
-import { Lock, Play, Power, RefreshCw, Square } from "lucide-react";
+import { Fragment, useState } from "react";
+import {
+  Lock,
+  Play,
+  Power,
+  RefreshCw,
+  ScrollText,
+  Square,
+} from "lucide-react";
 import {
   containerFilters,
   containerHealth,
@@ -11,6 +18,7 @@ import { bytes, percent, uptime } from "@/lib/format";
 import type { Container, Metrics } from "@/lib/types";
 import type { ActionRequest } from "../file-browser";
 import { FilterChips, Panel, StatusDot, StatusStrip, type Tone } from "../ui";
+import { ContainerLogsRow } from "./container-logs";
 
 const filterLabels: Record<ContainerFilterId, string> = {
   all: "Todos",
@@ -187,16 +195,40 @@ function stateLabel(c: Container) {
   return c.state;
 }
 
-function ContainerRow({
+function ContainerRow(props: {
+  container: Container;
+  problem: boolean;
+  disabled: boolean;
+  request: (action: ActionRequest) => void;
+}) {
+  const [logsOpen, setLogsOpen] = useState(false);
+  const { id, name } = props.container;
+  return (
+    <Fragment>
+      <ContainerLine
+        {...props}
+        logsOpen={logsOpen}
+        toggleLogs={() => setLogsOpen((open) => !open)}
+      />
+      {logsOpen && <ContainerLogsRow id={id} name={name} columns={7} />}
+    </Fragment>
+  );
+}
+
+function ContainerLine({
   container: c,
   problem,
   disabled,
   request,
+  logsOpen,
+  toggleLogs,
 }: {
   container: Container;
   problem: boolean;
   disabled: boolean;
   request: (action: ActionRequest) => void;
+  logsOpen: boolean;
+  toggleLogs: () => void;
 }) {
   const health = containerHealth(c);
   const tone: Tone = problem
@@ -238,6 +270,16 @@ function ContainerRow({
       <td className="numeric">{bytes(c.memory)}</td>
       <td className="numeric actions-cell">
         <div className="row-actions">
+          <button
+            type="button"
+            className="row-button"
+            data-logs-toggle=""
+            aria-label={`Ver logs de ${c.name}`}
+            aria-expanded={logsOpen}
+            onClick={toggleLogs}
+          >
+            <ScrollText />
+          </button>
           {c.state !== "running" ? (
             <button
               type="button"

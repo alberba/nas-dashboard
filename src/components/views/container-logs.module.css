@@ -1,0 +1,123 @@
+/* Visor de logs (DESIGN.md · Visor de logs y registro). */
+
+.viewer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding-block: 0.875rem 0.75rem;
+  padding-inline: 1.125rem;
+  background: var(--panel);
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+.filter {
+  flex: 1 1 12rem;
+}
+.filter input {
+  min-block-size: 2.75rem;
+}
+.count {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.count select {
+  inline-size: auto;
+  min-block-size: 2.75rem;
+  color: var(--text);
+  font-size: max(16px, 1rem);
+  letter-spacing: normal;
+  text-transform: none;
+  font-variant-numeric: tabular-nums;
+}
+.tool {
+  min-block-size: 2.75rem;
+  font-size: 0.8rem;
+}
+.tool[aria-pressed="true"] {
+  background: var(--panel2);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.error {
+  margin: 0;
+  color: var(--loss);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.log {
+  max-block-size: 24rem;
+  min-block-size: 8rem;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding-block: 0.5rem;
+  padding-inline: 0.875rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--code-bg);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+  line-height: 1.75;
+}
+.line {
+  display: flex;
+  gap: 0.875rem;
+  min-inline-size: max-content;
+}
+.time {
+  flex: none;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.message {
+  white-space: pre;
+}
+.line[data-level="error"] .message {
+  color: var(--loss);
+}
+.line[data-level="warn"] .message {
+  color: var(--peach);
+}
+.empty {
+  margin: 0;
+  color: var(--muted);
+  font-family: inherit;
+}
+
+.meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The viewer is the only cell of its row: it spans the table and, on small
+   screens, undoes the card layout that hides every cell but name and actions. */
+:global(.data-table) tr.row {
+  display: block;
+  padding: 0;
+  border-block-end: 1px solid var(--row-line);
+}
+:global(.data-table) tr.row > td.cell {
+  display: block;
+  block-size: auto;
+  padding: 0;
+  border: 0;
+  white-space: normal;
+}
