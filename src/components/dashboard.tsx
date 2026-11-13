@@ -2,64 +2,67 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
-  ArrowDown,
-  ArrowUp,
-  ArrowUpRight,
   Bell,
-  Box,
   ChevronRight,
   CircleCheck,
-  Cpu,
-  Database,
   FolderOpen,
   Grid2X2,
   HardDrive,
   LayoutDashboard,
   LoaderCircle,
   LogOut,
-  MemoryStick,
-  Network,
-  Play,
-  Power,
-  RefreshCw,
   Settings2,
-  ShieldCheck,
-  Square,
-  Thermometer,
   TriangleAlert,
+  Wrench,
   X,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
-import { applications } from "@/lib/apps";
-import { bytes, percent, uptime } from "@/lib/format";
-import type { Overview, Metrics, Container } from "@/lib/types";
-import { Chart } from "./chart";
+import type { Overview } from "@/lib/types";
 import { FileBrowser, type ActionRequest } from "./file-browser";
 import { Settings } from "./settings";
+import { AlertsView } from "./views/alerts";
+import { AppsView } from "./views/apps";
+import { MaintenanceStatus } from "./views/maintenance";
+import { ResourcesView } from "./views/resources";
+import {
+  readRoute,
+  routeHref,
+  type MaintenanceTab,
+  type Route,
+  type View,
+} from "./views/routes";
+import { SummaryView } from "./views/summary";
 
-const navigation = [
+const navigation: { id: View; label: string; icon: typeof Activity }[] = [
   { id: "summary", label: "Resumen", icon: LayoutDashboard },
   { id: "resources", label: "Recursos", icon: Activity },
-  { id: "containers", label: "Contenedores", icon: Box },
+  { id: "maintenance", label: "Mantenimiento", icon: Wrench },
   { id: "files", label: "Archivos", icon: FolderOpen },
   { id: "apps", label: "Aplicaciones", icon: Grid2X2 },
   { id: "settings", label: "Ajustes", icon: Settings2 },
 ];
-const headings: Record<string, string> = {
+const headings: Record<View, string> = {
   summary: "Resumen",
   resources: "Recursos",
-  containers: "Contenedores",
+  maintenance: "Mantenimiento",
   files: "Archivos",
   apps: "Aplicaciones",
   settings: "Ajustes",
   alerts: "Avisos",
 };
+const maintenanceTabs: { id: MaintenanceTab; label: string }[] = [
+  { id: "status", label: "Estado" },
+];
 
 export function Dashboard({ name }: { name: string }) {
   const router = useRouter();
-  const [view, setView] = useState("summary");
+  const [route, setRoute] = useState<Route>({
+    view: "summary",
+    tab: "status",
+  });
+  const { view } = route;
   const [range, setRange] = useState("1h");
   const [data, setData] = useState<Overview | null>(null);
   const [error, setError] = useState("");
@@ -100,9 +103,8 @@ export function Dashboard({ name }: { name: string }) {
   );
 
   useEffect(() => {
-    const requested = new URLSearchParams(window.location.search).get("view");
-    if (requested && headings[requested])
-      queueMicrotask(() => setView(requested));
+    const requested = readRoute(window.location.search);
+    queueMicrotask(() => setRoute(requested));
     tabId.current = crypto.randomUUID();
     function heartbeat() {
       void fetch("/api/presence", {
@@ -168,14 +170,13 @@ export function Dashboard({ name }: { name: string }) {
     return () => clearTimeout(timer);
   }, [toast]);
 
-  function navigate(next: string) {
-    setView(next);
-    window.history.replaceState(
-      null,
-      "",
-      next === "summary" ? "/" : `/?view=${next}`,
-    );
+  function go(next: Route) {
+    setRoute(next);
+    window.history.replaceState(null, "", routeHref(next));
     window.scrollTo({ top: 0 });
+  }
+  function navigate(next: View) {
+    go({ view: next, tab: "status" });
   }
   function request(action: ActionRequest) {
     setOperation(action);
@@ -223,8 +224,14 @@ export function Dashboard({ name }: { name: string }) {
   const metrics = data?.latest;
   const connected = Boolean(data?.connected && !error);
   const openAlerts = data?.alerts.filter((a) => !a.resolvedAt) ?? [];
-  const title = headings[view] ?? headings.summary;
+  const title = headings[view];
   const appDomain = process.env.NEXT_PUBLIC_APP_DOMAIN ?? "example.com";
+  const crumbs = [
+    headings[view],
+    ...(view === "maintenance"
+      ? [maintenanceTabs.find((t) => t.id === route.tab)?.label ?? ""]
+      : []),
+  ];
 
   return (
     <div className="app-frame">
@@ -248,6 +255,7 @@ export function Dashboard({ name }: { name: string }) {
                 key={item.id}
                 className={view === item.id ? "nav-item selected" : "nav-item"}
                 aria-current={view === item.id ? "page" : undefined}
+                data-nav={item.id}
                 onClick={() => navigate(item.id)}
               >
                 <item.icon />
@@ -280,14 +288,28 @@ export function Dashboard({ name }: { name: string }) {
         </aside>
         <main className="workspace">
           <header className="topbar">
-            <span className="subtle">
-              Mi espacio <ChevronRight />
-              {view === "alerts"
-                ? "Avisos"
-                : navigation.find((n) => n.id === view)?.label}
-            </span>
+            <nav className="breadcrumbs" aria-label="Migas">
+              <ol>
+                <li>Mi espacio</li>
+                {crumbs.map((crumb, index) => (
+                  <li
+                    key={crumb}
+                    aria-current={
+                      index === crumbs.length - 1 ? "page" : undefined
+                    }
+                  >
+                    <ChevronRight aria-hidden="true" />
+                    {crumb}
+                  </li>
+                ))}
+              </ol>
+            </nav>
+            <div className="topbar-search" data-slot="search" />
             <div className="toolbar">
-              <span className={`connection-chip ${connected ? "" : "stale"}`}>
+              <span
+                className={`connection-chip ${connected ? "" : "stale"}`}
+                data-live={connected}
+              >
                 <i
                   className={`status-dot ${connected ? "online" : "offline"}`}
                 />
@@ -314,7 +336,11 @@ export function Dashboard({ name }: { name: string }) {
               </button>
             </div>
           </header>
-          <div className="page-content" data-view={view}>
+          <div
+            className="page-content"
+            data-view={view}
+            data-subview={view === "maintenance" ? route.tab : undefined}
+          >
             <div className="page-heading">
               <div>
                 <p className="date-label">
@@ -326,17 +352,37 @@ export function Dashboard({ name }: { name: string }) {
                 </p>
                 <h1>{title}</h1>
               </div>
-              <div className="last-update">
-                <span>Última actualización</span>
-                <time>
-                  {data?.lastAt
-                    ? new Date(data.lastAt).toLocaleTimeString("es", {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                        second: "2-digit",
-                      })
-                    : "Esperando datos"}
-                </time>
+              <div className="heading-tools">
+                {view === "maintenance" && (
+                  <nav className="segmented" aria-label="Secciones">
+                    {maintenanceTabs.map((tab) => (
+                      <a
+                        key={tab.id}
+                        href={routeHref({ view, tab: tab.id })}
+                        data-subview-link={tab.id}
+                        aria-current={route.tab === tab.id ? "page" : undefined}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          go({ view, tab: tab.id });
+                        }}
+                      >
+                        {tab.label}
+                      </a>
+                    ))}
+                  </nav>
+                )}
+                <div className="last-update">
+                  <span>Última actualización</span>
+                  <time>
+                    {data?.lastAt
+                      ? new Date(data.lastAt).toLocaleTimeString("es", {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          second: "2-digit",
+                        })
+                      : "Esperando datos"}
+                  </time>
+                </div>
               </div>
             </div>
             {error && (
@@ -353,7 +399,7 @@ export function Dashboard({ name }: { name: string }) {
               </p>
             )}
             {(!data || !metrics) &&
-              ["summary", "resources", "containers"].includes(view) && (
+              ["summary", "resources", "maintenance"].includes(view) && (
                 <section className="panel empty-state">
                   <LoaderCircle />
                   <h2>Esperando el primer pulso.</h2>
@@ -361,361 +407,42 @@ export function Dashboard({ name }: { name: string }) {
               )}
 
             {metrics && data && view === "summary" && (
-              <div className="stack section-gap">
-                <div className="overview-grid">
-                  <section className="panel storage-panel">
-                    <div className="section-heading">
-                      <h2>
-                        <HardDrive />
-                        Un lugar para todo
-                      </h2>
-                    </div>
-                    <Storage metrics={metrics} />
-                    <div className="storage-footer">
-                      <span className="with-icon">
-                        <Database />
-                        Biblioteca y descargas
-                      </span>
-                      <button
-                        className="text-button"
-                        onClick={() => navigate("files")}
-                      >
-                        Ver archivos
-                        <ArrowUpRight />
-                      </button>
-                    </div>
-                  </section>
-                  <section className="panel health-panel">
-                    <div className="section-heading">
-                      <h2>Estado general</h2>
-                      <ShieldCheck />
-                    </div>
-                    <div
-                      className={`health-icon ${openAlerts.length || !connected ? "warn" : ""}`}
-                    >
-                      {openAlerts.length || !connected ? (
-                        <TriangleAlert />
-                      ) : (
-                        <CircleCheck />
-                      )}
-                    </div>
-                    <h3>
-                      {!connected
-                        ? "Sin conexión"
-                        : openAlerts.length
-                          ? "Hay algo que revisar"
-                          : "Todo en su sitio"}
-                    </h3>
-                    <div className="health-facts">
-                      <span>
-                        En marcha<strong>{uptime(metrics.uptime)}</strong>
-                      </span>
-                      <span>
-                        Servicios activos
-                        <strong>
-                          {
-                            metrics.containers.filter(
-                              (c) => c.state === "running",
-                            ).length
-                          }
-                          <small> / {metrics.containers.length}</small>
-                        </strong>
-                      </span>
-                    </div>
-                    <button
-                      className="text-button"
-                      onClick={() => navigate("alerts")}
-                    >
-                      Ver avisos
-                      <ChevronRight />
-                    </button>
-                  </section>
-                </div>
-                <MetricCards metrics={metrics} />
-                <section className="panel">
-                  <div className="section-heading wrap">
-                    <h2>Actividad reciente</h2>
-                    <Range value={range} set={setRange} />
-                  </div>
-                  <Chart history={data.history} />
-                  <div className="chart-legend">
-                    <span>
-                      <i className="legend-dot accent-bg" />
-                      CPU
-                    </span>
-                  </div>
-                </section>
-                <section className="panel">
-                  <div className="section-heading">
-                    <h2>Lo que más está trabajando</h2>
-                    <button
-                      className="text-button"
-                      onClick={() => navigate("containers")}
-                    >
-                      Todos los servicios
-                      <ArrowUpRight />
-                    </button>
-                  </div>
-                  {[...metrics.containers]
-                    .filter((c) => c.state === "running")
-                    .sort((a, b) => (b.memory ?? 0) - (a.memory ?? 0))
-                    .slice(0, 5)
-                    .map((c) => (
-                      <div className="service-row" key={c.id}>
-                        <span className="service-icon">
-                          <Box />
-                        </span>
-                        <div className="service-name">
-                          <strong>{c.name}</strong>
-                          <small className="subtle">En ejecución</small>
-                        </div>
-                        <span className="service-cpu">
-                          {percent(c.cpu)}
-                          <small>CPU</small>
-                        </span>
-                        <span className="service-memory">
-                          {bytes(c.memory)}
-                          <small>RAM</small>
-                        </span>
-                        <span className="status-badge">Activo</span>
-                      </div>
-                    ))}
-                </section>
-              </div>
+              <SummaryView
+                data={data}
+                metrics={metrics}
+                connected={connected}
+                openAlerts={openAlerts.length}
+                range={range}
+                setRange={setRange}
+                navigate={navigate}
+              />
             )}
-
             {metrics && data && view === "resources" && (
-              <div className="stack section-gap">
-                <MetricCards metrics={metrics} />
-                <div className="toolbar wrap">
-                  <h2>Tu historial</h2>
-                  <div className="push-end">
-                    <Range value={range} set={setRange} />
-                  </div>
-                </div>
-                <section className="panel">
-                  <Chart history={data.history} />
-                  <Chart
-                    history={data.history}
-                    field="memory"
-                    label="Memoria"
-                    color="var(--lilac)"
-                  />
-                </section>
-                <section className="panel">
-                  <Chart
-                    history={data.history}
-                    field="rx"
-                    label="Red · entrada"
-                    color="var(--gain)"
-                  />
-                  <Chart
-                    history={data.history}
-                    field="tx"
-                    label="Red · salida"
-                    color="var(--peach)"
-                  />
-                </section>
-                <div className="settings-grid">
-                  <section className="panel stack">
-                    <h2>
-                      <Thermometer />
-                      Temperaturas
-                    </h2>
-                    {metrics.temperatures.length ? (
-                      metrics.temperatures.map((sensor, i) => (
-                        <div className="setting-row" key={i}>
-                          <span>{sensor.name}</span>
-                          <strong
-                            className={
-                              sensor.value >= data.settings.temperature
-                                ? "danger-text"
-                                : ""
-                            }
-                          >
-                            {sensor.value.toLocaleString("es")} °C
-                          </strong>
-                        </div>
-                      ))
-                    ) : (
-<p className="subtle">Sin sensores</p>
-                    )}
-                  </section>
-                  <section className="panel stack">
-                    <h2>
-                      <HardDrive />
-                      Actividad de discos
-                    </h2>
-                    <div className="setting-row">
-                      <span>Lectura</span>
-                      <strong>{bytes(metrics.io.read, true)}</strong>
-                    </div>
-                    <div className="setting-row">
-                      <span>Escritura</span>
-                      <strong>{bytes(metrics.io.write, true)}</strong>
-                    </div>
-                    <div className="setting-row">
-                      <span>Tiempo en marcha</span>
-                      <strong>{uptime(metrics.uptime)}</strong>
-                    </div>
-                  </section>
-                </div>
-                <section className="panel">
-                  <h2>Capacidad de tus volúmenes</h2>
-                  <Storage metrics={metrics} />
-                </section>
-              </div>
+              <ResourcesView
+                data={data}
+                metrics={metrics}
+                range={range}
+                setRange={setRange}
+              />
             )}
-
-            {metrics && view === "containers" && (
-              <div className="stack section-gap">
-                <div className="toolbar wrap">
-                  <span className="subtle">
-                    {
-                      metrics.containers.filter((c) => c.state === "running")
-                        .length
-                    }{" "}
-                    activos de {metrics.containers.length}
-                  </span>
-                  <button
-                    className="secondary danger-text push-end"
-                    disabled={!connected || busy}
-                    onClick={() =>
-                      request({
-                        body: {
-                          action: "reboot",
-                          confirmation: "REINICIAR NAS",
-                        },
-                        title: "Reiniciar el NAS",
-                        detail:
-                          "Se interrumpirán las reproducciones, las descargas y el acceso por NPM. Oracle seguirá funcionando. El resultado se comprobará cuando el NAS vuelva a responder.",
-                        phrase: "REINICIAR NAS",
-                      })
-                    }
-                  >
-                    <Power />
-                    Reiniciar NAS
-                  </button>
-                </div>
-                <section className="panel">
-                  {[...metrics.containers]
-                    .sort((a, b) => a.name.localeCompare(b.name))
-                    .map((container) => (
-                      <ContainerRow
-                        key={container.id}
-                        container={container}
-                        disabled={!connected || busy}
-                        request={request}
-                      />
-                    ))}
-                </section>
-              </div>
+            {metrics && data && view === "maintenance" && (
+              <MaintenanceStatus
+                metrics={metrics}
+                expected={data.settings.expectedContainers}
+                connected={connected}
+                disabled={!connected || busy}
+                lastAt={data.lastAt}
+                request={request}
+              />
             )}
             {view === "files" && (
               <FileBrowser connected={connected && !busy} request={request} />
             )}
-            {view === "apps" && (
-              <div className="apps-grid">
-                {applications.map((app) => (
-                  <a
-                    key={app.host}
-                    href={`https://${app.host}.${appDomain}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="panel app-card"
-                  >
-                    <div className="section-heading">
-                      <span className={`app-letter ${app.tone}`}>
-                        {app.letter}
-                      </span>
-                      <ArrowUpRight />
-                    </div>
-                    <span className="subtle app-category">{app.category}</span>
-                    <h2>{app.name}</h2>
-                    <span className="app-url">
-                      {app.host}.{appDomain}
-                    </span>
-                  </a>
-                ))}
-              </div>
-            )}
+            {view === "apps" && <AppsView appDomain={appDomain} />}
             {view === "settings" && data && (
               <Settings value={data.settings} refresh={refresh} />
             )}
-            {view === "alerts" && data && (
-              <div className="stack section-gap">
-                <section className="panel stack">
-                  <h2>Incidencias y recuperaciones</h2>
-                  {!data.alerts.length && (
-                    <div className="empty-state">
-                      <CircleCheck />
-                      <h3>Sin incidencias registradas</h3>
-                    </div>
-                  )}
-                  {data.alerts.map((alert) => (
-                    <div className="alert-row" key={alert.id}>
-                      {alert.resolvedAt ? (
-                        <CircleCheck className="gain" />
-                      ) : (
-                        <TriangleAlert className="danger-text" />
-                      )}
-                      <div>
-                        <strong>{alert.title}</strong>
-                        <p className="subtle">{alert.detail}</p>
-                        <time>
-                          {new Date(alert.at).toLocaleString("es")}
-                          {alert.resolvedAt
-                            ? ` · Resuelto ${new Date(alert.resolvedAt).toLocaleString("es")}`
-                            : " · Pendiente"}
-                        </time>
-                      </div>
-                    </div>
-                  ))}
-                </section>
-                <section className="panel stack">
-                  <h2>Acciones recientes</h2>
-                  {!data.operations.length && (
-                    <p className="subtle">Sin acciones</p>
-                  )}
-                  {data.operations.map((op) => (
-                    <div className="alert-row" key={op.id}>
-                      <RefreshCw />
-                      <div>
-                        <strong>
-                          {(
-                            {
-                              start: "Iniciar",
-                              stop: "Detener",
-                              restart: "Reiniciar",
-                              reboot: "Reiniciar NAS",
-                              move: "Mover",
-                              trash: "Enviar a papelera",
-                              restore: "Restaurar",
-                              purge: "Eliminar definitivamente",
-                              "empty-trash": "Vaciar papelera",
-                            } as Record<string, string>
-                          )[op.action] ?? op.action}
-                        </strong>
-                        <p className="subtle">
-                          {op.target.length === 64
-                            ? "Contenedor " + op.target.slice(0, 12)
-                            : op.target}{" "}
-                          · {op.detail}
-                        </p>
-                        <time>
-                          {new Date(op.at).toLocaleString("es")} ·{" "}
-                          {op.status === "success"
-                            ? "Completada"
-                            : op.status === "failed"
-                              ? "No realizada"
-                              : "Pendiente de verificar"}
-                        </time>
-                      </div>
-                    </div>
-                  ))}
-                </section>
-              </div>
-            )}
+            {view === "alerts" && data && <AlertsView data={data} />}
             <footer className="page-footer">
               <span>
                 hub<span className="accent">.</span>
@@ -805,235 +532,6 @@ export function Dashboard({ name }: { name: string }) {
               <X />
             </button>
           </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function Storage({ metrics }: { metrics: Metrics }) {
-  return (
-    <div className="storage-list">
-      {metrics.disks.map((disk) => {
-        const occupied = (disk.used / disk.total) * 100;
-        return (
-          <div className="disk" key={disk.root}>
-            <div className="disk-top">
-              <span className="disk-symbol">
-                <HardDrive />
-                <i />
-              </span>
-              <div>
-                <h3>{disk.name}</h3>
-                <p className="subtle">{bytes(disk.total)} de capacidad</p>
-              </div>
-              <span className="disk-percent">
-                {Math.round(occupied)}
-                <small>%</small>
-              </span>
-            </div>
-            <div
-              className="capacity-bar"
-              role="meter"
-              aria-label={`Ocupación de ${disk.name}`}
-              aria-valuenow={Math.round(occupied)}
-              aria-valuemin={0}
-              aria-valuemax={100}
-            >
-              <div
-                style={{ inlineSize: `${occupied}%` }}
-                className={occupied > 90 ? "full" : ""}
-              />
-            </div>
-            <div className="disk-numbers">
-              <span>
-                <i className="legend-dot accent-bg" />
-                {bytes(disk.used)} <small>ocupados</small>
-              </span>
-              <span>
-                <i className="legend-dot neutral-bg" />
-                {bytes(disk.free)} <small>libres</small>
-              </span>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-function MetricCards({ metrics }: { metrics: Metrics }) {
-  const memory = (metrics.memory.used / metrics.memory.total) * 100;
-  const highestTemperature = metrics.temperatures.length
-    ? Math.max(...metrics.temperatures.map((t) => t.value))
-    : null;
-  return (
-    <div className="metrics-grid">
-      <article className="metric">
-        <span>
-          <Cpu />
-          Procesador
-        </span>
-        <strong>{percent(metrics.cpu)}</strong>
-        <div className="mini-meter">
-          <i style={{ inlineSize: `${metrics.cpu ?? 0}%` }} />
-        </div>
-        <small>Uso de CPU</small>
-      </article>
-      <article className="metric">
-        <span>
-          <MemoryStick />
-          Memoria
-        </span>
-        <strong>{bytes(metrics.memory.used)}</strong>
-        <div className="mini-meter lilac-meter">
-          <i style={{ inlineSize: `${memory}%` }} />
-        </div>
-        <small>
-          {percent(memory)} de {bytes(metrics.memory.total)}
-        </small>
-      </article>
-      <article className="metric">
-        <span>
-          <Network />
-          Red
-        </span>
-        <strong>{bytes(metrics.network.rx, true)}</strong>
-        <small className="network-rates">
-          <ArrowDown />
-          Entrada <ArrowUp />
-          {bytes(metrics.network.tx, true)} de salida
-        </small>
-      </article>
-      <article className="metric">
-        <span>
-          <Thermometer />
-          Temperatura
-        </span>
-        <strong>
-          {highestTemperature !== null
-            ? highestTemperature.toLocaleString("es") + " °C"
-            : "—"}
-        </strong>
-        <small>
-          {highestTemperature !== null
-            ? "Sensor con mayor temperatura"
-            : "Sin sensores disponibles"}
-        </small>
-      </article>
-    </div>
-  );
-}
-function Range({
-  value,
-  set,
-}: {
-  value: string;
-  set: (value: string) => void;
-}) {
-  return (
-    <div
-      className="segmented range"
-      role="group"
-      aria-label="Periodo del historial"
-    >
-      {[
-        ["1h", "1 h"],
-        ["6h", "6 h"],
-        ["24h", "24 h"],
-        ["7d", "7 días"],
-        ["30d", "30 días"],
-      ].map(([id, label]) => (
-        <button key={id} aria-pressed={id === value} onClick={() => set(id)}>
-          {label}
-        </button>
-      ))}
-    </div>
-  );
-}
-function ContainerRow({
-  container: c,
-  disabled,
-  request,
-}: {
-  container: Container;
-  disabled: boolean;
-  request: (action: ActionRequest) => void;
-}) {
-  return (
-    <div className="container-row">
-      <span className="service-icon">
-        <Box />
-      </span>
-      <div className="service-name">
-        <strong>{c.name}</strong>
-        <small className="subtle">{c.image}</small>
-      </div>
-      <span
-        className={`status-badge ${c.state === "running" ? "" : "stopped"}`}
-      >
-        {c.state === "running"
-          ? "Activo"
-          : c.state === "exited"
-            ? "Detenido"
-            : c.state}
-      </span>
-      <span className="service-cpu">
-        {percent(c.cpu)}
-        <small>CPU</small>
-      </span>
-      <span className="service-memory">
-        {bytes(c.memory)}
-        <small>RAM</small>
-      </span>
-      <div className="row-actions">
-        {c.state !== "running" ? (
-          <button
-            className="icon-button"
-            aria-label={`Iniciar ${c.name}`}
-            disabled={disabled || c.protected}
-            onClick={() =>
-              request({
-                body: { action: "start", id: c.id },
-                title: `Iniciar ${c.name}`,
-                detail: "Se iniciará el contenedor y se comprobará su estado.",
-              })
-            }
-          >
-            <Play />
-          </button>
-        ) : (
-          <>
-            <button
-              className="icon-button"
-              aria-label={`Reiniciar ${c.name}`}
-              disabled={disabled || c.protected}
-              onClick={() =>
-                request({
-                  body: { action: "restart", id: c.id },
-                  title: `Reiniciar ${c.name}`,
-                  detail:
-                    "El servicio se interrumpirá durante el reinicio. Las reproducciones o descargas que dependan de él podrían detenerse.",
-                })
-              }
-            >
-              <RefreshCw />
-            </button>
-            <button
-              className="icon-button danger-text"
-              aria-label={`Detener ${c.name}`}
-              disabled={disabled || c.protected}
-              onClick={() =>
-                request({
-                  body: { action: "stop", id: c.id },
-                  title: `Detener ${c.name}`,
-                  detail:
-                    "El servicio dejará de estar disponible hasta que vuelvas a iniciarlo. Esta parada se considerará intencionada.",
-                })
-              }
-            >
-              <Square />
-            </button>
-          </>
         )}
       </div>
     </div>
