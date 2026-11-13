@@ -14,6 +14,12 @@ import {
 } from "@/lib/schema";
 import { getSettings, saveSettings } from "@/lib/settings";
 import { actionSchema, settingsSchema } from "@/lib/validation";
+import {
+  guardSensitiveAction,
+  handlePasswordVerification,
+  handleVerificationStatus,
+} from "@/lib/verification-api";
+import { verificationStore } from "@/lib/verification";
 import { nasForHost, NasRejected } from "@/lib/nas";
 import {
   getHosts,
@@ -101,6 +107,19 @@ async function handle(
     const current = await auth.api.getSession({ headers: request.headers });
     if (!current) return json({ error: "Inicia sesión para continuar" }, 401);
 
+    if (route === "verification" && !mutation)
+      return handleVerificationStatus({
+        request,
+        session: current,
+        store: verificationStore,
+      });
+    if (route === "verification/password" && request.method === "POST")
+      return handlePasswordVerification({
+        request,
+        session: current,
+        store: verificationStore,
+        verifyPassword: (input) => auth.api.verifyPassword(input),
+      });
     if (route === "hosts" && !mutation) {
       const hosts = getHosts();
       return json({
@@ -218,6 +237,14 @@ async function handle(
             409,
           );
         return json(existing);
+      }
+      if (body.action === "reboot") {
+        const denied = await guardSensitiveAction({
+          request,
+          session: current,
+          store: verificationStore,
+        });
+        if (denied) return denied;
       }
       const latest = await db
         .select()

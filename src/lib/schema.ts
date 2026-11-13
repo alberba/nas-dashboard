@@ -87,6 +87,21 @@ export const passkey = pgTable(
   },
   (t) => [index("passkey_user_idx").on(t.userId)],
 );
+export const recentVerification = pgTable(
+  "recent_verification",
+  {
+    sessionId: text()
+      .primaryKey()
+      .references(() => session.id, { onDelete: "cascade" }),
+    userId: text()
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    method: text().notNull(),
+    verifiedAt: timestamp({ withTimezone: true }).notNull(),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+  },
+  (t) => [index("recent_verification_expires_idx").on(t.expiresAt)],
+);
 export const samples = pgTable(
   "samples",
   {

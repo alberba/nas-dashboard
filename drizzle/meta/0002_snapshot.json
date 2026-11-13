@@ -1,5 +1,5 @@
 {
-  "id": "161981d3-caeb-4d55-a7f7-d023ff3622d2",
+  "id": "f486d251-6472-4979-a2fe-8121fb50745a",
   "prevId": "a0aa5dc7-a6a4-44cf-b22f-ee65e8c0818a",
   "version": "7",
   "dialect": "postgresql",
@@ -148,13 +148,6 @@
             "cycle": false
           }
         },
-        "hostId": {
-          "name": "hostId",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'nas-home'"
-        },
         "key": {
           "name": "key",
           "type": "text",
@@ -223,27 +216,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "alerts_host_key_idx": {
-          "name": "alerts_host_key_idx",
-          "columns": [
-            {
-              "expression": "hostId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "key",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {},
@@ -257,17 +229,10 @@
       "name": "configuration",
       "schema": "",
       "columns": {
-        "hostId": {
-          "name": "hostId",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'nas-home'"
-        },
         "id": {
           "name": "id",
           "type": "text",
-          "primaryKey": false,
+          "primaryKey": true,
           "notNull": true
         },
         "value": {
@@ -279,15 +244,7 @@
       },
       "indexes": {},
       "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "configuration_hostId_id_pk": {
-          "name": "configuration_hostId_id_pk",
-          "columns": [
-            "hostId",
-            "id"
-          ]
-        }
-      },
+      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
@@ -302,13 +259,6 @@
           "type": "text",
           "primaryKey": true,
           "notNull": true
-        },
-        "hostId": {
-          "name": "hostId",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'nas-home'"
         },
         "userId": {
           "name": "userId",
@@ -354,29 +304,7 @@
           "notNull": false
         }
       },
-      "indexes": {
-        "operations_host_at_idx": {
-          "name": "operations_host_at_idx",
-          "columns": [
-            {
-              "expression": "hostId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
@@ -546,6 +474,92 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.recent_verification": {
+      "name": "recent_verification",
+      "schema": "",
+      "columns": {
+        "sessionId": {
+          "name": "sessionId",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "userId": {
+          "name": "userId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "method": {
+          "name": "method",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "verifiedAt": {
+          "name": "verifiedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expiresAt": {
+          "name": "expiresAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "recent_verification_expires_idx": {
+          "name": "recent_verification_expires_idx",
+          "columns": [
+            {
+              "expression": "expiresAt",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "recent_verification_sessionId_session_id_fk": {
+          "name": "recent_verification_sessionId_session_id_fk",
+          "tableFrom": "recent_verification",
+          "tableTo": "session",
+          "columnsFrom": [
+            "sessionId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "recent_verification_userId_user_id_fk": {
+          "name": "recent_verification_userId_user_id_fk",
+          "tableFrom": "recent_verification",
+          "tableTo": "user",
+          "columnsFrom": [
+            "userId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.samples": {
       "name": "samples",
       "schema": "",
@@ -567,13 +581,6 @@
             "cycle": false
           }
         },
-        "hostId": {
-          "name": "hostId",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'nas-home'"
-        },
         "at": {
           "name": "at",
           "type": "timestamp",
@@ -592,27 +599,6 @@
         "samples_at_idx": {
           "name": "samples_at_idx",
           "columns": [
-            {
-              "expression": "at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "samples_host_at_idx": {
-          "name": "samples_host_at_idx",
-          "columns": [
-            {
-              "expression": "hostId",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
             {
               "expression": "at",
               "isExpression": false,

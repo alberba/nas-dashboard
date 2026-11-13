@@ -1,8 +1,10 @@
 import { betterAuth } from "better-auth";
+import { createAuthMiddleware } from "better-auth/api";
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import { passkey } from "@better-auth/passkey";
 import { db } from "./db";
 import * as schema from "./schema";
+import { rememberPasskeyVerification } from "./verification";
 
 export const origins = (
   process.env.TRUSTED_ORIGINS ??
@@ -36,6 +38,30 @@ const config = {
       origin: origins,
     }),
   ],
+  hooks: {
+    after: createAuthMiddleware(async (ctx) => {
+      try {
+        const created = ctx.context.newSession;
+        await rememberPasskeyVerification({
+          path: ctx.path,
+          context: {
+            newSession: created
+              ? {
+                  session: { id: created.session.id },
+                  user: { id: created.user.id },
+                }
+              : null,
+          },
+        });
+      } catch (error) {
+        // A missing verification record fails closed: the action still asks again.
+        console.error(
+          "No se pudo registrar la verificación con passkey",
+          error instanceof Error ? error.name : "unknown",
+        );
+      }
+    }),
+  },
   session: { expiresIn: 60 * 60 * 24 * 7, updateAge: 60 * 60 },
 };
 // One web replica: the built-in in-memory rate limiter covers authentication endpoints.
