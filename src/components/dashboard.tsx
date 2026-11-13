@@ -568,6 +568,7 @@ export function Dashboard({ name }: { name: string }) {
                   disabled={!connected || busy}
                   lastAt={data.lastAt}
                   request={request}
+                  onSensitiveSettled={() => void refresh()}
                 />
               )}
               {view === "files" && (
