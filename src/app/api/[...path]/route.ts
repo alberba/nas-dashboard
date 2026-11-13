@@ -14,6 +14,12 @@ import {
 } from "@/lib/schema";
 import { getSettings, saveSettings } from "@/lib/settings";
 import { actionSchema, settingsSchema } from "@/lib/validation";
+import {
+  guardSensitiveAction,
+  handlePasswordVerification,
+  handleVerificationStatus,
+} from "@/lib/verification-api";
+import { verificationStore } from "@/lib/verification";
 import { nas, NasRejected } from "@/lib/nas";
 import { notify } from "@/lib/push";
 import type { Metrics } from "@/lib/types";
@@ -83,6 +89,20 @@ async function handle(
     }
     const current = await auth.api.getSession({ headers: request.headers });
     if (!current) return json({ error: "Inicia sesión para continuar" }, 401);
+
+    if (route === "verification" && !mutation)
+      return handleVerificationStatus({
+        request,
+        session: current,
+        store: verificationStore,
+      });
+    if (route === "verification/password" && request.method === "POST")
+      return handlePasswordVerification({
+        request,
+        session: current,
+        store: verificationStore,
+        verifyPassword: (input) => auth.api.verifyPassword(input),
+      });
 
     if (route === "overview" && !mutation) {
       const [latest] = await db
@@ -171,6 +191,14 @@ async function handle(
         .from(operations)
         .where(eq(operations.id, operationId));
       if (existing) return json(existing);
+      if (body.action === "reboot") {
+        const denied = await guardSensitiveAction({
+          request,
+          session: current,
+          store: verificationStore,
+        });
+        if (denied) return denied;
+      }
       const latest = await db
         .select()
         .from(samples)
