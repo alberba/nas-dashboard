@@ -126,3 +126,21 @@
     grid-column: 1 / -1;
   }
 }
+
+.releaseTable td[colspan] {
+  white-space: normal;
+}
+.body label:has(input[type="checkbox"]) {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.6rem;
+  min-block-size: 44px;
+  white-space: normal;
+}
+.body input[type="checkbox"] {
+  inline-size: 20px;
+  block-size: 20px;
+  min-block-size: 20px;
+  flex: 0 0 auto;
+}

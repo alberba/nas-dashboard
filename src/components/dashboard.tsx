@@ -396,7 +396,7 @@ export function Dashboard({ name }: { name: string }) {
                       {data.openAlerts ?? openAlerts.length}
                     </b>
                   )}
-                  {view === item.id && <i className="nav-dot" />}
+                  {view === item.id && item.id !== "maintenance" && <i className="nav-dot" />}
                 </button>
               ))}
             </nav>

@@ -140,6 +140,10 @@ test("retained releases expose missing secrets only as write-only inputs and req
   const release = page.locator('[data-release="v9.0.0"] button');
   await release.click();
   await expect(release).toHaveAttribute("aria-expanded", "true");
+  await page.screenshot({
+    path: "test-results/deployments-desktop.png",
+    fullPage: true,
+  });
   await page.setViewportSize({ width: 390, height: 844 });
   const form = page.locator('[data-release-settings="v9.0.0"]');
   await expect(form).toBeVisible();
