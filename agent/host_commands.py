@@ -19,6 +19,14 @@ DEFAULT_UNITS = {
         "security": "media-stack-apps-security-updates",
     },
 }
+COMMAND_NAMES = frozenset(
+    {
+        "deploy-now",
+        "pause-follower",
+        "resume-follower",
+        "run-security",
+    }
+)
 # Keep the command names in sync with src/lib/host-command-contract.ts.
 
 
@@ -56,6 +64,8 @@ class HostCommands:
 
     def argv(self, command):
         """Returns the only argv this command can run, or rejects the name."""
+        if command not in COMMAND_NAMES:
+            raise ValueError("Comando de host no permitido")
         if command == "deploy-now":
             return self._service_argv(self.follower, "start")
         if command == "pause-follower":

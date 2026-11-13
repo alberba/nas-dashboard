@@ -2,9 +2,8 @@ import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "./db";
 import {
-  hostCommandIds,
   hostCommandRequestSchema,
-  type HostCommand,
+  hostCommandResultSchema,
   type HostCommandResult,
 } from "./host-command-contract";
 import {
@@ -26,17 +25,39 @@ const noStore = { "Cache-Control": "no-store" };
 const json = (value: unknown, status = 200) =>
   Response.json(value, { status, headers: noStore });
 
-const resultSchema = z.object({
-  command: z.enum(hostCommandIds),
-  status: z.literal("success"),
-});
+const resultSchema = hostCommandResultSchema;
 
-const completedDetail: Record<HostCommand, string> = {
-  "deploy-now": "Despliegue lanzado; el seguidor continúa en segundo plano.",
-  "pause-follower": "Seguidor pausado.",
-  "resume-follower": "Seguidor reanudado.",
-  "run-security": "Actualizador de seguridad lanzado.",
-};
+function formatBytes(value: number) {
+  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)} GB`;
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)} MB`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)} kB`;
+  return `${value} B`;
+}
+
+function completedDetail(result: HostCommandResult) {
+  switch (result.command) {
+    case "deploy-now":
+      return "Despliegue lanzado; el seguidor continúa en segundo plano.";
+    case "pause-follower":
+      return "Seguidor pausado.";
+    case "resume-follower":
+      return "Seguidor reanudado.";
+    case "run-security":
+      return "Actualizador de seguridad lanzado.";
+    case "backup-now":
+      return result.backup.lastStatus.status === "unknown"
+        ? "Copia iniciada. Todavía no hay un estado de la última copia."
+        : `Copia iniciada. Última copia: ${result.backup.lastStatus.status}.`;
+    case "clean-images":
+      return `Limpieza completada: ${formatBytes(result.cleanup.reclaimedBytes)} recuperados.`;
+    case "check-health":
+      return result.health.healthy
+        ? "Comprobación completada: todo sano."
+        : "Comprobación completada: hay servicios que requieren atención.";
+    case "reconnect-apps":
+      return "Wiring lanzada.";
+  }
+}
 
 const pendingDetail =
   "No se pudo confirmar el resultado. Comprueba el estado del host antes de repetir la operación.";
@@ -134,7 +155,7 @@ export async function runHostCommand({
     if (!parsed.success) throw new Error("Respuesta del agente no válida");
     const [operation] = await db
       .update(operations)
-      .set({ status: "success", detail: completedDetail[input.command] })
+      .set({ status: "success", detail: completedDetail(parsed.data) })
       .where(eq(operations.id, operationId))
       .returning();
     return response(operation, parsed.data);
