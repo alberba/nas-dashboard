@@ -1,0 +1,66 @@
+/* Gráficas de historial (DESIGN.md · Gráficas) */
+.chart {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.plot {
+  position: relative;
+}
+.plot svg {
+  display: block;
+  inline-size: 100%;
+  block-size: clamp(7.5rem, 5.5rem + 6vw, 11rem);
+  touch-action: pan-y;
+}
+.guide {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.crosshair {
+  stroke: var(--muted);
+  stroke-dasharray: 3 3;
+}
+.readout {
+  position: absolute;
+  inset-block-start: 0.25rem;
+  inset-inline-end: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  margin: 0;
+  padding-block: 0.3rem;
+  padding-inline: 0.6rem;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.readout time {
+  color: var(--muted);
+}
+.readout span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.ticks {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}

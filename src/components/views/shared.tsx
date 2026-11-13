@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -9,8 +10,149 @@ import {
 } from "lucide-react";
 import { bytes, percent } from "@/lib/format";
 import type { Metrics } from "@/lib/types";
-import { Segmented } from "../ui";
+import { Segmented, type Tone } from "../ui";
+import styles from "./overview.module.css";
+import { routeHref, type Navigate, type View } from "./routes";
+import {
+  formatSeries,
+  ranges,
+  seriesSummary,
+  type History,
+  type Series,
+} from "./series";
 
+export { describeChart, ranges } from "./series";
+
+export function Range({
+  value,
+  set,
+}: {
+  value: string;
+  set: (value: string) => void;
+}) {
+  return (
+    <div className={styles.range}>
+      <Segmented
+        label="Periodo del historial"
+        options={ranges.map((range) => ({
+          id: range.id,
+          label: <span data-range={range.id}>{range.label}</span>,
+        }))}
+        value={value}
+        onSelect={set}
+      />
+    </div>
+  );
+}
+
+/** Link to another section that keeps the client-side navigation. */
+export function ViewLink({
+  view,
+  navigate,
+  children,
+  className,
+}: {
+  view: View;
+  navigate: Navigate;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <a
+      className={className ?? styles.viewLink}
+      href={routeHref({ view, tab: "status" })}
+      data-view-link={view}
+      onClick={(event) => {
+        event.preventDefault();
+        navigate(view);
+      }}
+    >
+      {children}
+    </a>
+  );
+}
+
+/** Legend entry for a chart panel: series dot, name and a summary value. */
+export function SeriesKey({
+  history,
+  series,
+  measure = "average",
+}: {
+  history: History;
+  series: Series;
+  measure?: "average" | "peak";
+}) {
+  const summary = seriesSummary(history, series.field);
+  return (
+    <span className={styles.seriesKey} data-series={series.field}>
+      <i className="dot" style={{ color: series.color }} aria-hidden="true" />
+      <span className={styles.seriesName}>{series.label}</span>
+      <span className={styles.seriesValue}>
+        {measure === "peak" ? "pico" : "media"}{" "}
+        {formatSeries(
+          series.field,
+          measure === "peak" ? summary.peak : summary.average,
+        )}
+      </span>
+    </span>
+  );
+}
+
+export function occupation(disk: { used: number; total: number }) {
+  return disk.total > 0 ? (disk.used / disk.total) * 100 : 0;
+}
+
+export type Level = "normal" | "watch" | "high";
+export const levelTone: Record<Level, Tone> = {
+  normal: "gain",
+  watch: "peach",
+  high: "loss",
+};
+
+export function volumeLevel(percentUsed: number, limit: number): Level {
+  if (percentUsed >= limit) return "high";
+  if (percentUsed >= limit - 10) return "watch";
+  return "normal";
+}
+
+export function temperatureLevel(value: number, limit: number): Level {
+  if (value >= limit) return "high";
+  if (value >= limit - 10) return "watch";
+  return "normal";
+}
+
+export const celsius = (value: number) =>
+  `${value.toLocaleString("es", { maximumFractionDigits: 1 })} °C`;
+
+/** Capacity bar; the value is also exposed as a meter for assistive tech. */
+export function Meter({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: Tone;
+}) {
+  const rounded = Math.round(value);
+  return (
+    <span
+      className={`${styles.meter} ${tone}`}
+      role="meter"
+      aria-label={label}
+      aria-valuenow={rounded}
+      aria-valuemin={0}
+      aria-valuemax={100}
+    >
+      <i style={{ inlineSize: `${Math.min(100, Math.max(0, value))}%` }} />
+    </span>
+  );
+}
+
+/*
+ * Earlier card components, kept unchanged for callers outside Resumen and
+ * Recursos. New pages use the status strip and the tables above.
+ */
 export function Storage({ metrics }: { metrics: Metrics }) {
   return (
     <div className="storage-list">
@@ -121,28 +263,5 @@ export function MetricCards({ metrics }: { metrics: Metrics }) {
         </small>
       </article>
     </div>
-  );
-}
-const ranges = [
-  { id: "1h", label: "1 h" },
-  { id: "6h", label: "6 h" },
-  { id: "24h", label: "24 h" },
-  { id: "7d", label: "7 días" },
-  { id: "30d", label: "30 días" },
-];
-export function Range({
-  value,
-  set,
-}: {
-  value: string;
-  set: (value: string) => void;
-}) {
-  return (
-    <Segmented
-      label="Periodo del historial"
-      options={ranges}
-      value={value}
-      onSelect={set}
-    />
   );
 }
