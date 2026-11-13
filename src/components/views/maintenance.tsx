@@ -10,6 +10,10 @@ import {
 import { bytes, percent, uptime } from "@/lib/format";
 import type { Container, Metrics } from "@/lib/types";
 import type { ActionRequest } from "../file-browser";
+import {
+  useSensitiveAction,
+  type SensitiveActionOutcome,
+} from "../sensitive-action/sensitive-action";
 import { FilterChips, Panel, StatusDot, StatusStrip, type Tone } from "../ui";
 
 const filterLabels: Record<ContainerFilterId, string> = {
@@ -37,6 +41,8 @@ export function MaintenanceStatus({
   disabled,
   lastAt,
   request,
+  host,
+  onSensitiveSettled,
 }: {
   metrics: Metrics;
   expected: string[];
@@ -44,7 +50,12 @@ export function MaintenanceStatus({
   disabled: boolean;
   lastAt: string | null;
   request: (action: ActionRequest) => void;
+  /** Host id the sensitive actions target; the hub's default host when omitted. */
+  host?: string;
+  /** Called when a sensitive action finishes, so the shell can refresh. */
+  onSensitiveSettled?: (outcome: SensitiveActionOutcome) => void;
 }) {
+  const sensitive = useSensitiveAction();
   const [filter, setFilter] = useState<ContainerFilterId>("all");
   const containers = [...metrics.containers].sort((a, b) =>
     a.name.localeCompare(b.name),
@@ -160,12 +171,30 @@ export function MaintenanceStatus({
                 data-command="reboot"
                 disabled={disabled}
                 onClick={() =>
-                  request({
-                    body: { action: "reboot", confirmation: "REINICIAR NAS" },
+                  sensitive.request({
                     title: "Reiniciar el NAS",
-                    detail:
-                      "Se interrumpirán las reproducciones, las descargas y el acceso por NPM. Oracle seguirá funcionando. El resultado se comprobará cuando el NAS vuelva a responder.",
-                    phrase: "REINICIAR NAS",
+                    description:
+                      "El resultado se comprobará cuando el NAS vuelva a responder.",
+                    consequences: [
+                      {
+                        tone: "warn",
+                        text: "Se interrumpirán las reproducciones y las descargas.",
+                      },
+                      {
+                        tone: "warn",
+                        text: "El acceso por NPM se corta hasta que vuelva.",
+                      },
+                      { tone: "ok", text: "Oracle seguirá funcionando." },
+                    ],
+                    confirmLabel: "Reiniciar NAS",
+                    destructive: true,
+                    endpoint: `/api/action${host ? `?host=${encodeURIComponent(host)}` : ""}`,
+                    body: { action: "reboot", confirmation: "REINICIAR NAS" },
+                    typedConfirmation: {
+                      label: "Escribe REINICIAR NAS para confirmar",
+                      value: "REINICIAR NAS",
+                    },
+                    onSettled: onSensitiveSettled,
                   })
                 }
               >
@@ -176,6 +205,7 @@ export function MaintenanceStatus({
           </Panel>
         </div>
       </div>
+      {sensitive.dialog}
     </div>
   );
 }
