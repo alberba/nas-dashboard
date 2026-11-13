@@ -6,6 +6,7 @@ import {
   integer,
   jsonb,
   index,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 import type { Metrics, Settings } from "./types";
 
@@ -105,10 +106,14 @@ export const samples = pgTable(
   "samples",
   {
     id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    hostId: text().notNull().default("nas-home"),
     at: timestamp().notNull().defaultNow(),
     data: jsonb().$type<Metrics>().notNull(),
   },
-  (t) => [index("samples_at_idx").on(t.at)],
+  (t) => [
+    index("samples_at_idx").on(t.at),
+    index("samples_host_at_idx").on(t.hostId, t.at),
+  ],
 );
 export const presence = pgTable("presence", {
   id: text().primaryKey(),
@@ -117,14 +122,20 @@ export const presence = pgTable("presence", {
     .references(() => user.id, { onDelete: "cascade" }),
   expiresAt: timestamp().notNull(),
 });
-export const configuration = pgTable("configuration", {
-  id: text().primaryKey(),
-  value: jsonb().$type<Settings>().notNull(),
-});
+export const configuration = pgTable(
+  "configuration",
+  {
+    hostId: text().notNull().default("nas-home"),
+    id: text().notNull(),
+    value: jsonb().$type<Settings>().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.hostId, t.id] })],
+);
 export const alerts = pgTable(
   "alerts",
   {
     id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    hostId: text().notNull().default("nas-home"),
     key: text().notNull(),
     title: text().notNull(),
     detail: text().notNull(),
@@ -132,18 +143,27 @@ export const alerts = pgTable(
     at: timestamp().notNull().defaultNow(),
     resolvedAt: timestamp(),
   },
-  (t) => [index("alerts_key_idx").on(t.key), index("alerts_at_idx").on(t.at)],
+  (t) => [
+    index("alerts_key_idx").on(t.key),
+    index("alerts_at_idx").on(t.at),
+    index("alerts_host_key_idx").on(t.hostId, t.key),
+  ],
 );
-export const operations = pgTable("operations", {
-  id: text().primaryKey(),
-  userId: text().notNull(),
-  action: text().notNull(),
-  target: text().notNull(),
-  status: text().notNull(),
-  detail: text(),
-  at: timestamp().notNull().defaultNow(),
-  bootAt: timestamp(),
-});
+export const operations = pgTable(
+  "operations",
+  {
+    id: text().primaryKey(),
+    hostId: text().notNull().default("nas-home"),
+    userId: text().notNull(),
+    action: text().notNull(),
+    target: text().notNull(),
+    status: text().notNull(),
+    detail: text(),
+    at: timestamp().notNull().defaultNow(),
+    bootAt: timestamp(),
+  },
+  (t) => [index("operations_host_at_idx").on(t.hostId, t.at)],
+);
 export const subscriptions = pgTable("subscriptions", {
   endpoint: text().primaryKey(),
   userId: text()
