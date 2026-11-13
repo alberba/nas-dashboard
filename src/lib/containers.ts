@@ -3,7 +3,9 @@ import type { Container } from "./types";
 export type ContainerHealth = "healthy" | "unhealthy" | "starting" | "none";
 export type ContainerFilterId = "all" | "problems" | "stopped";
 
-export function containerHealth(container: Container): ContainerHealth {
+export function containerHealth(
+  container: Pick<Container, "state" | "status">,
+): ContainerHealth {
   if (container.state !== "running") return "none";
   if (/\(unhealthy\)/.test(container.status)) return "unhealthy";
   if (/\(health: starting\)/.test(container.status)) return "starting";
