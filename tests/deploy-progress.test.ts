@@ -329,6 +329,23 @@ describe("deploy progress in six steps", () => {
     expect(progress.failed).toBe(false);
   });
 
+  it("does not keep a failed attempt current after a newer release was installed", () => {
+    const progress = deployProgressFor({
+      pullRequest: merged(),
+      mainCi: "success",
+      release,
+      snapshot: snapshot({ installed: "v2.5.1", failed: "v2.5.0" }),
+      containers: [container()],
+    });
+
+    expect(states(progress)).toMatchObject({
+      deploy: "done",
+      health: "done",
+    });
+    expect(progress.failed).toBe(false);
+    expect(progress.restored).toBe(false);
+  });
+
   it("treats a newer installed release as covering the update", () => {
     const progress = deployProgressFor({
       pullRequest: merged(),

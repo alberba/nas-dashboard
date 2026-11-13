@@ -91,11 +91,19 @@ export function deployProgressFor({
   const failedAt = snapshot?.follower.failed?.since ?? null;
 
   const ciGreen = pullRequest.merged && mainCi === "success";
-  const deploymentFailed = Boolean(release && failedRelease === release.tag);
-  const deploymentPending = Boolean(release && pending === release.tag);
   const installedCovers = Boolean(
     release && installed && compareReleaseTags(installed, release.tag) >= 0,
   );
+  // failed-release.json persists after the follower moves on. A strictly newer
+  // installed release supersedes that failed attempt; the failure stays in the
+  // release history (#23), not in the current progress.
+  const superseded = Boolean(
+    release && installed && compareReleaseTags(installed, release.tag) > 0,
+  );
+  const deploymentFailed = Boolean(
+    release && failedRelease === release.tag && !superseded,
+  );
+  const deploymentPending = Boolean(release && pending === release.tag);
   const restored = Boolean(
     deploymentFailed && !installedCovers && installed !== null,
   );
