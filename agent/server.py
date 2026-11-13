@@ -225,8 +225,12 @@ container_previous = {}
 def container_stat(item):
     ident = item["Id"]
     name = item["Names"][0].lstrip("/")
+    labels = item.get("Labels") or {}
+    project = labels.get("com.docker.compose.project")
+    service = labels.get("com.docker.compose.service")
     result = {"id": ident, "name": name, "image": item["Image"], "state": item["State"],
-              "status": item["Status"], "protected": name in PROTECTED, "cpu": None, "memory": None}
+              "status": item["Status"], "protected": name in PROTECTED, "cpu": None, "memory": None,
+              "compose": {"project": project, "service": service} if project and service else None}
     if item["State"] != "running":
         return result
     try:

@@ -8,6 +8,10 @@ export type HostStatus = HostInfo & {
   connected: boolean;
   lastAt: string | null;
 };
+export type ContainerCompose = {
+  project: string;
+  service: string;
+};
 export type Container = {
   id: string;
   name: string;
@@ -17,6 +21,7 @@ export type Container = {
   protected: boolean;
   cpu: number | null;
   memory: number | null;
+  compose: ContainerCompose | null;
 };
 export type Metrics = {
   timestamp: number;
@@ -79,6 +84,50 @@ export type Operation = {
   status: string;
   detail: string | null;
   at: string;
+};
+export type RenovateUpdateType =
+  | "major"
+  | "minor"
+  | "patch"
+  | "digest"
+  | "pin"
+  | "unknown";
+export type RenovateCi = "success" | "pending" | "failure" | "none";
+export type RenovateContainer = {
+  hostId: string;
+  id: string;
+  name: string;
+  image: string;
+  project: string;
+  service: string;
+};
+export type RenovateUpdate = {
+  file: string;
+  service: string;
+  image: string;
+  from: string;
+  to: string;
+  type: RenovateUpdateType;
+};
+export type RenovatePullRequest = {
+  number: number;
+  title: string;
+  url: string;
+  branch: string;
+  author: string;
+  headSha: string;
+  draft: boolean;
+  automerge: boolean;
+  requiresWorker: boolean;
+  ci: RenovateCi;
+  type: RenovateUpdateType;
+  updates: RenovateUpdate[];
+  containers: RenovateContainer[];
+};
+export type RenovateOverview = {
+  enabled: boolean;
+  repository: string | null;
+  prs: RenovatePullRequest[];
 };
 export type Overview = {
   host: HostInfo;

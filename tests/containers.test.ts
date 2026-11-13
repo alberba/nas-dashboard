@@ -12,6 +12,7 @@ function container(overrides: Partial<Container>): Container {
     protected: false,
     cpu: 1,
     memory: 1,
+    compose: null,
     ...overrides,
   };
 }
