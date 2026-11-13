@@ -85,6 +85,36 @@ export function primaryOrigin() {
 export function requestOrigin(request: Request) {
   const origin = request.headers.get("origin");
   if (origin) return origin;
+
+  // A same-origin GET carries no Origin header. Behind the reverse proxy the
+  // internal scheme can be http, so read the forwarded host and fall back to
+  // https for public hosts: the method depends on the host, not the scheme.
+  const forwardedHost = (
+    request.headers.get("x-forwarded-host") ?? request.headers.get("host")
+  )
+    ?.split(",")[0]
+    ?.trim();
+  if (forwardedHost) {
+    const forwardedProto = request.headers
+      .get("x-forwarded-proto")
+      ?.split(",")[0]
+      ?.trim();
+    let protocol = forwardedProto;
+    if (!protocol) {
+      try {
+        const url = new URL(request.url);
+        protocol = ["localhost", "127.0.0.1", "[::1]", "::1"].includes(
+          url.hostname,
+        )
+          ? url.protocol.replace(":", "")
+          : "https";
+      } catch {
+        protocol = "https";
+      }
+    }
+    return `${protocol}://${forwardedHost}`;
+  }
+
   try {
     return new URL(request.url).origin;
   } catch {
@@ -98,7 +128,8 @@ export function verificationMethodForOrigin(
 ): VerificationMethod {
   if (!origin || !primary) return "passkey";
   try {
-    return new URL(origin).origin === new URL(primary).origin
+    return new URL(origin).hostname.toLowerCase() ===
+      new URL(primary).hostname.toLowerCase()
       ? "passkey"
       : "password";
   } catch {

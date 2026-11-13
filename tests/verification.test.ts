@@ -58,6 +58,32 @@ describe("recent verification for sensitive actions", () => {
     expect(await alternate.json()).toMatchObject({ method: "password" });
   });
 
+  it("keeps passkeys on the primary host when the proxy reports http", async () => {
+    process.env.BETTER_AUTH_URL = "https://hub.example";
+    const response = await handleVerificationStatus({
+      request: new Request("http://hub.example/api/verification"),
+      session,
+      store: new MemoryStore(),
+      now,
+    });
+
+    expect(await response.json()).toMatchObject({ method: "passkey" });
+  });
+
+  it("reads the public host from the proxy headers on an internal request", async () => {
+    process.env.BETTER_AUTH_URL = "https://hub.example";
+    const response = await handleVerificationStatus({
+      request: new Request("http://127.0.0.1:3000/api/verification", {
+        headers: { host: "hub.example", "x-forwarded-proto": "" },
+      }),
+      session,
+      store: new MemoryStore(),
+      now,
+    });
+
+    expect(await response.json()).toMatchObject({ method: "passkey" });
+  });
+
   it("rejects a sensitive action with a typed error when there is no verification", async () => {
     process.env.BETTER_AUTH_URL = "https://hub.example";
     const response = await guardSensitiveAction({
