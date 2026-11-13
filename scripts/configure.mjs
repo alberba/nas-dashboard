@@ -9,11 +9,18 @@ const { values } = parseArgs({
     bind: { type: "string", default: "127.0.0.1" },
     media: { type: "string", default: "/path/to/media" },
     torrents: { type: "string", default: "/path/to/torrents" },
+    "stack-path": { type: "string", default: "/volume2/media-stack" },
+    "appdata-path": { type: "string", default: "/volume2/media-stack-appdata" },
     output: { type: "string", default: ".env" },
     "agent-output": { type: "string", default: "agent/.env" },
     "apps-url": { type: "string" },
     "apps-name": { type: "string", default: "Apps" },
     "apps-output": { type: "string", default: "agent/.env.apps" },
+    "apps-stack-path": { type: "string", default: "/path/to/media-stack" },
+    "apps-appdata-path": {
+      type: "string",
+      default: "/path/to/media-stack-appdata",
+    },
   },
 });
 if (!values.url || !values.nas)
@@ -79,6 +86,8 @@ const agent = {
   ALLOW_REBOOT: "true",
   NAS_MEDIA_PATH: values.media,
   NAS_TORRENTS_PATH: values.torrents,
+  MEDIA_STACK_CHECKOUT_PATH: values["stack-path"],
+  MEDIA_STACK_APPDATA_PATH: values["appdata-path"],
 };
 const apps = {
   AGENT_TOKEN: appsToken,
@@ -89,6 +98,8 @@ const apps = {
   ALLOW_REBOOT: "false",
   PROTECTED_CONTAINERS:
     "nas-dashboard-app-1,nas-dashboard-db-1,nas-dashboard-worker-1,nas-dashboard-migrate-1",
+  MEDIA_STACK_CHECKOUT_PATH: values["apps-stack-path"],
+  MEDIA_STACK_APPDATA_PATH: values["apps-appdata-path"],
 };
 function save(path, data) {
   writeFileSync(

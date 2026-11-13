@@ -30,6 +30,7 @@ import {
   HostNotFound,
 } from "@/lib/hosts";
 import { hostStatuses } from "@/lib/host-status";
+import { maintenanceForHost } from "@/lib/maintenance";
 import { notify } from "@/lib/push";
 import type { Metrics } from "@/lib/types";
 
@@ -126,6 +127,13 @@ async function handle(
         default: primaryHost(hosts).id,
         hosts: await hostStatuses(hosts),
       });
+    }
+    if (route === "maintenance" && !mutation) {
+      const host = resolveHost(
+        getHosts(),
+        request.nextUrl.searchParams.get("host"),
+      );
+      return json(await maintenanceForHost(host));
     }
     if (route === "overview" && !mutation) {
       const hosts = getHosts();
