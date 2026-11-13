@@ -574,7 +574,12 @@ export function Dashboard({ name }: { name: string }) {
               {view === "files" && (
                 <FileBrowser connected={connected && !busy} request={request} />
               )}
-              {view === "apps" && <AppsView appDomain={appDomain} />}
+              {view === "apps" && (
+                <AppsView
+                  appDomain={appDomain}
+                  containers={connected ? metrics?.containers : undefined}
+                />
+              )}
               {view === "settings" && data && (
                 <Settings value={data.settings} refresh={refresh} />
               )}
