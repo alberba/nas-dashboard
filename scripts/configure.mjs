@@ -118,5 +118,5 @@ if (values["apps-url"]) save(values["apps-output"], apps);
 console.log("Environment files created with mode 0600. Keep them out of Git.");
 if (values["apps-url"])
   console.log(
-    "Apps agent: copy agent/ to the apps server and run docker compose -f compose.apps.yaml up -d --build.",
+    "Apps agent: copy agent/ to the apps server and run docker compose --env-file .env.apps -f compose.apps.yaml up -d --build.",
   );

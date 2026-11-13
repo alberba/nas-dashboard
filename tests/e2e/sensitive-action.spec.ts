@@ -80,7 +80,9 @@ test("the confirmation is a modal dialog that keeps and returns focus and closes
   await expect(dialog(page)).toHaveAttribute("aria-labelledby", /.+/);
   await expect(dialog(page).locator("[data-consequence]")).not.toHaveCount(0);
   expect(
-    await dialog(page).evaluate((node) => node.contains(document.activeElement)),
+    await dialog(page).evaluate((node) =>
+      node.contains(document.activeElement),
+    ),
   ).toBe(true);
 
   await page.keyboard.press("Escape");
@@ -390,5 +392,20 @@ test("a definitive rejection is shown as failed and offers no resend", async ({
     "data-harness-outcome",
     "failed",
   );
+  expect(sent).toHaveLength(1);
+});
+
+test("an HTTP 200 replay with pending state remains uncertain and is never sent again", async ({
+  page,
+}) => {
+  await signIn(page);
+  await recentVerification(page, "passkey");
+  const sent = await answerAction(page, [
+    { status: 200, json: { status: "pending" } },
+  ]);
+  await page.goto(harness);
+  await trigger(page).click();
+  await confirm(page).click();
+  await expect(dialog(page)).toHaveAttribute("data-phase", "pending");
   expect(sent).toHaveLength(1);
 });

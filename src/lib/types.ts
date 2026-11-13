@@ -28,6 +28,8 @@ export type Container = {
   cpu: number | null;
   memory: number | null;
   compose: ContainerCompose | null;
+  /** Earliest unhealthy sample observed by this agent, Unix seconds; resets on recovery. */
+  healthObservedSince?: number | null;
 };
 export type Metrics = {
   timestamp: number;

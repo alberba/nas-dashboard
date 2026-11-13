@@ -17,6 +17,12 @@ export function needsAttention(container: Container, expected: string[]) {
   if (
     container.oneShot &&
     container.state !== "running" &&
+    container.exitCode === 0
+  )
+    return false;
+  if (
+    container.oneShot &&
+    container.state !== "running" &&
     (container.exitCode ?? 0) > 0
   )
     return true;

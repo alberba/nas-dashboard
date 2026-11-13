@@ -30,6 +30,8 @@ import {
 import { Settings } from "./settings";
 import { AlertsView } from "./views/alerts";
 import { AppsView } from "./views/apps";
+import { CommandSearch } from "./command-search";
+import { Deployments } from "./views/deployments";
 import { MaintenanceStatus } from "./views/maintenance";
 import { ResourcesView } from "./views/resources";
 import {
@@ -60,6 +62,7 @@ const headings: Record<View, string> = {
 };
 const maintenanceTabs: { id: MaintenanceTab; label: string }[] = [
   { id: "status", label: "Estado" },
+  { id: "deployments", label: "Despliegues" },
 ];
 
 export function Dashboard({ name }: { name: string }) {
@@ -379,13 +382,20 @@ export function Dashboard({ name }: { name: string }) {
               {navigation.map((item) => (
                 <button
                   key={item.id}
-                  className={view === item.id ? "nav-item selected" : "nav-item"}
+                  className={
+                    view === item.id ? "nav-item selected" : "nav-item"
+                  }
                   aria-current={view === item.id ? "page" : undefined}
                   data-nav={item.id}
                   onClick={() => navigate(item.id)}
                 >
                   <item.icon />
                   <span>{item.label}</span>
+                  {item.id === "maintenance" && data && (
+                    <b data-maintenance-count="">
+                      {data.openAlerts ?? openAlerts.length}
+                    </b>
+                  )}
                   {view === item.id && <i className="nav-dot" />}
                 </button>
               ))}
@@ -428,7 +438,21 @@ export function Dashboard({ name }: { name: string }) {
                   ))}
                 </ol>
               </nav>
-              <div className="topbar-search" data-slot="search" />
+              <div className="topbar-search" data-slot="search">
+                <CommandSearch
+                  containers={metrics?.containers ?? []}
+                  onContainer={(id) => {
+                    go({ ...route, view: "maintenance", tab: "status" });
+                    window.setTimeout(
+                      () =>
+                        document
+                          .getElementById(`container-${id}`)
+                          ?.scrollIntoView({ block: "center" }),
+                      100,
+                    );
+                  }}
+                />
+              </div>
               <div className="toolbar">
                 <span
                   className={`connection-chip ${connected ? "" : "stale"}`}
@@ -495,7 +519,9 @@ export function Dashboard({ name }: { name: string }) {
                           key={tab.id}
                           href={routeHref({ ...route, tab: tab.id })}
                           data-subview-link={tab.id}
-                          aria-current={route.tab === tab.id ? "page" : undefined}
+                          aria-current={
+                            route.tab === tab.id ? "page" : undefined
+                          }
                           onClick={(event) => {
                             event.preventDefault();
                             go({ ...route, tab: tab.id });
@@ -529,8 +555,9 @@ export function Dashboard({ name }: { name: string }) {
               {!connected && data && (
                 <p className="notice warning">
                   <TriangleAlert />
-                  {hostName} no responde o los datos están desactualizados. Puedes
-                  consultar el historial; las acciones están desactivadas.
+                  {hostName} no responde o los datos están desactualizados.
+                  Puedes consultar el historial; las acciones están
+                  desactivadas.
                 </p>
               )}
               {(!data || !metrics) &&
@@ -560,16 +587,22 @@ export function Dashboard({ name }: { name: string }) {
                   setRange={setRange}
                 />
               )}
-              {metrics && data && view === "maintenance" && (
-                <MaintenanceStatus
-                  metrics={metrics}
-                  expected={data.settings.expectedContainers}
-                  connected={connected}
-                  disabled={!connected || busy}
-                  lastAt={data.lastAt}
-                  request={request}
-                  onSensitiveSettled={() => void refresh()}
-                />
+              {metrics &&
+                data &&
+                view === "maintenance" &&
+                route.tab === "status" && (
+                  <MaintenanceStatus
+                    metrics={metrics}
+                    expected={data.settings.expectedContainers}
+                    connected={connected}
+                    disabled={!connected || busy}
+                    lastAt={data.lastAt}
+                    request={request}
+                    onSensitiveSettled={() => void refresh()}
+                  />
+                )}
+              {view === "maintenance" && route.tab === "deployments" && (
+                <Deployments key={selectedId} />
               )}
               {view === "files" && (
                 <FileBrowser connected={connected && !busy} request={request} />

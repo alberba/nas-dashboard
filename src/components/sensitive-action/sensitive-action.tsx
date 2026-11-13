@@ -203,9 +203,7 @@ export function useSensitiveAction() {
       try {
         await verify(verification?.method ?? "passkey");
       } catch (err) {
-        setError(
-          err instanceof Error ? err.message : "No se pudo verificar",
-        );
+        setError(err instanceof Error ? err.message : "No se pudo verificar");
         setPhase("ready");
         return;
       }
@@ -230,6 +228,21 @@ export function useSensitiveAction() {
     }
     const data = await readJson(response);
 
+    if (response.ok && data.status === "pending") {
+      setPhase("pending");
+      settle({ status: "pending", idempotencyKey, data });
+      return;
+    }
+    if (response.ok && data.status === "failed") {
+      setPhase("failed");
+      settle({
+        status: "failed",
+        idempotencyKey,
+        data,
+        error: "La operación anterior falló",
+      });
+      return;
+    }
     if (response.ok) {
       settle({ status: "succeeded", idempotencyKey, data });
       dialogRef.current?.close();
@@ -394,7 +407,10 @@ export function useSensitiveAction() {
         )}
 
         {!settled && needsPasskey && (
-          <p className={styles.hint} data-tone={verification?.reason ?? "missing"}>
+          <p
+            className={styles.hint}
+            data-tone={verification?.reason ?? "missing"}
+          >
             <Fingerprint aria-hidden="true" />
             <span>
               {verification?.reason === "expired"

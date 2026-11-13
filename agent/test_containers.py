@@ -39,3 +39,17 @@ class ComposeMetadata(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class HealthObservation(unittest.TestCase):
+    def test_unhealthy_observation_survives_samples_and_resets_on_recovery(self):
+        from unittest.mock import patch
+        item = summary({})
+        item.update(State="running", Status="Up 1 hour (unhealthy)")
+        with patch("server.docker", side_effect=RuntimeError("stats unavailable")):
+            with patch("server.time.time", return_value=100):
+                first = server.container_stat(item)
+            self.assertEqual(first["healthObservedSince"], 100)
+            with patch("server.time.time", return_value=160):
+                self.assertEqual(server.container_stat(item)["healthObservedSince"], 100)
+            item["Status"] = "Up 1 hour (healthy)"
+            self.assertIsNone(server.container_stat(item)["healthObservedSince"])

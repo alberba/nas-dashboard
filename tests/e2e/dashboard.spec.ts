@@ -1,3 +1,4 @@
+import { submitLogin } from "./login";
 import { expect, test } from "@playwright/test";
 const email = "ci@hub.invalid",
   password = "Ci-only-password-not-used-in-production!";
@@ -37,7 +38,7 @@ test("login, navigation, origin checks and mobile layout", async ({ page }) => {
   await page.goto("/");
   await page.getByLabel("Correo", { exact: true }).fill(email);
   await page.getByLabel("Contraseña", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Entrar", exact: true }).click();
+  await submitLogin(page);
   await expect(page.locator('[data-view="summary"]')).toBeVisible();
   const forbidden = await page.request.post("/api/presence", {
     headers: { Origin: "https://evil.invalid" },
@@ -104,7 +105,7 @@ test("registers a passkey and signs in with it", async ({ page }) => {
   await page.goto("/");
   await page.getByLabel("Correo", { exact: true }).fill(email);
   await page.getByLabel("Contraseña", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Entrar", exact: true }).click();
+  await submitLogin(page);
   await expect(page.locator('[data-view="summary"]')).toBeVisible();
   await page.getByRole("button", { name: "Ajustes", exact: true }).click();
   await page.getByRole("button", { name: "Añadir", exact: true }).click();

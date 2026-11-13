@@ -178,7 +178,11 @@ const unitStates: Record<
  * Estado strip of Mantenimiento plus the host's automations and failed
  * systemd units, from one cached snapshot of the selected host.
  */
-export function MaintenanceSnapshotStatus() {
+export function MaintenanceSnapshotStatus({
+  vpn,
+}: {
+  vpn?: "healthy" | "unhealthy" | "starting" | "none";
+}) {
   const { phase, snapshot, stale } = useMaintenanceSnapshot();
   const nowMs = (snapshot?.timestamp ?? 0) * 1000;
   const cells = snapshot ? statusCells(snapshot) : null;
@@ -221,7 +225,29 @@ export function MaintenanceSnapshotStatus() {
             </div>
           ),
         )}
+        {vpn && (
+          <div className="strip-segment" data-segment="vpn">
+            <span className="strip-label">VPN</span>
+            <span className="strip-value">
+              <StatusDot
+                tone={
+                  vpn === "healthy"
+                    ? "gain"
+                    : vpn === "unhealthy"
+                      ? "loss"
+                      : "muted"
+                }
+              />
+              {vpn === "healthy"
+                ? "Conectada"
+                : vpn === "unhealthy"
+                  ? "Falla"
+                  : "Sin datos"}
+            </span>
+          </div>
+        )}
       </div>
+
       {(stale || phase === "error") && (
         <p
           className={styles.note}

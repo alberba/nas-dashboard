@@ -1,0 +1,117 @@
+.body {
+  padding: 18px;
+  display: grid;
+  gap: 12px;
+  min-inline-size: 0;
+}
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding-block: 12px;
+  border-block-end: 1px solid var(--row-line);
+}
+.row > strong {
+  flex: 1 1 140px;
+}
+.note {
+  color: var(--soft);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.input {
+  inline-size: 100%;
+  min-block-size: 44px;
+  padding: 10px;
+  border: 1px solid var(--ctrl-line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+}
+.button {
+  min-block-size: 44px;
+  padding-inline: 16px;
+  border-radius: 22px;
+  border: 1px solid var(--ctrl-line);
+  background: var(--panel2);
+  color: var(--text);
+  cursor: pointer;
+}
+.button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.button:active {
+  background: var(--panel);
+}
+.button:focus-visible,
+.input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .button:hover:enabled {
+    background: var(--row-hover);
+  }
+}
+.log {
+  padding: 14px;
+  background: var(--code-bg);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.75;
+  max-block-size: 380px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.steps {
+  display: inline-flex;
+  gap: 3px;
+  margin-inline-end: 8px;
+}
+.steps i {
+  display: block;
+  inline-size: 14px;
+  block-size: 5px;
+  background: var(--line);
+  border-radius: 2px;
+}
+.steps i[data-state="done"] {
+  background: var(--gain);
+}
+.steps i[data-state="current"] {
+  background: var(--accent);
+}
+.steps i[data-state="failed"] {
+  background: var(--loss);
+}
+.pill {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 44px;
+  border: 1px solid var(--accent);
+  border-radius: 22px;
+  padding-inline: 10px;
+  color: var(--accent);
+  font-size: 11px;
+}
+.expanded {
+  background: color-mix(in oklch, var(--peach) 5%, var(--panel));
+}
+.dialog {
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  inline-size: min(560px, 90vw);
+}
+.dialog::backdrop {
+  background: color-mix(in oklch, var(--bg) 80%, transparent);
+}

@@ -8,7 +8,7 @@ export const views = [
   "alerts",
 ] as const;
 export type View = (typeof views)[number];
-export const maintenanceTabs = ["status"] as const;
+export const maintenanceTabs = ["status", "deployments"] as const;
 export type MaintenanceTab = (typeof maintenanceTabs)[number];
 /**
  * `host` is the host chosen in Mantenimiento. It is kept while the Operador

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import {
   initialSnapshotState,
   startSnapshotPolling,
@@ -12,9 +12,29 @@ import { useHostScope } from "../host-context";
  * a minute. Switching host drops the previous host's data at once (the held
  * answer carries its host key) and aborts its request in flight.
  */
+const SnapshotContext = createContext<SnapshotState | null>(null);
 export function useMaintenanceSnapshot(): SnapshotState {
+  const state = useContext(SnapshotContext);
+  if (!state) throw new Error("MaintenanceSnapshotProvider is required");
+  return state;
+}
+export function MaintenanceSnapshotProvider({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const state = useSnapshotPolling();
+  return <SnapshotContext value={state}>{children}</SnapshotContext>;
+}
+function useSnapshotPolling(): SnapshotState {
   const { key, withHost } = useHostScope();
   const url = withHost("/api/maintenance");
+  const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    const update = () => setRevision((n) => n + 1);
+    window.addEventListener("maintenance-refresh", update);
+    return () => window.removeEventListener("maintenance-refresh", update);
+  }, []);
   const [held, setHeld] = useState<{ key: string; state: SnapshotState }>({
     key,
     state: initialSnapshotState,
@@ -25,7 +45,7 @@ export function useMaintenanceSnapshot(): SnapshotState {
         url,
         onChange: (state) => setHeld({ key, state }),
       }),
-    [key, url],
+    [key, url, revision],
   );
   return held.key === key ? held.state : initialSnapshotState;
 }

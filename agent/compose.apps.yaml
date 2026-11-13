@@ -1,5 +1,5 @@
 # Agente del Servidor de apps (Oracle). Se une a la red privada del hub, sin
-# publicar puertos. Ejecuta desde agent/: docker compose -f compose.apps.yaml up -d --build
+# publicar puertos. Ejecuta desde agent/: docker compose --env-file .env.apps -f compose.apps.yaml up -d --build
 name: hub-agent-apps
 services:
   agent:

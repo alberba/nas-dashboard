@@ -1,3 +1,4 @@
+import { submitLogin } from "./login";
 import { expect, test, type Cookie, type Page } from "@playwright/test";
 const email = "ci@hub.invalid",
   password = "Ci-only-password-not-used-in-production!";
@@ -111,7 +112,7 @@ test.beforeAll(async ({ request, browser, baseURL }) => {
   await page.goto("/");
   await page.getByLabel("Correo", { exact: true }).fill(email);
   await page.getByLabel("Contraseña", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Entrar", exact: true }).click();
+  await submitLogin(page);
   await expect(page.locator('[data-view="summary"]')).toBeVisible();
   session = await context.cookies();
   await context.close();

@@ -75,7 +75,7 @@ El agente del Servidor de apps comparte máquina con el hub. Usa su propio `.env
 
 ```sh
 cd agent
-docker compose -f compose.apps.yaml up -d --build
+docker compose --env-file .env.apps -f compose.apps.yaml up -d --build
 ```
 
 La instantánea de Mantenimiento monta en solo lectura el checkout y el estado de media-stack. Configura `MEDIA_STACK_CHECKOUT_PATH` y `MEDIA_STACK_APPDATA_PATH` en el NAS; en el Servidor de apps usa `--apps-stack-path` y `--apps-appdata-path` al generar la configuración. La imagen del agente incluye `smartctl` y lee los discos del host a través del contenedor auxiliar, sin instalar nada en el NAS ni ejecutar acciones sobre los discos. El contrato completo está en `agent/MAINTENANCE.md`.

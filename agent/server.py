@@ -266,12 +266,21 @@ container_cache = (0, [])
 container_previous = {}
 
 
+unhealthy_observed_since = {}
+
+
 def container_stat(item, active=None, protected=None):
     result = lifecycle.classify_one(
         item,
         active if active is not None else set(),
         protected if protected is not None else PROTECTED,
     )
+    ident = result["id"]
+    if result["state"] == "running" and "(unhealthy)" in item.get("Status", ""):
+        unhealthy_observed_since.setdefault(ident, time.time())
+    else:
+        unhealthy_observed_since.pop(ident, None)
+    result["healthObservedSince"] = unhealthy_observed_since.get(ident)
     project = result["composeProject"]
     service = result["composeService"]
     result.update({
