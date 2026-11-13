@@ -37,6 +37,7 @@ import {
 } from "@/lib/hosts";
 import { hostStatuses } from "@/lib/host-status";
 import { maintenanceForHost } from "@/lib/maintenance";
+import { runHostCommand } from "@/lib/host-commands";
 import { notify } from "@/lib/push";
 import {
   fetchRenovatePullRequests,
@@ -183,6 +184,13 @@ async function handle(
         request.nextUrl.searchParams.get("host"),
       );
       return json(await maintenanceForHost(host));
+    }
+    if (route === "host-command" && request.method === "POST") {
+      return await runHostCommand({
+        request,
+        session: current,
+        hosts: getHosts(),
+      });
     }
     if (route === "renovate" && !mutation) {
       const config = githubConfig();

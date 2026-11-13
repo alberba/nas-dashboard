@@ -440,6 +440,9 @@ class HostExecutor:
         self.image = image or os.getenv("HOST_HELPER_IMAGE", "hub-agent:1")
 
     def run(self, argv, timeout=8):
+        return self.run_status(argv, timeout=timeout)[1]
+
+    def run_status(self, argv, timeout=8):
         if not isinstance(argv, list) or not argv:
             raise ValueError("Comando de host no válido")
         created = self.docker.call(
@@ -462,7 +465,7 @@ class HostExecutor:
             self.docker.call(
                 "POST", "/containers/" + ident + "/start", timeout=timeout
             )
-            self.docker.call(
+            waited = self.docker.call(
                 "POST", "/containers/" + ident + "/wait", timeout=timeout
             )
             logs = self.docker.call(
@@ -471,7 +474,11 @@ class HostExecutor:
                 timeout=timeout,
                 raw=True,
             )
-            return demultiplex_logs(logs)
+            status = waited.get("StatusCode") if isinstance(waited, dict) else None
+            return (
+                status if isinstance(status, int) else None,
+                demultiplex_logs(logs),
+            )
         finally:
             try:
                 self.docker.call(
@@ -714,6 +721,12 @@ class Maintenance:
             self._cached = value
             self._expires = now + self.cache_seconds
             return value
+
+    def invalidate(self):
+        """Forces the next read to observe a just-executed host action."""
+        with self._lock:
+            self._cached = None
+            self._expires = 0.0
 
     def _build(self, now):
         errors = []

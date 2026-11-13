@@ -154,6 +154,64 @@ temporizadores monotónicos. Ambos pueden ser `null`.
 `MAINTENANCE_STACK_PREFIX`; `failedUnits.other` contiene el resto. Nunca se mezclan en la
 misma lista.
 
+## Comandos de host (ticket #19)
+
+El panel Acciones de Mantenimiento · Estado solo puede ejecutar una lista cerrada de
+comandos. Cada comando se identifica por su nombre; la petición nunca lleva unidades,
+opciones ni argumentos libres.
+
+| Comando | Efecto | Instancia | Servidor de apps |
+| --- | --- | --- | --- |
+| `deploy-now` | Lanza el seguidor sin esperar al timer | `systemctl start --no-block media-stack-merged-updates.service` | `systemctl start --no-block media-stack-apps-merged-updates.service` |
+| `pause-follower` | Desactiva y para el timer del seguidor | `systemctl disable --now media-stack-merged-updates.timer` | `systemctl disable --now media-stack-apps-merged-updates.timer` |
+| `resume-follower` | Activa y arranca el timer del seguidor | `systemctl enable --now media-stack-merged-updates.timer` | `systemctl enable --now media-stack-apps-merged-updates.timer` |
+| `run-security` | Lanza el actualizador de seguridad | `systemctl start --no-block media-stack-security-updates.service` | `systemctl start --no-block media-stack-apps-security-updates.service` |
+
+Los nombres salen de `HOST_ROLE` y de `MAINTENANCE_UNITS`: el agente toma la primera
+unidad cuyo nombre contiene `merged-updates` o `security-updates`. Si el rol configurado
+no tiene esa unidad, el comando se rechaza sin ejecutar nada. Los nombres se validan con
+el mismo patrón que las lecturas y nunca se interpolan en una shell.
+
+### Contrato HTTP
+
+Agente: `POST /command` con `Authorization: Bearer <AGENT_TOKEN>` y cuerpo estricto
+`{"command": "<nombre>"}`. Responde `200 {"command": "<nombre>", "status": "success"}`.
+Un nombre desconocido, una unidad no configurada o un cuerpo con campos extra responde
+`400`. Un fallo no confirmado del auxiliar responde `502`.
+
+Hub: `POST /api/host-command?host=<id>` con `Idempotency-Key: <uuid>` y cuerpo
+`{"command": "<nombre>"}`. Mantiene la comprobación de origen y de sesión actual. La
+respuesta correcta es:
+
+```json
+{
+  "ok": true,
+  "status": "success",
+  "operation": { "id": "…", "action": "pause-follower", "target": "NAS-HOME", "status": "success" },
+  "result": { "command": "pause-follower", "status": "success" }
+}
+```
+
+Reglas:
+
+- Cada acción inserta una fila en `operations` con estado `pending` antes de llamar al
+  agente y la actualiza a `success` o `failed`.
+- La clave de idempotencia es por host: repetirla devuelve la operación existente sin
+  ejecutar el comando; usarla en otro host responde `409`.
+- Si el host no está conectado, responde `503` y no crea operación ni llama al agente.
+- Si la respuesta se pierde o el agente responde `5xx`, la operación queda `pending` y
+  se responde `502`. El hub no reintenta nunca; el Operador comprueba la franja antes de
+  repetir con una clave nueva.
+- Tras ejecutar (o intentar) un comando, el agente invalida su caché de instantánea. La
+  siguiente lectura de `/maintenance` refleja la pausa o reanudación sin esperar los 60 s.
+- Las respuestas, los errores y el registro de operaciones no contienen el token del
+  agente, rutas del host ni la salida del auxiliar.
+
+El auxiliar es el mismo contenedor privilegiado con `nsenter` que usan las lecturas:
+recibe un `argv` fijo y no hay endpoint para comandos arbitrarios. El contrato de tipos y
+la lista cerrada para la interfaz están en `src/lib/host-command-contract.ts`; la lista
+de Python, en `agent/host_commands.py`.
+
 ## Fallos, caché y seguridad
 
 - La instantánea se cachea `MAINTENANCE_CACHE_SECONDS` (60 s por defecto). Varias
@@ -174,5 +232,10 @@ misma lista.
 - `agent/test_maintenance.py`: directorios temporales con los JSON reales, unidades y
   Docker inyectados, comprobación de caché, degradación, separación de unidades fallidas,
   reinicio disponible/no disponible, lista cerrada de unidades y ejecutor `nsenter`.
+- `agent/test_host_commands.py`: nombres de unidad por rol, `argv` fijo para cada
+  comando, rechazo de nombres y argumentos libres, código de salida del auxiliar, caché
+  invalidada tras la acción y rutas HTTP del agente.
 - `tests/api-maintenance.test.ts`: agente HTTP falso por host, selección de host, ausencia
   de credenciales en la respuesta y no reintento cuando el agente falla.
+- `tests/api-host-commands.test.ts`: comandos permitidos por host, origen, idempotencia,
+  `operations`, rechazo del agente y resultado incierto sin reintento.

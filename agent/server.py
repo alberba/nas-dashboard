@@ -19,6 +19,7 @@ from urllib.parse import urlparse, parse_qs, urlencode
 import lifecycle
 import logs
 import maintenance
+import host_commands
 
 
 def configured_roots(enabled, media, torrents):
@@ -69,6 +70,11 @@ ALLOW_REBOOT = os.getenv("ALLOW_REBOOT", "true").strip().lower() not in (
     "off",
 )
 MAINTENANCE = maintenance.Maintenance.from_env()
+COMMANDS = host_commands.HostCommands(
+    role=MAINTENANCE.role,
+    unit_names=MAINTENANCE.unit_names,
+    executor=maintenance.HostExecutor(),
+)
 LOCK = threading.RLock()
 
 
@@ -435,6 +441,17 @@ class Handler(BaseHTTPRequestHandler):
                     result = container_logs(query.get("id", [""])[0],
                                             query.get("lines", [str(logs.DEFAULT_LINES)])[0],
                                             query.get("since", [""])[0])
+                elif self.command == "POST" and route.path == "/command":
+                    size = int(self.headers.get("Content-Length", 0))
+                    if not 0 < size <= 2048:
+                        raise ValueError("Solicitud no válida")
+                    body = json.loads(self.rfile.read(size))
+                    if not isinstance(body, dict) or set(body) != {"command"}:
+                        raise ValueError("Solicitud no válida")
+                    try:
+                        result = COMMANDS.execute(body["command"])
+                    finally:
+                        MAINTENANCE.invalidate()
                 elif self.command == "POST" and route.path == "/action":
                     size = int(self.headers.get("Content-Length", 0))
                     if not 0 < size <= 8192:
