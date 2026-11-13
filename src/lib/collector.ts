@@ -5,9 +5,18 @@ import { nasForHost } from "./nas";
 import { getSettings, saveSettings } from "./settings";
 import { getHosts, type HostConfig } from "./hosts";
 import { notify } from "./push";
+import {
+  deploymentAlertSignals,
+  maintenanceAlertSignals,
+} from "./maintenance-alerts";
+import type { DeploymentsSnapshot } from "./deployments";
+import type { MaintenanceSnapshot } from "./maintenance";
 import type { Metrics } from "./types";
 
 const started = new Map<string, number>();
+/** Snapshot-backed alerts are refreshed at most once a minute per host. */
+const ALERT_SNAPSHOT_INTERVAL_MS = 60_000;
+const alertSnapshotAt = new Map<string, number>();
 
 function scoped(host: HostConfig, key: string) {
   return `${host.id}:${key}`;
@@ -55,6 +64,42 @@ async function condition(
       .insert(alerts)
       .values({ hostId: host.id, key, title, detail, severity });
     await notify(title, detail, scoped(host, key));
+  }
+}
+
+/**
+ * Extends the existing thresholds with the new maintenance conditions. Both
+ * snapshots are read-only and cached by the agent; the hub does not retry and
+ * a failed or degraded read leaves open alerts exactly as they were.
+ */
+async function collectSnapshotAlerts(host: HostConfig, now: number) {
+  const previous = alertSnapshotAt.get(host.id);
+  if (previous !== undefined && now - previous < ALERT_SNAPSHOT_INTERVAL_MS)
+    return;
+  alertSnapshotAt.set(host.id, now);
+  const [maintenance, deployments] = await Promise.allSettled([
+    nasForHost<MaintenanceSnapshot>(host, "/maintenance"),
+    nasForHost<DeploymentsSnapshot>(host, "/deployments?lines=1"),
+  ]);
+  const signals = [
+    ...(maintenance.status === "fulfilled"
+      ? maintenanceAlertSignals(maintenance.value, host.name)
+      : []),
+    ...(deployments.status === "fulfilled"
+      ? deploymentAlertSignals(deployments.value, host.name)
+      : []),
+  ];
+  for (const signal of signals) {
+    await condition(
+      host,
+      signal.key,
+      signal.failing,
+      signal.title,
+      signal.detail,
+      now,
+      0,
+      signal.severity,
+    );
   }
 }
 
@@ -175,6 +220,7 @@ export async function collectHost(host: HostConfig, now = Date.now()) {
       30,
     );
   }
+  await collectSnapshotAlerts(host, now);
   const pending = await db
     .select()
     .from(operations)

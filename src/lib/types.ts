@@ -207,6 +207,8 @@ export type Overview = {
   connected: boolean;
   interval: number;
   alerts: Alert[];
+  /** Open alerts for the selected host; matches the sidebar counter. */
+  openAlerts: number;
   operations: Operation[];
   history: {
     at: string;

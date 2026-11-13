@@ -1,10 +1,10 @@
 # Instantánea de mantenimiento del agente
 
-Contrato backend de los tickets #17, #18, #19 y #23 para la franja **Mantenimiento ·
-Estado**, la tabla de **Automatismos**, el panel **Discos**, las acciones de host y el panel
-**Despliegues** de `DESIGN.md`. El hub lo consume con `GET /api/maintenance?host=<id>` y
-`GET /api/deployments?host=<id>`; el agente los publica en `GET /maintenance` y
-`GET /deployments`.
+Contrato backend de los tickets #17, #18, #19, #23 y #25 para la franja **Mantenimiento ·
+Estado**, la tabla de **Automatismos**, el panel **Discos**, las acciones de host, el panel
+**Despliegues** y los avisos y eventos de hoy de `DESIGN.md`. El hub lo consume con
+`GET /api/maintenance?host=<id>`, `GET /api/deployments?host=<id>` y
+`GET /api/events?host=<id>`; el agente publica `GET /maintenance` y `GET /deployments`.
 
 ## Configuración y montajes
 
@@ -633,3 +633,106 @@ y un doble del módulo.
 
 `tests/api-deployments.test.ts`: agente HTTP falso, host seleccionado, cola del journal,
 validación de `lines`, host desconocido y ausencia de reintentos.
+
+## Avisos y eventos de hoy (#25)
+
+Esta sección es del hub: no añade endpoints al agente. El recolector sigue leyendo
+`/metrics` como hasta ahora y, como máximo una vez por minuto y host, amplía la
+evaluación con `GET /maintenance` y `GET /deployments?lines=1`. Un fallo de cualquiera de
+las dos instantáneas no cierra avisos: la sección afectada se omite hasta que vuelva a
+leerse.
+
+### Avisos
+
+Cada tipo tiene una clave estable y una única fila abierta por host (`alerts.hostId` +
+`alerts.key`). Se abre cuando la condición aparece, se resuelve cuando desaparece y
+`notify()` se llama exactamente una vez en cada transición; las recogidas repetidas con
+el mismo estado no crean otra fila ni otro push. El `tag` del push es
+`<hostId>:<key>` al abrir y `<hostId>:<key>-resolved` al recuperar.
+
+| Clave | Origen | Se abre cuando | Se resuelve cuando | Gravedad |
+| --- | --- | --- | --- | --- |
+| `release-retained` | `deployments.retained` | Hay alguna release retenida | La lista queda vacía | `warning` |
+| `deploy-failed` | `deployments.history` y `follower.failed` | El último despliegue es `rolled-back`, o queda un fallo sin un éxito posterior | Hay un éxito posterior o una release instalada estrictamente más nueva | `critical` |
+| `backup-failed` | `maintenance.backup` | `status: "failed"` | `status: "ok"` | `critical` |
+| `disk-health` | `maintenance.disks.devices` | Algún disco está `watch` o `fail` | Ninguno está `watch` ni `fail` | `warning` / `critical` si hay `fail` |
+| `reboot-pending` | `maintenance.reboot` | `available` y `required: true` | `required: false` | `warning` |
+| `stack-unit-failed` | `maintenance.failedUnits.stack` | Hay alguna unidad fallida del stack | La lista del stack queda vacía | `critical` |
+
+Reglas de lectura:
+
+- `failedUnits.other` nunca se usa: una unidad ajena al stack no abre
+  `stack-unit-failed` ni aparece en su detalle.
+- `release-retained` no se evalúa si el checkout no está disponible
+  (`available: false`) o `degraded` incluye `git`, `checkout` o `follower`.
+- `deploy-failed` no se evalúa si `follower` está degradado o no disponible. El archivo
+  `failed-release.json` que `media-stack` conserva tras recuperarse no mantiene el aviso
+  abierto: lo resuelve la historia o una instalada más nueva.
+- `backup-failed` no se evalúa con `status: "unknown"` ni con `degraded` incluyendo
+  `backup`; `disk-health`, con `disks.available: false` o `degraded` incluyendo `disks`;
+  `reboot-pending`, con `reboot.available: false`; `stack-unit-failed`, con `degraded`
+  incluyendo `failedUnits`.
+- Una instantánea ausente o inválida no produce señales: los avisos abiertos siguen
+  abiertos, sin churn de push.
+
+El hub devuelve los avisos por host en `GET /api/overview?host=<id>` (`alerts`, últimas
+100 filas) y el contador autoritativo de abiertos en `openAlerts`. Ese número cuenta las
+filas con `resolvedAt: null` del host seleccionado y es el que usa la barra lateral.
+
+### Feed «Eventos de hoy»
+
+`GET /api/events?host=<id>` devuelve el día natural de **Europe/Madrid** que contiene el
+instante de la petición, no el día UTC. En el cambio de hora, el día dura 23 o 25 horas.
+
+```json
+{
+  "host": { "id": "nas-home", "name": "NAS-HOME", "role": "instance" },
+  "day": "2026-11-13",
+  "timeZone": "Europe/Madrid",
+  "events": [
+    {
+      "id": "deploy:v2.5.0:1763020800000",
+      "kind": "deploy",
+      "at": "2026-11-13T08:00:00.000Z",
+      "status": "ok",
+      "release": "v2.5.0",
+      "action": null,
+      "unit": null,
+      "reason": null
+    }
+  ],
+  "degraded": []
+}
+```
+
+`kind` solo usa `deploy`, `health`, `retention`, `backup` o `security`; `status`, `ok`,
+`failed`, `pending` o `info`. Las fuentes son:
+
+| `kind` | Fuente | Campos |
+| --- | --- | --- |
+| `deploy` | `deployments.history[]` del día | `release`, `status` (`success` → `ok`, `rolled-back` → `failed`) |
+| `deploy` | `operations` con acción `deploy-now`, `pause-follower` o `resume-follower` | `action`, `status` de la operación |
+| `health` | `operations` con acción `check-health` (alias `health-check`, `health`) | `action`, `status` |
+| `retention` | `deployments.retained[]` con `at` del día | `release`, `reason` |
+| `backup` | `maintenance.backup` del día | `status` |
+| `backup` | `operations` con acción `backup-now` (alias `backup`, `run-backup`) | `action`, `status` |
+| `security` | `maintenance.units[]` con `kind: "security"` y `lastRun` del día | `unit`, `status` desde `result`/`state` |
+| `security` | `operations` con acción `run-security` | `action`, `status` |
+
+Las acciones de contenedor (`start`, `stop`, `restart`, `reboot`…) no entran en el feed.
+Si una instantánea no responde, el feed sigue devolviendo las acciones del hub y añade
+`maintenance` o `deployments` a `degraded`; una sección degradada se publica como
+`maintenance:<sección>` o `deployments:<sección>`. Los eventos se ordenan del más
+reciente al más antiguo y `id` es único en la respuesta.
+
+### Pruebas
+
+`tests/maintenance-alerts.test.ts`: las seis transiciones, unidades ajenas, instantáneas
+ausentes/degradadas, release fallida recuperada por historia o por instalada más nueva.
+`tests/collector-alerts.test.ts`: recolector contra PostgreSQL efímero y dos agentes
+falsos, apertura/resolución única, repetición sin duplicados, dos hosts independientes,
+degradación sin churn y push simulado (nunca real).
+`tests/madrid-day.test.ts` y `tests/events.test.ts`: límites del día Europe/Madrid,
+cambio de hora, mezcla de fuentes, orden y degradación parcial.
+`tests/api-events.test.ts`: `GET /api/events`, host desconocido y `openAlerts` coherente
+con los avisos abiertos del host.
