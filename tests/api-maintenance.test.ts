@@ -57,6 +57,35 @@ function snapshot() {
       review: [],
     },
     backup: { status: "ok", at: "2026-11-13T03:04:49Z" },
+    disks: {
+      available: true,
+      devices: [
+        {
+          device: "sda",
+          model: "WDC WD40EFRX-68N32N0",
+          serial: "WD-WCC7K0AAAAAA",
+          kind: "sata",
+          size: 4_000_787_030_016,
+          temperature: 34,
+          reallocatedSectors: 0,
+          wear: null,
+          status: "ok",
+          issues: [],
+        },
+        {
+          device: "nvme0n1",
+          model: "Samsung SSD 970 EVO Plus 2TB",
+          serial: "S4EWNX0R000001",
+          kind: "nvme",
+          size: 2_000_398_934_016,
+          temperature: 41,
+          reallocatedSectors: null,
+          wear: 3,
+          status: "ok",
+          issues: [],
+        },
+      ],
+    },
     units: [
       {
         name: "media-stack-merged-updates",
@@ -194,6 +223,18 @@ describe("maintenance snapshot API", () => {
     expect(body.host).toEqual({ id: "apps", name: "Apps", role: "apps-server" });
     expect(body.snapshot.follower.installed.release).toBe("v2.4.1");
     expect(body.snapshot.backup.status).toBe("ok");
+    expect(body.snapshot.disks.available).toBe(true);
+    expect(
+      body.snapshot.disks.devices.map(
+        (device: { device: string; status: string }) => [
+          device.device,
+          device.status,
+        ],
+      ),
+    ).toEqual([
+      ["sda", "ok"],
+      ["nvme0n1", "ok"],
+    ]);
     expect(
       body.snapshot.units.map((unit: { name: string }) => unit.name),
     ).toContain("media-stack-evidence");

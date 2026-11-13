@@ -53,6 +53,19 @@ class FakeDocker:
         return self.usage_value
 
 
+class FakeSmart:
+    def __init__(self, section=None, error=None):
+        self.calls = 0
+        self.section = section or {"available": True, "devices": []}
+        self.error = error
+
+    def read(self):
+        self.calls += 1
+        if self.error:
+            raise self.error
+        return self.section
+
+
 class SnapshotTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -387,6 +400,56 @@ class SnapshotTest(unittest.TestCase):
         self.assertEqual(docker["reclaimable"], 31_000)
         self.assertEqual(docker["total"], 46_000)
 
+    def test_smart_disks_extend_the_snapshot_without_replacing_its_other_sections(self):
+        disks = {
+            "available": True,
+            "devices": [
+                {
+                    "device": "sda",
+                    "model": "WDC WD40EFRX-68N32N0",
+                    "serial": "WD-WCC7K0AAAAAA",
+                    "kind": "sata",
+                    "size": 4000787030016,
+                    "temperature": 34,
+                    "reallocatedSectors": 0,
+                    "wear": None,
+                    "status": "ok",
+                    "issues": [],
+                }
+            ],
+        }
+        smart_reader = FakeSmart(disks)
+        snapshot = maintenance.Maintenance(
+            appdata=self.appdata,
+            host_reader=self.host,
+            docker_reader=self.docker,
+            smart_reader=smart_reader,
+            clock=lambda: 1000.0,
+        )
+
+        value = snapshot.snapshot()
+
+        self.assertEqual(value["disks"], disks)
+        self.assertEqual(smart_reader.calls, 1)
+        self.assertEqual(value["follower"]["state"], "unknown")
+        self.assertTrue(value["docker"]["available"])
+
+    def test_a_failing_smart_read_degrades_only_the_disks_section(self):
+        snapshot = maintenance.Maintenance(
+            appdata=self.appdata,
+            host_reader=self.host,
+            docker_reader=self.docker,
+            smart_reader=FakeSmart(error=OSError("smartctl unavailable")),
+            clock=lambda: 1000.0,
+        )
+
+        value = snapshot.snapshot()
+
+        self.assertEqual(value["disks"], {"available": False, "devices": []})
+        self.assertIn("disks", value["degraded"])
+        self.assertEqual(value["follower"]["state"], "unknown")
+        self.assertTrue(value["docker"]["available"])
+
     def test_snapshot_is_cached_for_about_a_minute(self):
         self.assertEqual(self.host.unit_requests, [])
         self.snapshot.snapshot()
@@ -620,6 +683,44 @@ class AuxiliaryExecutorTest(unittest.TestCase):
         self.assertEqual(create[2]["Cmd"][-1], "/bin/true")
         self.assertTrue(create[2]["HostConfig"]["Privileged"])
         self.assertEqual(create[2]["HostConfig"]["PidMode"], "host")
+        self.assertIn(("DELETE", "/containers/helper?force=1", None, False), socket.calls)
+
+
+class DiskExecutorTest(unittest.TestCase):
+    def test_runs_smartctl_in_the_image_with_the_host_devices_read_only(self):
+        class Socket:
+            def __init__(self):
+                self.calls = []
+
+            def call(self, method, path, body=None, *, timeout=None, raw=False):
+                self.calls.append((method, path, body, raw))
+                if path == "/containers/create":
+                    return {"Id": "helper"}
+                if path == "/containers/helper/logs?stdout=true&stderr=false":
+                    return b"\x01\x00\x00\x00\x00\x00\x00\x03ok\n"
+                return {}
+
+        socket = Socket()
+        executor = maintenance.DiskExecutor(
+            docker=socket, image="hub-agent:1"
+        )
+
+        output = executor.run(["smartctl", "--scan-open", "--json"], timeout=7)
+
+        self.assertEqual(output, "ok\n")
+        create = socket.calls[0]
+        self.assertEqual(create[0:2], ("POST", "/containers/create"))
+        self.assertEqual(create[2]["Image"], "hub-agent:1")
+        self.assertEqual(create[2]["Entrypoint"], ["smartctl"])
+        self.assertEqual(create[2]["Cmd"], ["--scan-open", "--json"])
+        self.assertTrue(create[2]["HostConfig"]["Privileged"])
+        self.assertIn("/dev:/dev:ro", create[2]["HostConfig"]["Binds"])
+        self.assertIn("/sys:/sys:ro", create[2]["HostConfig"]["Binds"])
+        self.assertNotIn("PidMode", create[2]["HostConfig"])
+        self.assertIn(
+            ("GET", "/containers/helper/logs?stdout=true&stderr=false", None, True),
+            socket.calls,
+        )
         self.assertIn(("DELETE", "/containers/helper?force=1", None, False), socket.calls)
 
 

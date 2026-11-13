@@ -1,7 +1,7 @@
 # Instantánea de mantenimiento del agente
 
-Contrato backend del ticket #17 para la franja **Mantenimiento · Estado** y la tabla de
-**Automatismos** de `DESIGN.md`. El hub la consume con
+Contrato backend de los tickets #17 y #18 para la franja **Mantenimiento · Estado**, la
+tabla de **Automatismos** y el panel **Discos** de `DESIGN.md`. El hub la consume con
 `GET /api/maintenance?host=<id>`; el agente la publica en `GET /maintenance`.
 
 ## Configuración y montajes
@@ -84,6 +84,35 @@ el valor vacío documentado y `degraded` puede indicar el fallo de lectura.
       "review": []
     },
     "backup": { "status": "ok", "at": "2026-11-13T03:04:49Z" },
+    "disks": {
+      "available": true,
+      "devices": [
+        {
+          "device": "sda",
+          "model": "WDC WD40EFRX-68N32N0",
+          "serial": "WD-WCC7K0AAAAAA",
+          "kind": "sata",
+          "size": 4000787030016,
+          "temperature": 34,
+          "reallocatedSectors": 0,
+          "wear": null,
+          "status": "ok",
+          "issues": []
+        },
+        {
+          "device": "nvme0n1",
+          "model": "Samsung SSD 970 EVO Plus 2TB",
+          "serial": "S4EWNX0R000001",
+          "kind": "nvme",
+          "size": 2000398934016,
+          "temperature": 41,
+          "reallocatedSectors": null,
+          "wear": 3,
+          "status": "ok",
+          "issues": []
+        }
+      ]
+    },
     "units": [
       {
         "name": "media-stack-merged-updates",
@@ -154,25 +183,89 @@ temporizadores monotónicos. Ambos pueden ser `null`.
 `MAINTENANCE_STACK_PREFIX`; `failedUnits.other` contiene el resto. Nunca se mezclan en la
 misma lista.
 
+### Discos (SMART)
+
+`disks.devices` son los discos físicos que devuelve `smartctl --scan-open --json` en el
+host: los tres WD Red de 4 TB y los dos NVMe del NAS aparecen automáticamente, sin que el
+agente codifique modelos, cantidades ni nombres de dispositivo. La imagen `hub-agent`
+incluye `smartmontools`; cada lectura se ejecuta dentro de esa imagen en un contenedor
+auxiliar privilegiado con `/dev` y `/sys` montados en solo lectura. No se usa `nsenter`
+para SMART y no se instala nada en el host. Solo se aceptan rutas `/dev/sdX`,
+`/dev/nvmeX` y `/dev/nvmeXnY` (el escaneo real puede devolver el espacio de nombres
+broadcast), con un tipo de dispositivo de una lista cerrada.
+
+Las dos únicas órdenes son, con argumentos fijos:
+
+```text
+smartctl --scan-open --json
+smartctl --json --all [-d <ata|sat|scsi|nvme>] <dispositivo>
+```
+
+Nunca se ejecutan autotests, ni `-t`, ni `-s`, ni operaciones de offline/guardado: la
+lectura es estrictamente pasiva. No hay un endpoint para lanzar comandos SMART.
+
+| Campo | Significado |
+| --- | --- |
+| `device` | Nombre corto del dispositivo (`sda`, `nvme0n1`). |
+| `model`, `serial` | Modelo y número de serie; `null` si smartctl no los dio. |
+| `kind` | `sata`, `nvme` u `other`. |
+| `size` | Capacidad en bytes (`user_capacity.bytes`). |
+| `temperature` | Grados Celsius (`temperature.current`, el log NVMe o el atributo 194). |
+| `reallocatedSectors` | Raw del atributo ATA 5; `null` en NVMe. |
+| `wear` | `percentage_used` del log NVMe; `null` en SATA. |
+| `status` | `ok`, `watch`, `fail` o `unknown`. |
+| `issues` | Claves estables que explican el estado; la UI las traduce. |
+
+Clasificación:
+
+- `unknown`: no hay estado SMART, atributos ni log NVMe, o falla la lectura de ese disco.
+  El disco sigue en la lista con los campos que se hayan podido leer y el panel no se
+  rompe. `issues` contiene `smart_unavailable` o `read_failed`.
+- `fail`: `smart_status.passed` es `false`, hay `critical_warning` NVMe, la temperatura
+  alcanza 65 °C en SATA u 85 °C en NVMe, o el desgaste llega al 100 %.
+- `watch`: la temperatura alcanza 50 °C en SATA o 75 °C en NVMe; el desgaste llega al
+  90 %; los sectores reasignados superan el umbral (0 por defecto) o aumentan respecto de
+  la lectura anterior. Las claves son `temperature`, `wear`, `reallocated_threshold` y
+  `reallocated_increase`.
+- `ok`: ninguna de las condiciones anteriores.
+
+La lectura anterior se guarda en memoria por número de serie (o por dispositivo si no lo
+hay). Se actualiza en cada refresco de la instantánea; tras reiniciar el agente no existe
+una base anterior y la primera lectura solo aplica el umbral. No se escribe ningún estado
+en disco.
+
+`disks.available` es `false` solo si falla el escaneo completo; entonces la sección queda
+vacía y `disks` aparece en `degraded`. Un fallo de un disco concreto no oculta los demás.
+
 ## Fallos, caché y seguridad
 
 - La instantánea se cachea `MAINTENANCE_CACHE_SECONDS` (60 s por defecto). Varias
   peticiones seguidas devuelven el mismo `timestamp` y no repiten las lecturas.
-- Las lecturas de systemd, Docker y del estado se hacen en paralelo. Un fallo aislado no
-  oculta el resto: la sección queda en su valor vacío y su nombre aparece en `degraded`.
+- Las lecturas de systemd, Docker, SMART y del estado se hacen en paralelo. Un fallo
+  aislado no oculta el resto: la sección queda en su valor vacío y su nombre aparece en
+  `degraded`. Un fallo de lectura SMART de un solo disco se limita a ese disco.
 - `404 Host no configurado` lo produce el hub antes de llamar al agente. Si el agente no
   responde o rechaza, el hub devuelve `503`. Las lecturas nunca se reintentan desde el
   hub.
 - No se publican tokens, URLs de agentes, rutas del host, `.env`, `before_pins`,
   `snapshots` ni el contenido de `folder`/`environment` de una transacción.
 - Las lecturas de systemd, unidades fallidas y reinicio usan un contenedor auxiliar
-  privilegiado con `nsenter` y una línea de órdenes fija. No hay endpoint para comandos
-  arbitrarios ni argumentos libres.
+  privilegiado con `nsenter` y una línea de órdenes fija. SMART usa otro contenedor de la
+  misma imagen con `/dev` y `/sys` en solo lectura y `smartctl` como entrada. No hay
+  endpoint para comandos arbitrarios ni argumentos libres.
+- El número de serie y el modelo son identificadores del hardware, no secretos; no se
+  publican rutas completas del host ni el contenido de los comandos ejecutados.
 
 ## Pruebas
 
+- `agent/test_smart.py`: JSON realistas de smartctl para SATA WD Red y NVMe, tres WD Red y
+  dos NVMe en el mismo escaneo, umbrales de temperatura/desgaste, aumento de sectores
+  reasignados entre lecturas, disco sin datos SMART, fallo de un disco aislado y lista
+  cerrada de comandos de solo lectura.
 - `agent/test_maintenance.py`: directorios temporales con los JSON reales, unidades y
-  Docker inyectados, comprobación de caché, degradación, separación de unidades fallidas,
-  reinicio disponible/no disponible, lista cerrada de unidades y ejecutor `nsenter`.
-- `tests/api-maintenance.test.ts`: agente HTTP falso por host, selección de host, ausencia
-  de credenciales en la respuesta y no reintento cuando el agente falla.
+  Docker inyectados, comprobación de caché, degradación, sección `disks`, separación de
+  unidades fallidas, reinicio disponible/no disponible, lista cerrada de unidades,
+  ejecutor `nsenter` y ejecutor SMART con `/dev` read-only.
+- `tests/api-maintenance.test.ts`: agente HTTP falso por host, selección de host, extensión
+  `disks` del contrato, ausencia de credenciales en la respuesta y no reintento cuando el
+  agente falla.

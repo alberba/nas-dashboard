@@ -13,6 +13,8 @@ import socket
 import threading
 import time
 
+import smart
+
 INSTANCE_UNITS = (
     "media-stack-merged-updates",
     "media-stack-security-updates",
@@ -481,6 +483,56 @@ class HostExecutor:
                 pass
 
 
+class DiskExecutor:
+    """Runs smartctl inside the helper image with the host devices mounted read-only."""
+
+    def __init__(self, docker=None, image=None):
+        self.docker = docker or DockerSocket(timeout=15)
+        self.image = image or os.getenv("HOST_HELPER_IMAGE", "hub-agent:1")
+
+    def run(self, argv, timeout=15):
+        if not isinstance(argv, list) or not argv:
+            raise ValueError("Comando de disco no válido")
+        created = self.docker.call(
+            "POST",
+            "/containers/create",
+            {
+                "Image": self.image,
+                "Entrypoint": [argv[0]],
+                "Cmd": argv[1:],
+                "HostConfig": {
+                    "Privileged": True,
+                    "Binds": ["/dev:/dev:ro", "/sys:/sys:ro"],
+                    "NetworkMode": "none",
+                    "AutoRemove": False,
+                },
+            },
+            timeout=timeout,
+        )
+        ident = created["Id"]
+        try:
+            self.docker.call(
+                "POST", "/containers/" + ident + "/start", timeout=timeout
+            )
+            self.docker.call(
+                "POST", "/containers/" + ident + "/wait", timeout=timeout
+            )
+            logs = self.docker.call(
+                "GET",
+                "/containers/" + ident + "/logs?stdout=true&stderr=false",
+                timeout=timeout,
+                raw=True,
+            )
+            return demultiplex_logs(logs)
+        finally:
+            try:
+                self.docker.call(
+                    "DELETE", "/containers/" + ident + "?force=1", timeout=timeout
+                )
+            except (OSError, ValueError):
+                pass
+
+
 class HostReader:
     UNIT_PROPERTIES = (
         "Id,LoadState,ActiveState,SubState,UnitFileState,LastTriggerUSec,"
@@ -672,6 +724,7 @@ class Maintenance:
         unit_names=None,
         host_reader,
         docker_reader,
+        smart_reader=None,
         clock=time.time,
         cache_seconds=60,
         stack_prefix="media-stack",
@@ -682,6 +735,7 @@ class Maintenance:
         self.stack_prefix = stack_prefix or "media-stack"
         self.host_reader = host_reader
         self.docker_reader = docker_reader
+        self.smart_reader = smart_reader
         self.clock = clock
         try:
             self.cache_seconds = max(0.0, float(cache_seconds))
@@ -693,14 +747,16 @@ class Maintenance:
 
     @classmethod
     def from_env(cls):
+        executor = HostExecutor()
         return cls(
             appdata=os.getenv("APPDATA_ROOT", "/media-stack-appdata"),
             role=os.getenv("HOST_ROLE", "instance"),
             unit_names=parse_unit_names(
                 os.getenv("MAINTENANCE_UNITS"), os.getenv("HOST_ROLE", "instance")
             ),
-            host_reader=HostReader(executor=HostExecutor()),
+            host_reader=HostReader(executor=executor),
             docker_reader=DockerUsage(),
+            smart_reader=smart.SmartMonitor(executor=DiskExecutor()),
             cache_seconds=os.getenv("MAINTENANCE_CACHE_SECONDS", "60"),
             stack_prefix=os.getenv("MAINTENANCE_STACK_PREFIX", "media-stack"),
         )
@@ -727,6 +783,7 @@ class Maintenance:
             },
             "security": {"pins": [], "pending": None, "review": []},
             "backup": {"status": "unknown", "at": None},
+            "disks": {"available": False, "devices": []},
             "units": [],
             "failedUnits": {"stack": [], "other": []},
             "reboot": {"available": False, "required": None},
@@ -744,6 +801,9 @@ class Maintenance:
             "follower": lambda: follower_section(self.appdata),
             "security": lambda: security_section(self.appdata),
             "backup": lambda: backup_section(self.appdata),
+            "disks": self.smart_reader.read
+            if self.smart_reader
+            else lambda: {"available": False, "devices": []},
             "units": lambda: units_section(self.host_reader, self.unit_names),
             "failedUnits": lambda: failed_units_section(
                 self.host_reader, self.stack_prefix
@@ -752,7 +812,7 @@ class Maintenance:
             "docker": self.docker_reader.usage,
         }
         sections = {}
-        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(readers)) as pool:
             futures = {name: pool.submit(reader) for name, reader in readers.items()}
             for name, future in futures.items():
                 try:
