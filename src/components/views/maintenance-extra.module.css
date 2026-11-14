@@ -144,3 +144,29 @@
   min-block-size: 20px;
   flex: 0 0 auto;
 }
+
+.activity {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  overflow: clip;
+}
+.activity > summary {
+  padding: 16px 18px;
+  min-block-size: 56px;
+  cursor: pointer;
+  font-weight: 800;
+}
+.activity > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+}
+.activity > summary:active { background: var(--panel2); }
+@media (hover: hover) and (pointer: fine) {
+  .activity > summary:hover { background: var(--row-hover); }
+}
+.namedSteps { display: flex; flex-wrap: wrap; gap: 6px; margin-block-end: 8px; }
+.namedSteps > span { padding: 4px 8px; font-size: 12px; border: 1px solid var(--line); border-radius: 6px; color: var(--soft); }
+.namedSteps > span[data-state="done"] { color: var(--gain); }
+.namedSteps > span[data-state="current"] { color: var(--accent); }
+.namedSteps > span[data-state="failed"] { color: var(--loss); }

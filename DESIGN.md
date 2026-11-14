@@ -102,7 +102,7 @@ Píldora con borde `--accent` y texto `--accent`: `nueva versión · #PR`. Es un
 Píldora de `11px`, peso 800, borde `--line`, texto en el color semántico: `patch`, `requiere Worker`, `Instalada`, `Retenida`, `Fallida · restaurada`.
 
 ### Progreso de actualización
-Seis segmentos de `14×5px` en este orden fijo: **PR · Merge · CI en main · Release · Desplegando · Sano**. Hechos en `--gain`, actual en `--accent`, pendientes en neutro. Siempre con texto al lado (`esperando merge`, `desplegando · 40 s`) y `aria-label` con el paso.
+Seis fases con etiquetas compactas en este orden fijo: **PR · Merge · CI en main · Release · Desplegando · Salud**. Hechos en `--gain`, actual en `--accent`, pendientes en neutro. Cada fase lleva nombre y detalle visibles. El registro de despliegue no certifica salud actual: mientras el contrato no exponga vigencia y cobertura de la muestra, la fase de salud completada se presenta como «Sin confirmar», sin verde de éxito. Los fallos y estados de arranque siguen mostrándose.
 
 ### Lista de acciones
 Panel con filas-botón de `46px`: icono en su color semántico, etiqueta y, a la derecha, atajo de teclado (`kbd`) o dato útil (`7,4 GB`). Las destructivas, en `--loss`. Orden: desplegar, comprobar salud, reconectar apps, copia, limpiar, reiniciar NAS.
@@ -158,7 +158,7 @@ Usar siempre estas palabras para que todas las páginas digan lo mismo:
 | Resumen | Estado general, en marcha, servicios, CPU, memoria, red, temperatura | Actividad reciente (gráfica) · Lo que más está trabajando | Avisos · Almacenamiento · Accesos |
 | Recursos | Valores actuales de CPU, memoria, red, discos y tiempo en marcha | Cuatro gráficas en rejilla `auto-fit` | Temperaturas · Actividad de discos · Volúmenes (fila inferior) |
 | Mantenimiento · Estado | Release, seguidor, seguridad, copia, VPN, reinicio, Docker | Contenedores (filtros: Todos, Actualizaciones, Problemas, Detenidos) | Acciones · Eventos de hoy · Discos |
-| Mantenimiento · Despliegues | Instalada, seguidor, retenidas, seguridad, último fallo | PR de Renovate abiertas · Releases (con retenida expandible) | Seguridad · Registro |
+| Mantenimiento · Despliegues | Plantilla registrada, despliegue automático, releases bloqueadas, comparaciones de seguridad, versiones fijadas | Candidatos de seguridad: lista y detalle · Actividad expandible (propuestas del repositorio, progreso, releases y registro) · Versiones fijadas expandibles | El detalle de la comparación ocupa la columna principal; no hay una columna secundaria de seguridad |
 | Archivos | — | Ruta + contenido de la carpeta | Papelera |
 | Aplicaciones | — | Accesos (filtro por categoría, estado del servicio) | — |
 | Ajustes | Pendiente de diseñar con este sistema | | |
@@ -187,3 +187,14 @@ Mantenimiento lleva en la cabecera el selector de host (`NAS-HOME` / `Apps`): to
 - Monoespaciada para cifras o como estética general.
 - Colores nuevos fuera de los tokens.
 - Más de un botón primario por zona.
+
+## Despliegues · lista y detalle (opción B)
+
+Decisión del usuario: 14 de noviembre de 2026. Fuente primaria del prototipo: rama local `prototype/maintenance-clarity`, commit `def04e6`, archivo `src/components/views/deployments.prototype.html`. La implementación conserva la identidad visual de este documento.
+
+- La lista de comparaciones ocupa la columna estrecha y el detalle seleccionado la ancha; en móvil se apilan. La lista tiene desplazamiento propio para que hasta 20 registros no releguen el detalle al final de una página muy larga.
+- Cada fila muestra nombres, versiones analizada/candidata, motivo y fecha del análisis. Se preservan candidatos distintos y registros repetidos; el contador mide comparaciones, sin prometer decisiones vigentes.
+- El detalle separa CVEs corregidas de CVEs nuevas o agravadas del candidato, explica el motivo en español y muestra el siguiente paso manual. La vigencia sin confirmar permanece visible. El motivo técnico original se puede expandir.
+- Versiones fijadas y revisiones pendientes son secciones diferentes. Los errores, datos anteriores y lecturas parciales se explican; un cero no significa «sin vulnerabilidades».
+- Los bloqueos operativos se muestran antes de la revisión. La actividad se abre inicialmente si hay releases retenidas, conservando sus formularios y confirmaciones existentes. Las acciones de PR se identifican como operaciones del repositorio.
+- No se añaden aprobaciones, forzados ni retiradas de pins que el backend no soporte.

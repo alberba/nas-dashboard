@@ -54,7 +54,7 @@ export function RenovatePanel() {
   return (
     <Panel
       id="renovate-title"
-      title="PR de Renovate abiertas"
+      title="Propuestas abiertas en el repositorio"
       count={phase === "ready" ? rows.length : undefined}
       tools={
         stale ? (
@@ -109,7 +109,7 @@ export function RenovatePanel() {
             </div>
           ) : (
             <p className={styles.empty} data-renovate-empty="">
-              No hay PR de Renovate abiertas.
+              No hay propuestas de imágenes Compose reconocidas. Las fusionadas recientemente aparecen en el progreso.
             </p>
           ))}
       </div>
