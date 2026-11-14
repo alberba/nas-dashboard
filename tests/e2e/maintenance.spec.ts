@@ -16,6 +16,9 @@ const containers = [
   state,
   status,
   protected: isProtected,
+  oneShot: name === "wire",
+  exitCode: name === "wire" ? 0 : state === "exited" ? 137 : null,
+  orphan: false,
   cpu: state === "running" ? 1.5 : null,
   memory: state === "running" ? 200_000_000 : null,
 }));
@@ -67,7 +70,7 @@ test.beforeAll(async ({ request, browser }) => {
   await page.route("**/api/overview?*", (route) =>
     route.fulfill({ json: overview }),
   );
-  await page.goto("http://localhost:3000/");
+  await page.goto("/");
   await page.getByLabel("Correo", { exact: true }).fill(email);
   await page.getByLabel("Contraseña", { exact: true }).fill(password);
   await submitLogin(page);
@@ -86,6 +89,16 @@ async function signIn(page: Page) {
 }
 
 const rows = (page: Page) => page.locator("[data-container]");
+const mainRows = (page: Page) =>
+  page.locator("[data-container-table] [data-container]");
+const stoppedSection = (page: Page) =>
+  page.locator("[data-stopped-section]");
+const stoppedRows = (page: Page) =>
+  page.locator("[data-stopped-table] [data-container]");
+const mainContainer = (page: Page, name: string) =>
+  page.locator(`[data-container-table] [data-container="${name}"]`);
+const stoppedContainer = (page: Page, name: string) =>
+  page.locator(`[data-stopped-table] [data-container="${name}"]`);
 const filter = (page: Page, id: string) =>
   page.locator(`[data-filter="${id}"]`);
 
@@ -118,15 +131,27 @@ test("maintenance status is reachable from the navigation and by URL", async ({
   await expect(rows(page)).toHaveCount(containers.length);
 });
 
-test("container filters show their counts and narrow the table", async ({
+test("container filters show their counts and narrow both sections", async ({
   page,
 }) => {
   await signIn(page);
   await page.goto("/?view=maintenance&tab=status");
+  const section = stoppedSection(page);
   await expect(filter(page, "all")).toHaveAttribute("aria-pressed", "true");
   await expect(filter(page, "all")).toHaveAttribute("data-count", "5");
   await expect(filter(page, "problems")).toHaveAttribute("data-count", "2");
   await expect(filter(page, "stopped")).toHaveAttribute("data-count", "2");
+
+  await expect(section).not.toHaveAttribute("open", /.+/);
+  await expect(section).toHaveAttribute("data-count", "2");
+  await expect(section).toHaveAttribute("data-total", "2");
+  await expect(mainRows(page)).toHaveCount(3);
+  await expect(stoppedRows(page)).toHaveCount(2);
+  for (const row of await mainRows(page).all())
+    await expect(row).not.toHaveAttribute("data-state", "exited");
+  await expect(mainRows(page)).toHaveCount(
+    (await rows(page).count()) - (await stoppedRows(page).count()),
+  );
 
   await filter(page, "problems").click();
   await expect(filter(page, "problems")).toHaveAttribute(
@@ -134,18 +159,37 @@ test("container filters show their counts and narrow the table", async ({
     "true",
   );
   await expect(filter(page, "all")).toHaveAttribute("aria-pressed", "false");
-  await expect(rows(page)).toHaveCount(2);
-  await expect(page.locator('[data-container="bazarr"]')).toHaveAttribute(
+  await expect(mainRows(page)).toHaveCount(1);
+  await expect(stoppedRows(page)).toHaveCount(1);
+  await expect(mainRows(page).first()).toHaveAttribute(
+    "data-container",
+    "bazarr",
+  );
+  await expect(mainRows(page).first()).toHaveAttribute(
     "data-health",
     "unhealthy",
   );
+  await expect(section).not.toHaveAttribute("open", /.+/);
+  await expect(section).toHaveAttribute("data-count", "1");
+  await expect(
+    section.locator("[data-stopped-problems]"),
+  ).toHaveAttribute("data-stopped-problems", "1");
+  await expect(stoppedRows(page).first()).toHaveAttribute(
+    "data-container",
+    "sonarr",
+  );
 
   await filter(page, "stopped").click();
-  await expect(rows(page)).toHaveCount(2);
-  for (const row of await rows(page).all())
+  await expect(section).toHaveAttribute("open", "");
+  await expect(mainRows(page)).toHaveCount(0);
+  await expect(page.locator('[data-empty="active"]')).toBeVisible();
+  await expect(stoppedRows(page)).toHaveCount(2);
+  for (const row of await stoppedRows(page).all())
     await expect(row).toHaveAttribute("data-state", "exited");
 
   await filter(page, "all").click();
+  await expect(mainRows(page)).toHaveCount(3);
+  await expect(stoppedRows(page)).toHaveCount(2);
   await expect(rows(page)).toHaveCount(5);
 });
 
@@ -153,6 +197,15 @@ test("container rows keep their actions and protected services stay locked", asy
   page,
 }) => {
   await signIn(page);
+  await page.route("**/api/logs?*", (route) =>
+    route.fulfill({
+      json: {
+        lines: [{ stream: "stdout", at: null, message: "done" }],
+        cursor: null,
+        truncated: false,
+      },
+    }),
+  );
   await page.goto("/?view=maintenance&tab=status");
   const bazarr = page.locator('[data-container="bazarr"]');
   await expect(bazarr.locator('[data-action="restart"]')).toBeEnabled();
@@ -161,10 +214,222 @@ test("container rows keep their actions and protected services stay locked", asy
   const tailscale = page.locator('[data-container="tailscale"]');
   for (const button of await tailscale.locator("[data-action]").all())
     await expect(button).toBeDisabled();
+
+  await stoppedSection(page).locator("summary").click();
+  await expect(stoppedSection(page)).toHaveAttribute("open", "");
+  const wire = page.locator('[data-container="wire"]');
+  await expect(wire.locator('[data-tag="one-shot"]')).toBeVisible();
+  await wire.locator("[data-logs-toggle]").click();
+  await expect(page.locator('[data-logs][data-phase="ready"]')).toBeVisible();
   const sonarr = page.locator('[data-container="sonarr"]');
   await expect(sonarr.locator('[data-action="stop"]')).toHaveCount(0);
   await sonarr.locator('[data-action="start"]').click();
   await expect(page.locator("dialog[open]")).toBeVisible();
+});
+
+test("the stopped section starts collapsed and toggles with mouse and keyboard", async ({
+  page,
+}) => {
+  await signIn(page);
+  await page.goto("/?view=maintenance&tab=status");
+  const section = stoppedSection(page);
+  const summary = section.locator("summary");
+  const wire = page.locator('[data-container="wire"]');
+  await expect(section).toBeVisible();
+  await expect(section).toHaveAttribute("data-count", "2");
+  await expect(section).not.toHaveAttribute("open", /.+/);
+  await expect(wire).toBeHidden();
+
+  await summary.click();
+  await expect(section).toHaveAttribute("open", "");
+  await expect(wire).toBeVisible();
+  await summary.click();
+  await expect(section).not.toHaveAttribute("open", /.+/);
+  await expect(wire).toBeHidden();
+
+  await summary.focus();
+  await page.keyboard.press("Enter");
+  await expect(section).toHaveAttribute("open", "");
+  await expect(wire).toBeVisible();
+  await page.keyboard.press("Space");
+  await expect(section).not.toHaveAttribute("open", /.+/);
+  await expect(wire).toBeHidden();
+});
+
+test("empty main and stopped sections stay explicit", async ({ page }) => {
+  await signIn(page);
+  let current = overview;
+  await page.unroute("**/api/overview?*");
+  await page.route("**/api/overview?*", (route) =>
+    route.fulfill({ json: current }),
+  );
+
+  current = {
+    ...overview,
+    latest: {
+      ...overview.latest,
+      containers: overview.latest.containers.filter(
+        (container) => container.state === "running",
+      ),
+    },
+  };
+  await page.goto("/?view=maintenance&tab=status");
+  await expect(mainRows(page)).toHaveCount(3);
+  await expect(page.locator('[data-empty="active"]')).toHaveCount(0);
+  const section = stoppedSection(page);
+  await expect(section).toHaveAttribute("data-count", "0");
+  await section.locator("summary").click();
+  await expect(page.locator('[data-empty="stopped"]')).toBeVisible();
+  await filter(page, "stopped").click();
+  await expect(section).toHaveAttribute("open", "");
+  await expect(section).toHaveAttribute("data-count", "0");
+  await expect(page.locator('[data-empty="active"]')).toBeVisible();
+  await expect(page.locator('[data-empty="stopped"]')).toBeVisible();
+
+  current = {
+    ...overview,
+    latest: {
+      ...overview.latest,
+      containers: overview.latest.containers.filter(
+        (container) => container.state !== "running",
+      ),
+    },
+  };
+  await page.goto("/?view=maintenance&tab=status");
+  await expect(mainRows(page)).toHaveCount(0);
+  await expect(page.locator('[data-empty="active"]')).toBeVisible();
+  await expect(stoppedSection(page)).toHaveAttribute("data-count", "2");
+  await stoppedSection(page).locator("summary").click();
+  await expect(stoppedRows(page)).toHaveCount(2);
+  await expect(page.locator('[data-empty="stopped"]')).toHaveCount(0);
+});
+
+test("a container moves to the matching section on refresh without duplicating", async ({
+  page,
+}) => {
+  await signIn(page);
+  let running = false;
+  const current = () => ({
+    ...overview,
+    latest: {
+      ...overview.latest,
+      containers: overview.latest.containers.map((container) =>
+        container.name === "sonarr"
+          ? {
+              ...container,
+              state: running ? "running" : "exited",
+              status: running
+                ? "Up 1 minute (healthy)"
+                : "Exited (137) 1 hour ago",
+            }
+          : container,
+      ),
+    },
+  });
+  await page.unroute("**/api/overview?*");
+  await page.route("**/api/overview?*", (route) =>
+    route.fulfill({ json: current() }),
+  );
+  await page.clock.install();
+  await page.goto("/?view=maintenance&tab=status");
+  const section = stoppedSection(page);
+  const sonarr = page.locator('[data-container="sonarr"]');
+  await section.locator("summary").click();
+  await expect(section).toHaveAttribute("open", "");
+  await expect(stoppedContainer(page, "sonarr")).toBeVisible();
+  await expect(mainContainer(page, "sonarr")).toHaveCount(0);
+  await expect(sonarr).toHaveCount(1);
+  await expect(section).toHaveAttribute("data-count", "2");
+
+  running = true;
+  await page.clock.fastForward(6000);
+  await expect(mainContainer(page, "sonarr")).toBeVisible();
+  await expect(stoppedContainer(page, "sonarr")).toHaveCount(0);
+  await expect(sonarr).toHaveCount(1);
+  await expect(section).toHaveAttribute("data-count", "1");
+
+  running = false;
+  await page.clock.fastForward(6000);
+  await expect(stoppedContainer(page, "sonarr")).toBeVisible();
+  await expect(mainContainer(page, "sonarr")).toHaveCount(0);
+  await expect(sonarr).toHaveCount(1);
+  await expect(section).toHaveAttribute("data-count", "2");
+});
+
+test("the stopped section follows the selected host", async ({ page }) => {
+  await signIn(page);
+  const hosts = [
+    {
+      id: "nas-home",
+      name: "NAS-HOME",
+      role: "instance",
+      connected: true,
+      lastAt: new Date().toISOString(),
+    },
+    {
+      id: "apps",
+      name: "Apps",
+      role: "apps-server",
+      connected: true,
+      lastAt: new Date().toISOString(),
+    },
+  ];
+  const seerr = {
+    ...containers[0],
+    id: "seerr".padEnd(64, "0"),
+    name: "seerr",
+    state: "running",
+    status: "Up 2 hours (healthy)",
+  };
+  const orphan = {
+    ...containers[3],
+    id: "orphan-preview".padEnd(64, "0"),
+    name: "orphan-preview",
+    state: "exited",
+    status: "Exited (255)",
+  };
+  const forHost = (id: string) => ({
+    ...overview,
+    host: { id, name: hosts.find((h) => h.id === id)!.name },
+    hosts,
+    latest: {
+      ...overview.latest,
+      containers: id === "apps" ? [seerr, orphan] : overview.latest.containers,
+    },
+    settings: { ...overview.settings, expectedContainers: [] },
+  });
+  await page.unroute("**/api/overview?*");
+  await page.route("**/api/hosts", (route) =>
+    route.fulfill({ json: { default: "nas-home", hosts } }),
+  );
+  await page.route("**/api/overview?*", (route) => {
+    const id =
+      new URL(route.request().url()).searchParams.get("host") ?? "nas-home";
+    return route.fulfill({ json: forHost(id) });
+  });
+  await page.goto("/?view=maintenance&tab=status");
+  const section = stoppedSection(page);
+  await expect(section).toHaveAttribute("data-count", "2");
+  await expect(mainRows(page)).toHaveCount(3);
+  await section.locator("summary").click();
+  await expect(stoppedRows(page)).toHaveCount(2);
+
+  await page.locator('[data-host-option="apps"]').click();
+  await expect(mainContainer(page, "seerr")).toBeVisible();
+  await expect(page.locator('[data-container="sonarr"]')).toHaveCount(0);
+  await expect(section).toHaveAttribute("data-count", "1");
+  await expect(mainRows(page)).toHaveCount(1);
+  await expect(stoppedRows(page)).toHaveCount(1);
+  await section.locator("summary").click();
+  await expect(stoppedContainer(page, "orphan-preview")).toBeVisible();
+
+  await page.locator('[data-host-option="nas-home"]').click();
+  await expect(mainContainer(page, "jellyfin")).toBeVisible();
+  await expect(page.locator('[data-container="seerr"]')).toHaveCount(0);
+  await expect(section).toHaveAttribute("data-count", "2");
+  await expect(mainRows(page)).toHaveCount(3);
+  await section.locator("summary").click();
+  await expect(stoppedRows(page)).toHaveCount(2);
 });
 
 test("on a phone the container table becomes compact rows without page scroll", async ({
@@ -185,6 +450,11 @@ test("on a phone the container table becomes compact rows without page scroll", 
   const box = await row.boundingBox();
   expect(box && box.x + box.width).toBeLessThanOrEqual(390);
   await expect(row.locator('[data-action="restart"]')).toBeInViewport();
+
+  await expect(stoppedSection(page)).toBeVisible();
+  await stoppedSection(page).locator("summary").click();
+  await expect(stoppedSection(page)).toHaveAttribute("open", "");
+  await expect(page.locator('[data-container="wire"]')).toBeVisible();
 });
 
 test("rebooting the NAS asks for the typed phrase and sends one action that carries its idempotency key", async ({

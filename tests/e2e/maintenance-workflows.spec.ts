@@ -184,6 +184,11 @@ test("search toggles with Ctrl K, shortcuts ignore inputs and removal always ope
   expect(calls).toBe(0);
   await page.keyboard.press("Control+k");
   await expect(page.getByRole("dialog")).not.toBeVisible();
+  await page.locator('[data-stopped-section] summary').click();
+  await expect(page.locator("[data-stopped-section]")).toHaveAttribute(
+    "open",
+    "",
+  );
   await page
     .locator('[data-container="orphan-preview"] [data-action="remove"]')
     .click();

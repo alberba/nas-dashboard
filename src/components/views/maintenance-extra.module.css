@@ -7,6 +7,57 @@
 .containerTable {
   min-inline-size: 32rem;
 }
+.mainStack {
+  display: flex;
+  flex-direction: column;
+  gap: 1.125rem;
+}
+.stoppedPanel summary {
+  cursor: pointer;
+  list-style: none;
+}
+.stoppedPanel summary::-webkit-details-marker {
+  display: none;
+}
+.stoppedPanel summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.stoppedTools {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-inline-size: 0;
+}
+.stoppedProblems {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--peach);
+  font-size: 0.75rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.stoppedProblems svg {
+  flex: none;
+  inline-size: 0.9rem;
+  block-size: 0.9rem;
+}
+.stoppedChevron {
+  flex: none;
+  inline-size: 1rem;
+  block-size: 1rem;
+  color: var(--muted);
+  transition: rotate 160ms ease-out;
+}
+.stoppedPanel[open] .stoppedChevron {
+  rotate: 180deg;
+}
+@media (prefers-reduced-motion: reduce) {
+  .stoppedChevron {
+    transition: none;
+  }
+}
 .stateText {
   font-weight: 700;
   white-space: nowrap;
