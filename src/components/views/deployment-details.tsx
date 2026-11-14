@@ -10,7 +10,8 @@ import { useHostScope } from "../host-context";
 import { useSensitiveAction } from "../sensitive-action/sensitive-action";
 import { Panel, StatusStrip } from "../ui";
 import { useMaintenanceSnapshot } from "./use-maintenance-snapshot";
-import { SecurityPanel } from "./maintenance-extras";
+import { SecurityReview, SecurityPins } from "./security-review";
+import { maintenanceDate } from "@/lib/security-review";
 import { useHostRead } from "./use-host-read";
 import styles from "./maintenance-extra.module.css";
 const reasons: Record<string, string> = {
@@ -45,8 +46,9 @@ export function MergeControl({ pr }: { pr: RenovatePullRequest }) {
           onChange={(e) => setDeployNow(e.target.checked)}
           disabled={!scope.canMutate}
         />{" "}
-        Desplegar después
+        Comprobar releases tras fusionar
       </label>
+      <p className={styles.note}>El ciclo puede terminar antes de que CI publique la nueva release.</p>
       <button
         className={styles.button}
         data-merge-pr={pr.number}
@@ -96,6 +98,7 @@ export function DeploymentProgress() {
     <Panel title="Progreso de actualizaciones" id="deployment-progress">
       <div className={styles.body}>
         {error && <p role="status">{error}</p>}
+        <p className={styles.note}>PR del repositorio, incluidas las fusionadas en las últimas 48 horas. La instalación se registra por host; no confirma por sí sola la salud actual.</p>
         <ul className={styles.list}>
           {data?.updates.map((u) => (
             <li
@@ -103,24 +106,24 @@ export function DeploymentProgress() {
               className={styles.row}
               data-progress-pr={u.number}
             >
-              <strong>
-                #{u.number} · {u.title}
-              </strong>
+              <div>
+                <strong>{u.updates.map((update) => update.service).join(", ") || `PR #${u.number}`}</strong>
+                <div className={styles.note}>{u.updates.map((update) => `${update.from} → ${update.to}`).join(" · ")}</div>
+                <a href={u.url} target="_blank" rel="noreferrer" className={styles.note}>#{u.number} · {u.title}</a>
+              </div>
               <span
                 role="img"
-                aria-label={`Paso actual: ${stepLabels[u.currentStep]}. ${progressLabel(u)}`}
+                aria-label={`Paso actual: ${u.currentStep === "health" ? "Salud" : stepLabels[u.currentStep]}. ${u.currentStep === "health" && !u.failed ? "Salud sin confirmar" : progressLabel(u)}`}
                 data-current-step={u.currentStep}
               >
-                <span className={styles.steps}>
+                <span className={styles.namedSteps}>
                   {u.steps.map((step) => (
-                    <i
-                      key={step.id}
-                      data-state={step.state}
-                      title={`${stepLabels[step.id]}: ${step.detail}`}
-                    />
+                    <span key={step.id} data-state={step.id === "health" && step.state === "done" ? "pending" : step.state}>
+                      {step.id === "health" ? "Salud" : stepLabels[step.id]} · {step.id === "health" && step.state === "done" ? "Sin confirmar" : step.detail}
+                    </span>
                   ))}
                 </span>
-                {progressLabel(u)}
+                {u.currentStep === "health" && !u.failed ? "Salud sin confirmar" : progressLabel(u)}
               </span>
             </li>
           ))}
@@ -141,32 +144,22 @@ export function ReleaseDetails({ children }: { children?: React.ReactNode }) {
   const visibleJournal = journal.filter((e) =>
     `${e.unit} ${e.message}`.toLowerCase().includes(filter.toLowerCase()),
   );
-  const blocker = snapshot?.blocker;
+  const unit = maintenance.snapshot?.units.find((u) => u.kind === "follower");
+  const partial = !!error || !snapshot?.available || !!snapshot.degraded.length;
+  const maintenancePartial = maintenance.stale || !!maintenance.snapshot?.degraded.length;
   const followerState = maintenance.snapshot?.follower.state;
-  const followerUnit = maintenance.snapshot?.units.find(
-    (u) => u.kind === "follower",
-  );
   const follower =
     followerState === "deploying"
       ? { value: "Desplegando", tone: "accent" as const }
-      : followerState === "failed" || followerUnit?.state === "failed"
+      : followerState === "failed" || unit?.state === "failed"
         ? { value: "Fallo", tone: "loss" as const }
-        : followerUnit?.state === "paused"
+        : unit?.state === "paused"
           ? { value: "Pausado", tone: "peach" as const }
-          : followerUnit?.state === "inactive"
+          : unit?.state === "inactive"
             ? { value: "Detenido", tone: "muted" as const }
-            : followerUnit
+            : unit
               ? { value: "Activo", tone: "gain" as const }
-              : { value: "Sin datos", tone: "muted" as const };
-  const security = maintenance.snapshot?.security;
-  const securityTone = !security
-    ? ("muted" as const)
-    : security.pending
-      ? ("accent" as const)
-      : security.review.length
-        ? ("peach" as const)
-        : ("gain" as const);
-  const lastFailed = maintenance.snapshot?.follower.failed?.release;
+              : { value: "Sin confirmar", tone: "muted" as const };
   return (
     <>
       <StatusStrip
@@ -174,87 +167,84 @@ export function ReleaseDetails({ children }: { children?: React.ReactNode }) {
         segments={[
           {
             id: "installed",
-            label: "Instalada",
+            label: "Plantilla registrada",
             value:
               maintenance.snapshot?.follower.installed?.release ?? "Sin datos",
+            detail: maintenance.snapshot?.follower.installed?.bootstrap
+              ? "Base inicial registrada; despliegue sin verificar"
+              : maintenancePartial ? "Datos anteriores o parciales" : maintenanceDate(maintenance.snapshot?.follower.installed?.installedAt ?? null),
           },
           {
             id: "follower",
-            label: "Seguidor",
+            label: "Despliegue automático",
             value: follower.value,
             tone: follower.tone,
-            detail: snapshot
-              ? blocker
-                ? "con bloqueo"
-                : "sin bloqueos"
-              : undefined,
+            detail: maintenancePartial ? "Datos anteriores o parciales" : unit?.nextRun ? `Próxima: ${maintenanceDate(unit.nextRun)}` : "Programación sin confirmar",
           },
           {
             id: "retained",
-            label: "Retenidas",
-            value: snapshot?.retained.length ?? "—",
+            label: "Releases bloqueadas",
+            value: partial ? "Sin confirmar" : snapshot.retained.length,
+            detail: "Según los tags locales del host",
             tone: snapshot?.retained.length ? "peach" : "muted",
           },
           {
             id: "security",
-            label: "Seguridad",
-            value: !security
-              ? "—"
-              : security.pending
-                ? "Actualizando"
-                : security.review.length
-                  ? `${security.review.length} por revisar`
-                  : "Al día",
-            tone: securityTone,
-            detail: security
-              ? `${security.pins.length} ${security.pins.length === 1 ? "pin" : "pins"}`
-              : undefined,
+            label: "Comparaciones de seguridad",
+            value: maintenance.snapshot?.degraded.includes("security") ? "Sin datos" : maintenance.snapshot?.security.review.length ?? "Sin datos",
+            detail: maintenance.stale ? "Datos anteriores · vigencia sin confirmar" : "Vigencia sin confirmar",
+            tone: "peach",
           },
           {
-            id: "failed",
-            label: "Último fallo",
-            value: lastFailed ?? "—",
-            tone: lastFailed ? "loss" : "muted",
+            id: "pins",
+            label: "Versiones fijadas",
+            value: maintenance.snapshot?.degraded.includes("security") ? "Sin datos" : maintenance.snapshot?.security.pins.length ?? "Sin datos",
+            detail: maintenance.stale ? "Datos anteriores" : "Imágenes que sustituyen a la Plantilla",
           },
         ]}
       />
-      {error && (
-        <p className="notice error" role="alert">
-          {error}
-        </p>
-      )}
-      {maintenance.stale && (
-        <p className={styles.note} role="status">
-          No se pudo actualizar la release: se muestran los datos anteriores.
-        </p>
-      )}
-      {snapshot?.degraded.length ? (
-        <p className={styles.note}>
-          Datos parciales: {snapshot.degraded.join(", ")}
-        </p>
-      ) : null}
-      <div className="columns">
-        <div className="main-column page-stack">
-          {children}
-          {blocker && (
-            <Panel title="Bloqueos del seguidor" id="deployment-blockers">
-              <div className={styles.body} data-blocker={blocker.code}>
-                <strong>{reasons[blocker.code]}</strong>
-                {blocker.files.length > 0 && (
-                  <ul>
-                    {blocker.files.map((f) => (
+      <div className="page-stack">
+          {(error || snapshot?.blocker || snapshot?.degraded.length) ? <Panel title="Bloqueos del despliegue automático" id="deployment-blockers">
+            <div
+              className={styles.body}
+              data-blocker={snapshot?.blocker?.code ?? "none"}
+            >
+              {error && <p role="alert">{error}</p>}
+              {snapshot?.degraded.length ? (
+                <p className={styles.note}>
+                  Datos parciales: {snapshot.degraded.join(", ")}
+                </p>
+              ) : null}
+              {snapshot?.blocker ? (
+                <>
+                  <strong>{reasons[snapshot.blocker.code]}</strong>
+                  {snapshot.blocker.files.length > 0 && <ul>
+                    {snapshot.blocker.files.map((f) => (
                       <li key={f.path} className="mono">
                         {f.from ? `${f.from} → ` : ""}
                         {f.path}
                       </li>
                     ))}
-                  </ul>
-                )}
-                {blocker.missingSettings.join(", ")}
-              </div>
-            </Panel>
-          )}
-          <Panel title="Releases" id="releases">
+                  </ul>}
+                  {snapshot.blocker.missingSettings.join(", ")}
+                </>
+              ) : (
+                <span>
+                  {snapshot ? "Sin bloqueos detectados" : "Esperando datos"}
+                </span>
+              )}
+            </div>
+          </Panel> : null}
+          <SecurityReview />
+          <details className={styles.activity} open={!!snapshot?.retained.length} data-deployment-activity="">
+            <summary>Actividad y despliegues anteriores{snapshot?.retained.length ? ` · ${snapshot.retained.length} releases bloqueadas` : ""}</summary>
+            <div className={`${styles.body} page-stack`}>
+          {children}
+          <Panel title="Releases bloqueadas e historial" id="releases">
+            {maintenance.snapshot?.follower.failed && <p className={styles.body}>Fallo de release registrado: {maintenance.snapshot.follower.failed.release}. Consulta el historial para comprobar si una release posterior lo ha superado.</p>}
+            {error && <p className={styles.body} role="status">{error}. El historial puede estar incompleto.</p>}
+            {!snapshot && <p className={styles.body} role="status">{error ? "Historial no disponible" : "Cargando historial…"}</p>}
+            {snapshot && !snapshot.retained.length && !snapshot.history.length && <p className={styles.body}>No hay releases bloqueadas ni intentos en los datos recibidos.</p>}
             <div className="table-scroll">
               <table className={`data-table ${styles.releaseTable}`} data-releases="">
                 <thead>
@@ -288,7 +278,9 @@ export function ReleaseDetails({ children }: { children?: React.ReactNode }) {
                           </button>
                         </td>
                         <td>Retenida</td>
-                        <td>{shortDateTime(r.at)}</td>
+                        <td>
+                          {shortDateTime(r.at)}
+                        </td>
                         <td>{r.services.join(", ") || "Sin reinicios"}</td>
                       </tr>
                       {expanded === r.release && (
@@ -325,10 +317,12 @@ export function ReleaseDetails({ children }: { children?: React.ReactNode }) {
                       <td className="mono">{h.release}</td>
                       <td className={h.outcome === "success" ? "gain" : "loss"}>
                         {h.outcome === "success"
-                          ? "Correcta"
+                          ? "Despliegue completado"
                           : "Fallida · restaurada"}
                       </td>
-                      <td>{shortDateTime(h.at)}</td>
+                      <td>
+                        {shortDateTime(h.at)}
+                      </td>
                       <td>{h.services.join(", ") || "Sin reinicios"}</td>
                     </tr>
                   ))}
@@ -336,47 +330,44 @@ export function ReleaseDetails({ children }: { children?: React.ReactNode }) {
               </table>
             </div>
           </Panel>
-        </div>
-        <div className="side-column">
-          <SecurityPanel />
           <Panel title="Registro de unidades" id="unit-journal">
             <div className={styles.body}>
-              {journal.length > 6 && (
-                <label>
-                  Filtrar registro
-                  <input
-                    className={styles.input}
-                    value={filter}
-                    onChange={(e) => setFilter(e.target.value)}
-                  />
-                </label>
-              )}
+              {journal.length > 6 && <label>
+                Filtrar registro
+                <input
+                  className={styles.input}
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                />
+              </label>}
               <div
                 className={styles.log}
                 role="log"
                 aria-label="Registro de unidades permitidas"
               >
                 {visibleJournal.map((e, i) => (
-                  <div
-                    key={i}
-                    className={
-                      e.level === "error"
-                        ? "loss"
-                        : e.level === "warning"
-                          ? "peach"
-                          : ""
-                    }
-                  >
-                    <time>{new Date(e.at).toLocaleTimeString("es")}</time>{" "}
-                    {e.unit} · {e.message}
-                  </div>
-                ))}
+                    <div
+                      key={i}
+                      className={
+                        e.level === "error"
+                          ? "loss"
+                          : e.level === "warning"
+                            ? "peach"
+                            : ""
+                      }
+                    >
+                      <time>{new Date(e.at).toLocaleTimeString("es")}</time>{" "}
+                      {e.unit} · {e.message}
+                    </div>
+                  ))}
                 {!visibleJournal.length && <p>Sin registros.</p>}
               </div>
               <span className={styles.note}>Solo lectura</span>
             </div>
           </Panel>
-        </div>
+            </div>
+          </details>
+          <SecurityPins />
       </div>
     </>
   );

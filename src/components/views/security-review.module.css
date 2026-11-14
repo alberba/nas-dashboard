@@ -1,0 +1,31 @@
+.review, .heading, .body { display: flex; flex-direction: column; gap: 12px; }
+.heading p, .note { color: var(--soft); }
+.heading h2 { font-size: 14px; font-weight: 800; }
+.body { padding: 18px; }
+.body p { max-inline-size: 75ch; }
+.note { font-size: 12px; }
+.split { display: flex; flex-wrap: wrap; gap: 18px; align-items: start; }
+.candidates { flex: 1 1 250px; }
+.detail { flex: 999 1 400px; }
+.candidates .list { max-block-size: min(32rem, 60svh); overflow: auto; }
+.list { list-style: none; margin: 0; padding: 0; }
+.candidate { display: flex; flex-direction: column; align-items: start; text-align: start; inline-size: 100%; border-radius: 0; padding: 16px 18px; gap: 6px; border-block-end: 1px solid var(--row-line); overflow-wrap: anywhere; }
+.candidate[aria-pressed="true"] { background: var(--panel2); }
+.candidate small { color: var(--soft); font-size: 12px; }
+.candidate:focus-visible, .disclosure summary:focus-visible, .technical summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+.candidate:active, .disclosure summary:active, .technical summary:active { background: var(--panel2); }
+.metrics { display: flex; flex-wrap: wrap; gap: 18px; margin: 0; padding: 14px; background: var(--panel2); border-radius: 12px; }
+.metrics > div { flex: 1 1 210px; }
+.metrics dt { color: var(--soft); font-size: 12px; }
+.metrics dd { margin: 6px 0 0; font-weight: 750; font-variant-numeric: tabular-nums; }
+.disclosure { border: 1px solid var(--line); border-radius: 18px; background: var(--panel); overflow: clip; }
+.disclosure > summary { padding: 16px 18px; font-weight: 800; min-block-size: 56px; cursor: pointer; }
+.technical { border-block-start: 1px solid var(--line); }
+.technical summary { cursor: pointer; min-block-size: 44px; padding-block: 12px; }
+.technical p { overflow-wrap: anywhere; padding-block-end: 12px; }
+.pin { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; padding-block: 12px; border-block-end: 1px solid var(--row-line); }
+.pin > strong { flex: 1 1 140px; }
+.pin > details { flex-basis: 100%; }
+@media (hover: hover) and (pointer: fine) {
+  .candidate:hover, .disclosure > summary:hover, .technical summary:hover { background: var(--row-hover); }
+}
