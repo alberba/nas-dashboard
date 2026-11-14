@@ -179,7 +179,7 @@ async function open(
 const cell = (page: Page, id: string) => page.locator(`[data-segment="${id}"]`);
 const nasRole = (id: string) => (id === "apps" ? "apps-server" : "instance");
 
-test("the strip reflects the host snapshot and lists automations and failed units apart", async ({
+test("the strip reflects the host snapshot and surfaces failed units", async ({
   page,
 }) => {
   await open(page, (id) => snapshot(nasRole(id) as Role));
@@ -196,15 +196,9 @@ test("the strip reflects the host snapshot and lists automations and failed unit
   );
   await expect(cell(page, "docker")).toHaveAttribute("data-state", "ok");
 
-  const units = page.locator("[data-unit]");
-  await expect(units).toHaveCount(3);
-  await expect(
-    page.locator('[data-unit="media-stack-evidence"]'),
-  ).toBeVisible();
-  await expect(
-    page.locator('[data-unit="media-stack-tdarr-hardlinks"]'),
-  ).toHaveAttribute("data-state", "paused");
-
+  const failed = page.locator("[data-failed-units]");
+  await expect(failed).toBeVisible();
+  await failed.locator("summary").click();
   const stack = page.locator('[data-failed-group="stack"]');
   const other = page.locator('[data-failed-group="other"]');
   await expect(stack).toHaveAttribute("data-count", "1");
@@ -255,7 +249,7 @@ test("switching host drops the previous host's slow answer", async ({
   await expect(cell(page, "release")).toContainText("v9.9.9");
   await page.waitForTimeout(2000);
   await expect(cell(page, "release")).toContainText("v9.9.9");
-  await expect(page.locator("[data-unit]")).toHaveCount(1);
+  await expect(page.locator("[data-container-table]")).toBeVisible();
 });
 
 test("a failed refresh keeps the last data marked as stale and recovers", async ({

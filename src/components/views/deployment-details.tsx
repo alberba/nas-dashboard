@@ -26,12 +26,19 @@ const reasons: Record<string, string> = {
   "blocked-by-previous-release": "Bloqueada por la release anterior",
 };
 const refresh = () => window.dispatchEvent(new Event("maintenance-refresh"));
+const shortDateTime = (iso: string | null) =>
+  iso
+    ? new Date(iso).toLocaleString("es", {
+        dateStyle: "short",
+        timeStyle: "short",
+      })
+    : "—";
 export function MergeControl({ pr }: { pr: RenovatePullRequest }) {
   const scope = useHostScope();
   const sensitive = useSensitiveAction();
   const [deployNow, setDeployNow] = useState(false);
   return (
-    <div>
+    <div className={styles.merge}>
       <label className={styles.note}>
         <input
           type="checkbox"
@@ -68,14 +75,14 @@ export function MergeControl({ pr }: { pr: RenovatePullRequest }) {
               pr.type === "major"
                 ? "He leído los pasos manuales y revisado las notas de la release major"
                 : undefined,
-            confirmLabel: "Merge",
+            confirmLabel: "Fusionar",
             endpoint: scope.withHost("/api/renovate/merge"),
             body: { number: pr.number, headSha: pr.headSha, deployNow },
             onSettled: refresh,
           })
         }
       >
-        Merge
+        Fusionar
       </button>
       {sensitive.dialog}
     </div>
@@ -86,6 +93,7 @@ export function DeploymentProgress() {
     "/api/renovate/progress",
   );
   if (!data?.enabled && !error) return null;
+  if (data?.enabled && !data.updates.length) return null;
   return (
     <Panel title="Progreso de actualizaciones" id="deployment-progress">
       <div className={styles.body}>
@@ -132,10 +140,26 @@ export function ReleaseDetails({ children }: { children?: React.ReactNode }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const snapshot = data?.deployments;
+  const journal = snapshot?.journal.entries ?? [];
+  const visibleJournal = journal.filter((e) =>
+    `${e.unit} ${e.message}`.toLowerCase().includes(filter.toLowerCase()),
+  );
   const unit = maintenance.snapshot?.units.find((u) => u.kind === "follower");
   const partial = !!error || !snapshot?.available || !!snapshot.degraded.length;
   const maintenancePartial = maintenance.stale || !!maintenance.snapshot?.degraded.length;
-  const unitLabels = { active: "Activo", paused: "Pausado", inactive: "Inactivo", failed: "Fallo" };
+  const followerState = maintenance.snapshot?.follower.state;
+  const follower =
+    followerState === "deploying"
+      ? { value: "Desplegando", tone: "accent" as const }
+      : followerState === "failed" || unit?.state === "failed"
+        ? { value: "Fallo", tone: "loss" as const }
+        : unit?.state === "paused"
+          ? { value: "Pausado", tone: "peach" as const }
+          : unit?.state === "inactive"
+            ? { value: "Detenido", tone: "muted" as const }
+            : unit
+              ? { value: "Activo", tone: "gain" as const }
+              : { value: "Sin confirmar", tone: "muted" as const };
   return (
     <>
       <StatusStrip
@@ -153,7 +177,8 @@ export function ReleaseDetails({ children }: { children?: React.ReactNode }) {
           {
             id: "follower",
             label: "Despliegue automático",
-            value: unit ? unitLabels[unit.state] : "Sin confirmar",
+            value: follower.value,
+            tone: follower.tone,
             detail: maintenancePartial ? "Datos anteriores o parciales" : unit?.nextRun ? `Próxima: ${maintenanceDate(unit.nextRun)}` : "Programación sin confirmar",
           },
           {
@@ -193,14 +218,14 @@ export function ReleaseDetails({ children }: { children?: React.ReactNode }) {
               {snapshot?.blocker ? (
                 <>
                   <strong>{reasons[snapshot.blocker.code]}</strong>
-                  <ul>
+                  {snapshot.blocker.files.length > 0 && <ul>
                     {snapshot.blocker.files.map((f) => (
                       <li key={f.path} className="mono">
                         {f.from ? `${f.from} → ` : ""}
                         {f.path}
                       </li>
                     ))}
-                  </ul>
+                  </ul>}
                   {snapshot.blocker.missingSettings.join(", ")}
                 </>
               ) : (
@@ -254,7 +279,7 @@ export function ReleaseDetails({ children }: { children?: React.ReactNode }) {
                         </td>
                         <td>Retenida</td>
                         <td>
-                          {r.at ? new Date(r.at).toLocaleString("es") : "—"}
+                          {shortDateTime(r.at)}
                         </td>
                         <td>{r.services.join(", ") || "Sin reinicios"}</td>
                       </tr>
@@ -296,7 +321,7 @@ export function ReleaseDetails({ children }: { children?: React.ReactNode }) {
                           : "Fallida · restaurada"}
                       </td>
                       <td>
-                        {h.at ? new Date(h.at).toLocaleString("es") : "—"}
+                        {shortDateTime(h.at)}
                       </td>
                       <td>{h.services.join(", ") || "Sin reinicios"}</td>
                     </tr>
@@ -307,26 +332,20 @@ export function ReleaseDetails({ children }: { children?: React.ReactNode }) {
           </Panel>
           <Panel title="Registro de unidades" id="unit-journal">
             <div className={styles.body}>
-              <label>
+              {journal.length > 6 && <label>
                 Filtrar registro
                 <input
                   className={styles.input}
                   value={filter}
                   onChange={(e) => setFilter(e.target.value)}
                 />
-              </label>
+              </label>}
               <div
                 className={styles.log}
                 role="log"
                 aria-label="Registro de unidades permitidas"
               >
-                {snapshot?.journal.entries
-                  .filter((e) =>
-                    `${e.unit} ${e.message}`
-                      .toLowerCase()
-                      .includes(filter.toLowerCase()),
-                  )
-                  .map((e, i) => (
+                {visibleJournal.map((e, i) => (
                     <div
                       key={i}
                       className={
@@ -341,6 +360,7 @@ export function ReleaseDetails({ children }: { children?: React.ReactNode }) {
                       {e.unit} · {e.message}
                     </div>
                   ))}
+                {!visibleJournal.length && <p>Sin registros.</p>}
               </div>
               <span className={styles.note}>Solo lectura</span>
             </div>

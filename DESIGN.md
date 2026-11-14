@@ -165,6 +165,10 @@ Usar siempre estas palabras para que todas las páginas digan lo mismo:
 
 Mantenimiento lleva en la cabecera el selector de host (`NAS-HOME` / `Apps`): todo el contenido de la página es del host elegido.
 
+**Estado** no repite el detalle de las automatizaciones ni los pins: la franja ya responde si el host está sano y el detalle vive en Despliegues. Si una unidad del sistema falla, aparece un aviso plegable entre la franja y los contenedores; las unidades que funcionan no ocupan espacio. La tabla de contenedores muestra nombre, estado y acciones: la imagen y el consumo de CPU/RAM pertenecen a Recursos.
+
+**Despliegues** muestra el panel de bloqueos solo cuando hay un bloqueo; sin él, la franja del seguidor lo dice en una línea. Cada PR de Renovate es una fila con servicios, estado y su acción de fusionar; el tipo y el CI viven en esa misma columna de estado.
+
 ## Móvil
 
 - La navegación principal pasa a una fila con desplazamiento horizontal bajo la marca.

@@ -12,7 +12,6 @@ import {
   type ContainerFilterId,
   type ContainerHealth,
 } from "@/lib/containers";
-import { bytes, percent } from "@/lib/format";
 import type { Container, Metrics } from "@/lib/types";
 import type { ActionRequest } from "../file-browser";
 import { useHostScope } from "../host-context";
@@ -26,7 +25,6 @@ import {
   HostCommands,
   DisksPanel,
   EventsPanel,
-  SecurityPanel,
 } from "./maintenance-extras";
 import {
   RemoveContainerButton,
@@ -140,19 +138,14 @@ function MaintenanceContent({
           }
         >
           <div className="table-scroll">
-            <table className="data-table" data-container-table="">
+            <table
+              className={`data-table ${extraStyles.containerTable}`}
+              data-container-table=""
+            >
               <thead>
                 <tr>
                   <th scope="col">Contenedor</th>
-                  <th scope="col">Imagen</th>
                   <th scope="col">Estado</th>
-                  <th scope="col">Salud</th>
-                  <th scope="col" className="numeric">
-                    CPU
-                  </th>
-                  <th scope="col" className="numeric">
-                    RAM
-                  </th>
                   <th scope="col" className="numeric">
                     <span className="sr-only">Acciones</span>
                   </th>
@@ -171,7 +164,7 @@ function MaintenanceContent({
                 ))}
                 {!visible.length && (
                   <tr className="empty-row">
-                    <td colSpan={7}>Ningún contenedor en este filtro</td>
+                    <td colSpan={3}>Ningún contenedor en este filtro</td>
                   </tr>
                 )}
               </tbody>
@@ -219,7 +212,6 @@ function MaintenanceContent({
           </HostCommands>
           <EventsPanel />
           <DisksPanel />
-          <SecurityPanel />
         </div>
       </div>
       {sensitive.dialog}
@@ -277,15 +269,22 @@ function ContainerLine({
   const pin = snapshot?.security.pins.find(
     (p) => p.service === (c.composeService ?? c.compose?.service),
   );
+  const health = containerHealth(c);
+  const unhealthySince =
+    health === "unhealthy" &&
+    snapshot &&
+    Number.isFinite(c.healthObservedSince)
+      ? Math.max(
+          0,
+          Math.floor((snapshot.timestamp - c.healthObservedSince!) / 60),
+        )
+      : null;
   const healthLabel =
-    healthLabels[containerHealth(c)] +
-    (c.healthObservedSince && containerHealth(c) === "unhealthy"
-      ? ` · ≥${Math.max(0, Math.floor(((snapshot?.timestamp ?? c.healthObservedSince) - c.healthObservedSince) / 60))} min`
-      : "");
+    healthLabels[health] +
+    (unhealthySince === null ? "" : ` · ≥${unhealthySince} min`);
   const removal = useRemoveContainer(() =>
     window.dispatchEvent(new Event("maintenance-refresh")),
   );
-  const health = containerHealth(c);
   const tone: Tone = problem
     ? "loss"
     : c.state !== "running"
@@ -294,6 +293,10 @@ function ContainerLine({
         ? "gain"
         : healthTones[health];
   const locked = disabled || c.protected;
+  const stateText = `${stateLabel(c)}${
+    health === "none" ? "" : ` · ${healthLabel}`
+  }`;
+  const update = updates[0];
   return (
     <Fragment>
       <tr
@@ -313,39 +316,38 @@ function ContainerLine({
                 pin · {pin.version ?? "seguridad"}
               </span>
             )}
-            {updates.map((pr) => (
+            {update && (
               <a
-                key={pr.number}
                 className={extraStyles.pill}
+                data-container-update={update.number}
+                title={updates
+                  .map((pr) => `PR #${pr.number}`)
+                  .join(" · ")}
                 href={routeHref({
                   view: "maintenance",
                   tab: "deployments",
                   host: scope.host?.id,
                 })}
               >
-                actualización · #{pr.number}
+                actualización · #{update.number}
+                {updates.length > 1 && ` +${updates.length - 1}`}
               </a>
-            ))}
+            )}
             {c.protected && (
               <Lock className="lock" role="img" aria-label="Protegido" />
             )}
           </span>
           <span className={`row-meta ${tone}`}>
-            {stateLabel(c)}
-            {health !== "none" && ` · ${healthLabels[health]}`}
+            {stateText}
+            {update && (
+              <span className="accent">
+                {" · "}actualización #{update.number}
+                {updates.length > 1 && ` +${updates.length - 1}`}
+              </span>
+            )}
           </span>
         </td>
-        <td className="mono soft">
-          <span className="truncate" title={c.image}>
-            {c.image}
-          </span>
-        </td>
-        <td className={c.state === "running" ? "" : "subtle"}>
-          {stateLabel(c)}
-        </td>
-        <td className={healthTones[health]}>{healthLabel}</td>
-        <td className="numeric">{percent(c.cpu)}</td>
-        <td className="numeric">{bytes(c.memory)}</td>
+        <td className={`${tone} ${extraStyles.stateText}`}>{stateText}</td>
         <td className="numeric actions-cell">
           <div className="row-actions">
             {removal.dialog}

@@ -1,8 +1,4 @@
-import type {
-  MaintenanceFailedUnit,
-  MaintenanceSnapshot,
-  MaintenanceUnit,
-} from "./maintenance";
+import type { MaintenanceFailedUnit, MaintenanceSnapshot } from "./maintenance";
 
 /** Tones of `StatusDot`; kept here so the module has no UI import. */
 export type StatusTone =
@@ -166,18 +162,6 @@ export function statusCells(snapshot: MaintenanceSnapshot): StatusCells {
         };
 
   return { release, follower: followerCell, security, backup, reboot, docker };
-}
-
-export type AutomationRows = {
-  /** False when the units could not be read: show "no data", not "none". */
-  available: boolean;
-  items: MaintenanceUnit[];
-};
-
-export function automationRows(snapshot: MaintenanceSnapshot): AutomationRows {
-  return degraded(snapshot, "units")
-    ? { available: false, items: [] }
-    : { available: true, items: snapshot.units };
 }
 
 export type FailedUnitGroups = {

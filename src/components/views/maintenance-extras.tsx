@@ -21,6 +21,21 @@ export const commandLabels: Record<HostCommand, string> = {
   "check-health": "Comprobar salud",
   "reconnect-apps": "Reconectar apps",
 };
+/** Everyday actions only. The rarer unit commands stay in the Ctrl K search. */
+const statusCommands: HostCommand[] = [
+  "deploy-now",
+  "check-health",
+  "reconnect-apps",
+  "backup-now",
+  "clean-images",
+];
+const commandShortcuts: Partial<Record<HostCommand, string>> = {
+  "deploy-now": "D",
+  "check-health": "H",
+  "reconnect-apps": "W",
+  "backup-now": "B",
+};
+
 export function HostCommands({ children }: { children?: React.ReactNode }) {
   const { canMutate, host, withHost, key } = useHostScope();
   const sending = useRef(false);
@@ -82,7 +97,7 @@ export function HostCommands({ children }: { children?: React.ReactNode }) {
   return (
     <Panel title="Acciones del host" id="host-actions">
       <div className="command-list">
-        {(Object.keys(commandLabels) as HostCommand[])
+        {statusCommands
           .filter(
             (c) =>
               host?.role === "instance" ||
@@ -101,27 +116,7 @@ export function HostCommands({ children }: { children?: React.ReactNode }) {
               onClick={() => void run(c)}
             >
               {commandLabels[c]}
-              {(
-                {
-                  "deploy-now": "D",
-                  "check-health": "H",
-                  "reconnect-apps": "W",
-                  "backup-now": "B",
-                } as Partial<Record<HostCommand, string>>
-              )[c] && (
-                <kbd>
-                  {
-                    (
-                      {
-                        "deploy-now": "D",
-                        "check-health": "H",
-                        "reconnect-apps": "W",
-                        "backup-now": "B",
-                      } as Partial<Record<HostCommand, string>>
-                    )[c]
-                  }
-                </kbd>
-              )}
+              {commandShortcuts[c] && <kbd>{commandShortcuts[c]}</kbd>}
             </button>
           ))}
         {children}
@@ -212,12 +207,6 @@ export function EventsPanel() {
     backup: "Copia",
     security: "Seguridad",
   };
-  const statuses = {
-    ok: "Correcta",
-    failed: "Fallida",
-    pending: "Pendiente",
-    info: "Información",
-  };
   return (
     <Panel title="Eventos de hoy" id="today-events">
       <div className={styles.body} data-events="">
@@ -252,7 +241,14 @@ export function EventsPanel() {
                 }
               />
               <span>
-                {labels[e.kind]} {e.release} · {statuses[e.status]}
+                {labels[e.kind]}
+                {e.kind === "health" && e.status === "ok" ? " correcta" : ""}
+                {e.release && e.release !== "—" ? ` ${e.release}` : ""}
+                {e.status === "failed"
+                  ? " · falló"
+                  : e.status === "pending"
+                    ? " · pendiente"
+                    : ""}
               </span>
             </li>
           ))}
@@ -267,38 +263,49 @@ export function EventsPanel() {
 
 export function SecurityPanel() {
   const { snapshot } = useMaintenanceSnapshot();
+  const pins = snapshot?.security.pins ?? [];
+  const review = snapshot?.security.review ?? [];
+  const pending = snapshot?.security.pending ?? null;
+  const count = pins.length
+    ? `${pins.length} ${pins.length === 1 ? "pin" : "pins"}`
+    : undefined;
   return (
-    <Panel title="Seguridad" id="security-details">
+    <Panel title="Seguridad" id="security-details" count={count}>
       <div className={styles.body}>
-        <ul className={styles.list}>
-          {snapshot?.security.pins.map((pin) => (
-            <li
-              key={pin.service}
-              className={styles.row}
-              data-security-pin={pin.service}
-            >
-              <strong>{pin.service}</strong>
-              <span className="gain">pin de seguridad</span>
-              <span className="mono">{pin.version ?? pin.image}</span>
-            </li>
-          ))}
-        </ul>
-        {snapshot?.security.pending && (
+        {pins.length > 0 && (
+          <ul className={styles.list} data-security-pins="">
+            {pins.map((pin) => (
+              <li
+                key={pin.service}
+                className={styles.row}
+                data-security-pin={pin.service}
+              >
+                <strong>{pin.service}</strong>
+                <span className="mono soft">{pin.version ?? pin.image}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {pending && (
           <p className="accent">
-            Actualizando {snapshot.security.pending.service} ·{" "}
-            {snapshot.security.pending.status}
+            Actualizando {pending.service} · {pending.status}
           </p>
         )}
-        <ul className={styles.list}>
-          {snapshot?.security.review.map((r, i) => (
-            <li key={i} className={styles.row} data-security-review="">
-              <strong>{r.names.join(", ")}</strong>
-              <span className="peach">revisar · {r.newSevere} graves</span>
-              <span className={styles.note}>{r.reason}</span>
-            </li>
-          ))}
-        </ul>
-        {!snapshot && <p>Sin datos</p>}
+        {review.length > 0 && (
+          <ul className={styles.list} data-security-reviews="">
+            {review.map((r, i) => (
+              <li key={i} className={styles.row} data-security-review="">
+                <strong>{r.names.join(", ")}</strong>
+                <span className="peach">{r.newSevere} graves</span>
+                {r.reason && <span className={styles.note}>{r.reason}</span>}
+              </li>
+            ))}
+          </ul>
+        )}
+        {snapshot && !pins.length && !pending && !review.length && (
+          <p className={styles.note}>Sin pins ni revisiones pendientes.</p>
+        )}
+        {!snapshot && <p className={styles.note}>Sin datos</p>}
       </div>
     </Panel>
   );
