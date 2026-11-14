@@ -3,6 +3,26 @@ import type { Container } from "./types";
 export type ContainerHealth = "healthy" | "unhealthy" | "starting" | "none";
 export type ContainerFilterId = "all" | "problems" | "stopped";
 
+/**
+ * Docker states without a live process. Paused containers still have a frozen
+ * process, and transient states such as `restarting` or `removing` are still
+ * in flight, so all of them stay visible in the main listing.
+ */
+const stoppedStates = ["created", "exited", "dead"];
+
+export function isStoppedContainer(container: Pick<Container, "state">) {
+  return stoppedStates.includes(container.state);
+}
+
+/** Splits the fleet into the main listing and the stopped section. */
+export function containerSections(containers: Container[]) {
+  const main: Container[] = [];
+  const stopped: Container[] = [];
+  for (const container of containers)
+    (isStoppedContainer(container) ? stopped : main).push(container);
+  return { main, stopped };
+}
+
 export function containerHealth(
   container: Pick<Container, "state" | "status">,
 ): ContainerHealth {
@@ -39,7 +59,7 @@ export function containerFilters(containers: Container[], expected: string[]) {
     [
       { id: "all", test: () => true },
       { id: "problems", test: (c) => needsAttention(c, expected) },
-      { id: "stopped", test: (c) => c.state !== "running" },
+      { id: "stopped", test: isStoppedContainer },
     ];
   return filters.map(({ id, test }) => ({
     id,

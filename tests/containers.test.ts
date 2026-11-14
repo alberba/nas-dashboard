@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { containerFilters, containerHealth } from "../src/lib/containers";
+import {
+  containerFilters,
+  containerHealth,
+  containerSections,
+  isStoppedContainer,
+} from "../src/lib/containers";
 import type { Container } from "../src/lib/types";
 
 function container(overrides: Partial<Container>): Container {
@@ -50,7 +55,7 @@ describe("container filters", () => {
     );
     expect(counts.all).toHaveLength(6);
     expect(counts.problems).toEqual(["bazarr", "loop"]);
-    expect(counts.stopped).toEqual(["loop", "wire", "sonarr"]);
+    expect(counts.stopped).toEqual(["wire", "sonarr"]);
   });
 
   it("treats a stopped container the operator expects to run as a problem", () => {
@@ -58,6 +63,36 @@ describe("container filters", () => {
       (f) => f.id === "problems",
     )?.items;
     expect(problems?.map((c) => c.name)).toEqual(["bazarr", "loop", "sonarr"]);
+  });
+});
+
+describe("container sections", () => {
+  it("partitions the listing without mixing transient states into stopped", () => {
+    const sections = containerSections(fleet);
+    expect(sections.main.map((c) => c.name)).toEqual([
+      "jellyfin",
+      "bazarr",
+      "radarr",
+      "loop",
+    ]);
+    expect(sections.stopped.map((c) => c.name)).toEqual(["wire", "sonarr"]);
+    expect(
+      [...sections.main, ...sections.stopped]
+        .map((c) => c.name)
+        .sort((a, b) => a.localeCompare(b)),
+    ).toEqual(fleet.map((c) => c.name).sort((a, b) => a.localeCompare(b)));
+  });
+
+  it.each([
+    ["running", false],
+    ["restarting", false],
+    ["paused", false],
+    ["removing", false],
+    ["created", true],
+    ["exited", true],
+    ["dead", true],
+  ])("reads state %s as stopped=%s", (state, stopped) => {
+    expect(isStoppedContainer(container({ state }))).toBe(stopped);
   });
 });
 

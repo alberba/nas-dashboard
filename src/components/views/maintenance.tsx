@@ -3,11 +3,22 @@ import {
   useMaintenanceSnapshot,
   MaintenanceSnapshotProvider,
 } from "./use-maintenance-snapshot";
-import { Fragment, useState } from "react";
-import { Lock, Play, Power, RefreshCw, ScrollText, Square } from "lucide-react";
+import { Fragment, useRef, useState } from "react";
+import {
+  ChevronDown,
+  Lock,
+  Play,
+  Power,
+  RefreshCw,
+  ScrollText,
+  Square,
+  TriangleAlert,
+} from "lucide-react";
 import {
   containerFilters,
   containerHealth,
+  containerSections,
+  isStoppedContainer,
   needsAttention,
   type ContainerFilterId,
   type ContainerHealth,
@@ -54,6 +65,27 @@ const healthTones: Record<ContainerHealth, Tone> = {
   starting: "peach",
   none: "muted",
 };
+type ContainerFilter = ContainerFilterId | "updates";
+
+function emptySectionMessage(
+  section: "main" | "stopped",
+  visible: number,
+  total: number,
+  filter: ContainerFilter,
+) {
+  if (visible > 0) return null;
+  if (section === "main" && filter === "stopped")
+    return total > 0
+      ? "Los contenedores detenidos están en la sección inferior"
+      : "No hay contenedores detenidos";
+  if (total === 0)
+    return section === "main"
+      ? "No hay contenedores activos"
+      : "No hay contenedores detenidos";
+  return section === "main"
+    ? "Ningún contenedor activo en este filtro"
+    : "Ningún contenedor detenido en este filtro";
+}
 
 export function MaintenanceStatus(
   props: ComponentProps<typeof MaintenanceContent>,
@@ -82,7 +114,8 @@ function MaintenanceContent({
 }) {
   const sensitive = useSensitiveAction();
   const { canReboot, withHost } = useHostScope();
-  const [filter, setFilter] = useState<ContainerFilterId | "updates">("all");
+  const [filter, setFilter] = useState<ContainerFilter>("all");
+  const stoppedSection = useRef<HTMLDetailsElement>(null);
   const renovate = useRenovate();
   const updates = containerUpdates(renovate.overview, renovate.hostId);
   const containers = [...metrics.containers].sort((a, b) =>
@@ -100,7 +133,31 @@ function MaintenanceContent({
       : []),
   ];
   const visible = filters.find((f) => f.id === filter)?.items ?? containers;
+  const sections = containerSections(visible);
+  const allSections = containerSections(containers);
+  const stoppedProblems = sections.stopped.filter((c) =>
+    needsAttention(c, expected),
+  ).length;
   const running = containers.filter((c) => c.state === "running").length;
+
+  function selectFilter(id: ContainerFilter) {
+    setFilter(id);
+    if (id === "stopped" && stoppedSection.current)
+      stoppedSection.current.open = true;
+  }
+
+  const mainEmpty = emptySectionMessage(
+    "main",
+    sections.main.length,
+    allSections.main.length,
+    filter,
+  );
+  const stoppedEmpty = emptySectionMessage(
+    "stopped",
+    sections.stopped.length,
+    allSections.stopped.length,
+    filter,
+  );
 
   return (
     <div className="page-stack">
@@ -118,59 +175,75 @@ function MaintenanceContent({
         }
       />
       <div className="columns">
-        <Panel
-          id="containers-title"
-          title="Contenedores"
-          count={`${running}/${containers.length}`}
-          className="main-column"
-          tools={
-            <FilterChips
-              label="Filtrar contenedores"
-              options={filters.map((f) => ({
-                id: f.id,
-                label:
-                  f.id === "updates" ? "Actualizaciones" : filterLabels[f.id],
-                count: f.items.length,
-              }))}
-              value={filter}
-              onSelect={setFilter}
+        <div className={`main-column ${extraStyles.mainStack}`}>
+          <Panel
+            id="containers-title"
+            title="Contenedores"
+            count={`${running}/${containers.length}`}
+            tools={
+              <FilterChips
+                label="Filtrar contenedores"
+                options={filters.map((f) => ({
+                  id: f.id,
+                  label:
+                    f.id === "updates" ? "Actualizaciones" : filterLabels[f.id],
+                  count: f.items.length,
+                }))}
+                value={filter}
+                onSelect={selectFilter}
+              />
+            }
+          >
+            <ContainerTable
+              table="main"
+              containers={sections.main}
+              expected={expected}
+              disabled={disabled}
+              request={request}
+              updates={updates}
+              empty={mainEmpty}
             />
-          }
-        >
-          <div className="table-scroll">
-            <table
-              className={`data-table ${extraStyles.containerTable}`}
-              data-container-table=""
-            >
-              <thead>
-                <tr>
-                  <th scope="col">Contenedor</th>
-                  <th scope="col">Estado</th>
-                  <th scope="col" className="numeric">
-                    <span className="sr-only">Acciones</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((container) => (
-                  <ContainerRow
-                    key={container.id}
-                    container={container}
-                    problem={needsAttention(container, expected)}
-                    disabled={disabled}
-                    request={request}
-                    updates={updates.get(container.id) ?? []}
-                  />
-                ))}
-                {!visible.length && (
-                  <tr className="empty-row">
-                    <td colSpan={3}>Ningún contenedor en este filtro</td>
-                  </tr>
+          </Panel>
+          <details
+            ref={stoppedSection}
+            className={`data-panel ${extraStyles.stoppedPanel}`}
+            data-stopped-section=""
+            data-count={sections.stopped.length}
+            data-total={allSections.stopped.length}
+          >
+            <summary className="panel-head" data-stopped-summary="">
+              <h2 id="stopped-containers-title">
+                Contenedores detenidos
+                <span className="panel-count">{sections.stopped.length}</span>
+              </h2>
+              <span className={extraStyles.stoppedTools}>
+                {stoppedProblems > 0 && (
+                  <span
+                    className={extraStyles.stoppedProblems}
+                    data-stopped-problems={stoppedProblems}
+                  >
+                    <TriangleAlert aria-hidden="true" />
+                    {stoppedProblems} con{" "}
+                    {stoppedProblems === 1 ? "problema" : "problemas"}
+                  </span>
                 )}
-              </tbody>
-            </table>
-          </div>
-        </Panel>
+                <ChevronDown
+                  className={extraStyles.stoppedChevron}
+                  aria-hidden="true"
+                />
+              </span>
+            </summary>
+            <ContainerTable
+              table="stopped"
+              containers={sections.stopped}
+              expected={expected}
+              disabled={disabled}
+              request={request}
+              updates={updates}
+              empty={stoppedEmpty}
+            />
+          </details>
+        </div>
         <div className="side-column">
           <HostCommands>
             <button
@@ -219,10 +292,68 @@ function MaintenanceContent({
   );
 }
 
+function ContainerTable({
+  table,
+  containers,
+  expected,
+  disabled,
+  request,
+  updates,
+  empty,
+}: {
+  table: "main" | "stopped";
+  containers: Container[];
+  expected: string[];
+  disabled: boolean;
+  request: (action: ActionRequest) => void;
+  updates: Map<string, { number: number; url: string }[]>;
+  empty: string | null;
+}) {
+  const emptyState = table === "main" ? "active" : "stopped";
+  return (
+    <div className="table-scroll">
+      <table
+        className={`data-table ${extraStyles.containerTable}`}
+        data-container-table={table === "main" ? "" : undefined}
+        data-stopped-table={table === "stopped" ? "" : undefined}
+      >
+        <thead>
+          <tr>
+            <th scope="col">Contenedor</th>
+            <th scope="col">Estado</th>
+            <th scope="col" className="numeric">
+              <span className="sr-only">Acciones</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {containers.map((container) => (
+            <ContainerRow
+              key={container.id}
+              container={container}
+              problem={needsAttention(container, expected)}
+              disabled={disabled}
+              request={request}
+              updates={updates.get(container.id) ?? []}
+            />
+          ))}
+          {!containers.length && (
+            <tr className="empty-row" data-empty={emptyState}>
+              <td colSpan={3}>{empty ?? "Ningún contenedor"}</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function stateLabel(c: Container) {
   if (c.state === "running") return "Activo";
-  if (c.state === "exited") return "Detenido";
   if (c.state === "restarting") return "Reiniciándose";
+  if (c.state === "paused") return "Pausado";
+  if (c.state === "removing") return "Eliminándose";
+  if (isStoppedContainer(c)) return "Detenido";
   return c.state;
 }
 
