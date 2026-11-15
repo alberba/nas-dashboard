@@ -257,6 +257,33 @@ describe.skipIf(!baseUrl)("multi-host API", () => {
     ).toBe(true);
   });
 
+  it("returns per-container history only for the selected host", async () => {
+    await collectAll();
+    const response = await api(
+      "GET",
+      "/api/container-history?host=nas-home&name=nas-service&range=1h",
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.name).toBe("nas-service");
+    const points = body.history.filter(
+      (point: { cpu: number | null }) => point.cpu !== null,
+    );
+    expect(points).toHaveLength(1);
+    expect(points[0]).toMatchObject({ cpu: 1, memory: 2 });
+
+    const missing = await api(
+      "GET",
+      "/api/container-history?host=nas-home&name=ghost&range=1h",
+    );
+    expect(missing.status).toBe(200);
+    expect(
+      (await missing.json()).history.filter(
+        (point: { cpu: number | null }) => point.cpu !== null,
+      ),
+    ).toEqual([]);
+  });
+
   it("scopes an alert to the host that fails", async () => {
     apps.failMetrics = true;
     const now = Date.now();

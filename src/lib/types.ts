@@ -283,6 +283,14 @@ export type DeployProgressOverview = {
   snapshotAvailable: boolean;
   updates: DeployProgressUpdate[];
 };
+export type ContainerHistoryPoint = {
+  at: string;
+  cpu: number | null;
+  memory: number | null;
+  rx: number | null;
+  tx: number | null;
+};
+
 export type Overview = {
   host: HostInfo;
   hosts: HostStatus[];

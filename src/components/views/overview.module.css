@@ -359,6 +359,12 @@
   line-height: 1.3;
   overflow-wrap: anywhere;
 }
+.containerSelect {
+  inline-size: auto;
+  max-inline-size: 14rem;
+  min-block-size: 2.25rem;
+  font-size: 0.8rem;
+}
 
 @container (inline-size < 36rem) {
   /* Segmented controls take the whole width in equal columns. */

@@ -1,7 +1,5 @@
 import { bytes, percent } from "@/lib/format";
-import type { Overview } from "@/lib/types";
 
-export type History = Overview["history"];
 export type SeriesField =
   | "cpu"
   | "memory"
@@ -14,7 +12,14 @@ export type SeriesField =
   | "load5"
   | "load15"
   | "readAwait"
-  | "writeAwait";
+  | "writeAwait"
+  | "containerCpu"
+  | "containerMemory"
+  | "containerRx"
+  | "containerTx";
+export type History = Array<
+  { at: string } & Partial<Record<SeriesField, number | null>>
+>;
 export type Series = { field: SeriesField; label: string; color: string };
 
 /** History periods offered by the period picker, in display order. */
@@ -30,14 +35,19 @@ const loadFields: SeriesField[] = ["load1", "load5", "load15"];
 const latencyFields: SeriesField[] = ["readAwait", "writeAwait"];
 
 export const isRate = (field: SeriesField) =>
-  ["rx", "tx", "ioRead", "ioWrite"].includes(field);
+  ["rx", "tx", "ioRead", "ioWrite", "containerRx", "containerTx"].includes(field);
+export const isBytes = (field: SeriesField) => field === "containerMemory";
 export const isPercent = (field: SeriesField) =>
-  ["cpu", "memory", "swap"].includes(field);
+  ["cpu", "memory", "swap", "containerCpu"].includes(field);
 export const isLoad = (field: SeriesField) => loadFields.includes(field);
 export const isLatency = (field: SeriesField) => latencyFields.includes(field);
 /** Series whose scale is not fixed to 0–100. */
 export const isScaled = (field: SeriesField) =>
-  isRate(field) || isLoad(field) || isLatency(field);
+  isRate(field) ||
+  isBytes(field) ||
+  isLoad(field) ||
+  isLatency(field) ||
+  field === "containerCpu";
 
 export function seriesSummary(history: History, field: SeriesField) {
   const values = history
@@ -59,6 +69,7 @@ export function formatSeries(
 ) {
   if (value === null || value === undefined) return "sin datos";
   if (isRate(field)) return bytes(value, true);
+  if (isBytes(field)) return bytes(value);
   if (isLatency(field))
     return `${value.toLocaleString("es", { maximumFractionDigits: 1 })} ms`;
   if (isLoad(field))

@@ -3,6 +3,7 @@ import type { Metrics, Overview } from "@/lib/types";
 import { Chart } from "../chart";
 import { Panel, StatusStrip } from "../ui";
 import styles from "./overview.module.css";
+import { ContainerHistoryPanel } from "./container-history";
 import {
   CpuPanel,
   IoPanel,
@@ -203,6 +204,7 @@ export function ResourcesView({
         </div>
       </div>
       <VolumesPanel metrics={metrics} settings={data.settings} />
+      <ContainerHistoryPanel data={data} range={range} />
     </div>
   );
 }

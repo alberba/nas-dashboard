@@ -31,6 +31,13 @@ const containers = [
 }));
 
 const start = Date.now() - 60 * 60 * 1000;
+const containerHistory = Array.from({ length: 13 }, (_, i) => ({
+  at: new Date(start + i * 5 * 60 * 1000).toISOString(),
+  cpu: 2 + i / 10,
+  memory: (0.2 + i / 10) * GB,
+  rx: 1_000 * i,
+  tx: 100 * i,
+}));
 const history = Array.from({ length: 13 }, (_, i) => ({
   at: new Date(start + i * 5 * 60 * 1000).toISOString(),
   cpu: i === 4 ? null : 10 + i,
@@ -244,10 +251,16 @@ test.beforeAll(async ({ request, browser }) => {
 async function open(page: Page, path = "/") {
   const ranges: string[] = [];
   await page.context().addCookies(session);
-  await page.route("**/api/overview?*", (route) => {
+
+  await page.route("**/api/overview*", (route) => {
     ranges.push(new URL(route.request().url()).searchParams.get("range") ?? "");
     return route.fulfill({ json: overview });
   });
+  await page.route("**/api/container-history*", (route) =>
+    route.fulfill({
+      json: { host: host, name: "jellyfin", history: containerHistory },
+    }),
+  );
   await page.goto(path);
   return ranges;
 }
@@ -324,7 +337,9 @@ test("resources shows current values, six described charts and the hardware tabl
       view.locator(`.status-strip [data-segment="${segment}"]`),
     ).toBeVisible();
 
-  const charts = view.locator("[data-chart]");
+  const charts = view.locator(
+    'section[aria-labelledby="history-title"] [data-chart]',
+  );
   await expect(charts).toHaveCount(6);
   const descriptions = new Set<string | null>();
   for (const chart of await charts.all()) {
@@ -344,6 +359,16 @@ test("resources shows current values, six described charts and the hardware tabl
   await expect(view.locator('[data-latency="nvme0n1"]')).toBeVisible();
   await expect(view.locator('[data-raid="md1"]')).toBeVisible();
   await expect(view.locator("[data-system]")).toBeVisible();
+  await expect(view.locator("[data-container-history]")).toBeVisible();
+  await expect(
+    view.locator('select[aria-label="Contenedor"] option'),
+  ).toHaveCount(6);
+  await expect(
+    view.locator("[data-container-history] [data-chart]"),
+  ).toHaveCount(3);
+  await expect(view.locator('[data-chart="container-cpu"]')).toBeVisible();
+
+
 
   await range(page, "7d").click();
   await expect.poll(() => ranges.at(-1)).toBe("7d");

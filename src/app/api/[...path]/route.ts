@@ -339,6 +339,50 @@ async function handle(
         settings: await getSettings(host.id),
       });
     }
+    if (route === "container-history" && !mutation) {
+      const hosts = getHosts();
+      const host = resolveHost(
+        hosts,
+        request.nextUrl.searchParams.get("host"),
+      );
+      const name = z
+        .string()
+        .min(1)
+        .max(200)
+        .safeParse(request.nextUrl.searchParams.get("name"));
+      if (!name.success)
+        return json({ error: "Contenedor no válido" }, 400);
+      const range = z
+        .enum(["1h", "6h", "24h", "7d", "30d"])
+        .catch("1h")
+        .parse(request.nextUrl.searchParams.get("range"));
+      const [seconds, bucket] = ranges[range];
+      const history = await db.execute(sql`
+        WITH series AS (SELECT generate_series(
+          date_bin(make_interval(secs => ${bucket}), now() - make_interval(secs => ${seconds}), timestamp '2000-01-01'),
+          date_bin(make_interval(secs => ${bucket}), now(), timestamp '2000-01-01'), make_interval(secs => ${bucket})) AS at),
+        grouped AS (SELECT date_bin(make_interval(secs => ${bucket}), s.at, timestamp '2000-01-01') AS at,
+          avg((c->>'cpu')::float) AS cpu,
+          avg((c->>'memory')::float) AS memory,
+          avg((c->'network'->>'rx')::float) AS rx,
+          avg((c->'network'->>'tx')::float) AS tx
+          FROM samples s
+          CROSS JOIN LATERAL jsonb_array_elements(
+            CASE WHEN jsonb_typeof(s.data->'containers') = 'array'
+              THEN s.data->'containers' ELSE '[]'::jsonb END
+          ) c
+          WHERE s."hostId" = ${host.id}
+            AND s.at > now() - make_interval(secs => ${seconds})
+            AND c->>'name' = ${name.data}
+          GROUP BY 1)
+        SELECT series.at, grouped.cpu, grouped.memory, grouped.rx, grouped.tx
+        FROM series LEFT JOIN grouped USING(at) ORDER BY series.at`);
+      return json({
+        host: publicHost(host),
+        name: name.data,
+        history: history.rows,
+      });
+    }
     if (route === "presence" && mutation) {
       const input = z
         .object({ id: z.uuid(), visible: z.boolean() })

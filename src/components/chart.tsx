@@ -4,6 +4,7 @@ import styles from "./chart.module.css";
 import {
   describeChart,
   formatSeries,
+  isBytes,
   isRate,
   isScaled,
   type History,
@@ -56,7 +57,11 @@ export function Chart({
   const lines = series ?? [{ field, label, color }];
   const spoken = description ?? describeChart(history, lines);
   const scaled = lines.some((s) => isScaled(s.field));
-  const minimum = lines.some((s) => isRate(s.field)) ? 1024 : 1;
+  const minimum = lines.some((s) => isBytes(s.field))
+    ? 1024 * 1024
+    : lines.some((s) => isRate(s.field))
+      ? 1024
+      : 1;
   const max = scaled
     ? Math.max(
         minimum,

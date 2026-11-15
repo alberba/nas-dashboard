@@ -164,7 +164,7 @@ Usar siempre estas palabras para que todas las páginas digan lo mismo:
 | Página | Franja | Columna principal | Columna lateral |
 | --- | --- | --- | --- |
 | Resumen | Estado general, en marcha, servicios, CPU, memoria, red, temperatura | Actividad reciente (gráfica) · Lo que más está trabajando | Avisos · Almacenamiento · Accesos |
-| Recursos | Valores actuales de CPU, memoria, red, discos y tiempo en marcha | Historial de CPU, memoria y swap, carga, red, E/S y latencia · CPU por núcleo, memoria, red por interfaz y latencia | RAID · Sistema · Temperaturas · Actividad de discos; Volúmenes a ancho completo |
+| Recursos | Valores actuales de CPU, memoria, red, discos y tiempo en marcha | Historial de CPU, memoria y swap, carga, red, E/S y latencia · CPU por núcleo, memoria, red por interfaz y latencia | RAID · Sistema · Temperaturas · Actividad de discos; Volúmenes y Contenedores a ancho completo |
 | Mantenimiento · Estado | Release, seguidor, seguridad, copia, VPN, reinicio, Docker | Contenedores (filtros: Todos, Actualizaciones, Problemas, Detenidos) | Acciones · Eventos de hoy · Discos |
 | Mantenimiento · Despliegues | Plantilla registrada, despliegue automático, releases bloqueadas, comparaciones de seguridad, versiones fijadas | Candidatos de seguridad: lista y detalle · Actividad expandible (propuestas del repositorio, progreso, releases y registro) · Versiones fijadas expandibles | El detalle de la comparación ocupa la columna principal; no hay una columna secundaria de seguridad |
 | Archivos | — | Ruta + contenido de la carpeta | Papelera |
