@@ -26,6 +26,7 @@ const containers = [
   recreateOnCompose: true,
   cpu,
   memory,
+  network: { rx: 1_000, tx: 500 },
   compose: { project: "media-stack", service: name },
 }));
 
@@ -34,8 +35,17 @@ const history = Array.from({ length: 13 }, (_, i) => ({
   at: new Date(start + i * 5 * 60 * 1000).toISOString(),
   cpu: i === 4 ? null : 10 + i,
   memory: i === 4 ? null : 40 + i,
+  swap: i === 4 ? null : 20 + i,
   rx: i === 4 ? null : 1_000_000 * i,
   tx: i === 4 ? null : 200_000 * i,
+  ioRead: i === 4 ? null : 500_000 * i,
+  ioWrite: i === 4 ? null : 100_000 * i,
+  load1: i === 4 ? null : 0.5 + i / 10,
+  load5: i === 4 ? null : 0.4 + i / 10,
+  load15: i === 4 ? null : 0.3 + i / 10,
+  readAwait: i === 4 ? null : 1 + i / 10,
+  writeAwait: i === 4 ? null : 2 + i / 10,
+  utilization: i === 4 ? null : 5 + i,
 }));
 
 const host = { id: "nas-home", name: "NAS-HOME", role: "instance" };
@@ -45,14 +55,115 @@ const overview = {
   latest: {
     timestamp: Date.now(),
     hostname: "nas",
+    system: {
+      hostname: "nas",
+      cpuModel: "13th Gen Intel(R) Core(TM) i3-1315U",
+      cores: 6,
+      threads: 8,
+      sockets: 1,
+      arch: "x86_64",
+      kernel: "6.18.15",
+      osName: "Debian GNU/Linux 12 (bookworm)",
+      memoryTotal: 16 * GB,
+    },
     cpu: 12.5,
-    memory: { total: 16 * GB, used: 6 * GB },
-    network: { rx: 2_500_000, tx: 400_000 },
-    io: { read: 12_000_000, write: 3_000_000 },
+    cpuCores: [10, 12, 14, 16, 18, 20, 22, 24],
+    cpuBreakdown: {
+      user: 8,
+      system: 3,
+      iowait: 1,
+      steal: 0,
+      idle: 87,
+      irq: 0.5,
+      softirq: 0.5,
+      nice: 0,
+    },
+    load: [1.2, 1.1, 0.9],
+    memory: {
+      total: 16 * GB,
+      used: 6 * GB,
+      cache: 4 * GB,
+      swap: { total: 8 * GB, used: 2 * GB },
+    },
+    network: {
+      rx: 2_500_000,
+      tx: 400_000,
+      interfaces: [
+        {
+          name: "eth0",
+          rx: 2_500_000,
+          tx: 400_000,
+          rxTotal: 8e12,
+          txTotal: 2e12,
+        },
+        {
+          name: "tailscale0",
+          rx: 10_000,
+          tx: 5_000,
+          rxTotal: 1e9,
+          txTotal: 2e9,
+        },
+      ],
+    },
+    io: {
+      read: 12_000_000,
+      write: 3_000_000,
+      latency: {
+        readMs: 1.2,
+        writeMs: 2.4,
+        utilization: 12,
+        weightedMs: 1.8,
+        devices: [
+          {
+            name: "nvme0n1",
+            readMs: 1.2,
+            writeMs: 2.4,
+            utilization: 12,
+            weightedMs: 1.8,
+          },
+          {
+            name: "sda",
+            readMs: null,
+            writeMs: null,
+            utilization: 0,
+            weightedMs: null,
+          },
+        ],
+      },
+    },
     uptime: 3 * 86400 + 4 * 3600,
     disks: [
       { name: "Biblioteca", root: "/volume1", total: 8e12, used: 7.6e12, free: 0.4e12 },
       { name: "Descargas", root: "/volume2", total: 4e12, used: 1e12, free: 3e12 },
+    ],
+    filesystems: [
+      { name: "Biblioteca", total: 8e12, used: 7.6e12, free: 0.4e12 },
+      { name: "Datos", total: 4e12, used: 1e12, free: 3e12 },
+      { name: "Sistema", total: 100e9, used: 20e9, free: 80e9 },
+    ],
+    raid: [
+      {
+        name: "md1",
+        level: "raid0",
+        state: "clean",
+        disks: 3,
+        capacity: 12e12,
+        degraded: null,
+        syncAction: null,
+        syncCompleted: null,
+        syncSpeed: null,
+      },
+      {
+        name: "md2",
+        level: "raid1",
+        state: "clean",
+        disks: 1,
+        capacity: 500e9,
+        degraded: 0,
+        syncAction: "idle",
+        syncCompleted: "none",
+        syncSpeed: "none",
+      },
     ],
     temperatures: [
       { name: "CPU", value: 72 },
@@ -203,7 +314,7 @@ test("summary shows the activity chart, the busiest services and the open alerts
   await expect(page.locator('[data-view="maintenance"]')).toBeVisible();
 });
 
-test("resources shows current values, four described charts and the hardware tables", async ({
+test("resources shows current values, six described charts and the hardware tables", async ({
   page,
 }) => {
   const ranges = await open(page, "/?view=resources");
@@ -214,7 +325,7 @@ test("resources shows current values, four described charts and the hardware tab
     ).toBeVisible();
 
   const charts = view.locator("[data-chart]");
-  await expect(charts).toHaveCount(4);
+  await expect(charts).toHaveCount(6);
   const descriptions = new Set<string | null>();
   for (const chart of await charts.all()) {
     const image = chart.getByRole("img");
@@ -223,7 +334,16 @@ test("resources shows current values, four described charts and the hardware tab
     descriptions.add(await image.getAttribute("aria-label"));
   }
   // Each description is built from its own series, so no two are alike.
-  expect(descriptions.size).toBe(4);
+  expect(descriptions.size).toBe(6);
+
+  await expect(view.locator("[data-cpu-core]")).toHaveCount(8);
+  await expect(view.locator("[data-cpu-breakdown]")).toBeVisible();
+  await expect(view.locator("[data-load]")).toBeVisible();
+  await expect(view.locator('[data-memory="swap"]')).toBeVisible();
+  await expect(view.locator('[data-interface="eth0"]')).toBeVisible();
+  await expect(view.locator('[data-latency="nvme0n1"]')).toBeVisible();
+  await expect(view.locator('[data-raid="md1"]')).toBeVisible();
+  await expect(view.locator("[data-system]")).toBeVisible();
 
   await range(page, "7d").click();
   await expect.poll(() => ranges.at(-1)).toBe("7d");
@@ -237,13 +357,14 @@ test("resources shows current values, four described charts and the hardware tab
     "normal",
   );
   await expect(view.locator("[data-io]")).toHaveCount(2);
-  await expect(view.locator('[data-volume="/volume1"]')).toHaveAttribute(
+  await expect(view.locator('[data-volume="Biblioteca"]')).toHaveAttribute(
     "data-level",
     "high",
   );
   await expect(
-    view.locator('[data-volume="/volume2"]').getByRole("meter"),
+    view.locator('[data-volume="Datos"]').getByRole("meter"),
   ).toHaveAttribute("aria-valuenow", "25");
+
 });
 
 test("on a phone the strips use two columns and the tables become compact rows", async ({

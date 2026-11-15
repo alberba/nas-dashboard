@@ -15,6 +15,7 @@ services:
       MEDIA_STACK_ROOT: /media-stack
       APPDATA_ROOT: /media-stack-appdata
       HOST_ROLE: instance
+      HOST_ROOT: /host/root
       MEDIA_STACK_ENV_FILE: /media-stack-env/.env
       EXTRA_FILESYSTEMS: ${EXTRA_FILESYSTEMS:-Sistema=/host/root}
     volumes:

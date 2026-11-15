@@ -8,6 +8,7 @@ host mounts that the agent already has.
 from __future__ import annotations
 
 import os
+import platform
 import re
 import shutil
 import time
@@ -71,7 +72,9 @@ class HostSampler:
         self._network = None
         self._disk = None
 
-    def sample(self, proc: Path, sys: Path, roots, extra_filesystems=()):
+    def sample(
+        self, proc: Path, sys: Path, roots, extra_filesystems=(), root=None
+    ):
         now = self.clock()
         cpu_total, cpu_cores = _parse_cpu(proc / "stat")
         cpu, cores, breakdown = self._cpu_values(now, cpu_total, cpu_cores)
@@ -87,6 +90,7 @@ class HostSampler:
 
         return {
             "timestamp": now,
+            "system": _system_details(proc, root, memory["total"]),
             "cpu": cpu,
             "cpuCores": cores,
             "cpuBreakdown": breakdown,
@@ -324,6 +328,51 @@ class HostSampler:
 
         self._disk = (now, read_bytes, write_bytes, devices)
         return {"read": read_rate, "write": write_rate, "latency": latency}
+
+
+def _system_details(proc, root, memory_total):
+    cpu_model = None
+    cores = None
+    threads = None
+    sockets = set()
+    for line in _read_optional(proc / "cpuinfo").splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key, value = key.strip(), value.strip()
+        if key == "model name" and cpu_model is None:
+            cpu_model = value
+        elif key == "siblings" and threads is None:
+            threads = _int(value, None)
+        elif key == "cpu cores" and cores is None:
+            cores = _int(value, None)
+        elif key == "physical id":
+            sockets.add(value)
+
+    kernel = os.uname().release if hasattr(os, "uname") else None
+    return {
+        "hostname": _text(_read_optional(proc / "sys" / "kernel" / "hostname")),
+        "cpuModel": cpu_model,
+        "cores": cores,
+        "threads": threads or os.cpu_count(),
+        "sockets": len(sockets) if sockets else None,
+        "arch": platform.machine() or None,
+        "kernel": kernel,
+        "osName": _os_name(root),
+        "memoryTotal": memory_total,
+    }
+
+
+def _os_name(root):
+    candidates = []
+    if root:
+        candidates.append(Path(root) / "etc" / "os-release")
+    candidates.append(Path("/etc/os-release"))
+    for path in candidates:
+        for line in _read_optional(path).splitlines():
+            if line.startswith("PRETTY_NAME="):
+                return line.split("=", 1)[1].strip().strip('"') or None
+    return None
 
 
 def _parse_cpu(path):

@@ -22,6 +22,17 @@ export type CpuBreakdown = {
   softirq: number;
   nice: number;
 };
+export type SystemDetails = {
+  hostname: string | null;
+  cpuModel: string | null;
+  cores: number | null;
+  threads: number | null;
+  sockets: number | null;
+  arch: string | null;
+  kernel: string | null;
+  osName: string | null;
+  memoryTotal: number;
+};
 export type NetworkInterface = {
   name: string;
   /** Bytes per second; null until the agent has a previous counter. */
@@ -77,6 +88,7 @@ export type Container = {
   recreateOnCompose: boolean;
   cpu: number | null;
   memory: number | null;
+  network?: { rx: number | null; tx: number | null } | null;
   compose: ContainerCompose | null;
   /** Earliest unhealthy sample observed by this agent, Unix seconds; resets on recovery. */
   healthObservedSince?: number | null;
@@ -84,6 +96,7 @@ export type Container = {
 export type Metrics = {
   timestamp: number;
   hostname: string;
+  system?: SystemDetails | null;
   cpu: number | null;
   /** Per-thread busy percentages; null until the agent has a previous sample. */
   cpuCores?: (number | null)[] | null;
@@ -285,8 +298,17 @@ export type Overview = {
     at: string;
     cpu: number | null;
     memory: number | null;
+    swap?: number | null;
     rx: number | null;
     tx: number | null;
+    ioRead?: number | null;
+    ioWrite?: number | null;
+    load1?: number | null;
+    load5?: number | null;
+    load15?: number | null;
+    readAwait?: number | null;
+    writeAwait?: number | null;
+    utilization?: number | null;
   }[];
   settings: Settings;
 };

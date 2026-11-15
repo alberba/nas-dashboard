@@ -5,6 +5,7 @@ import {
   describeChart,
   formatSeries,
   isRate,
+  isScaled,
   type History,
   type Series,
   type SeriesField,
@@ -54,10 +55,11 @@ export function Chart({
   const [hover, setHover] = useState<number | null>(null);
   const lines = series ?? [{ field, label, color }];
   const spoken = description ?? describeChart(history, lines);
-  const rate = lines.some((s) => isRate(s.field));
-  const max = rate
+  const scaled = lines.some((s) => isScaled(s.field));
+  const minimum = lines.some((s) => isRate(s.field)) ? 1024 : 1;
+  const max = scaled
     ? Math.max(
-        1024,
+        minimum,
         ...history.flatMap((p) => lines.map((s) => Number(p[s.field]) || 0)),
       ) * 1.15
     : 100;
@@ -80,7 +82,7 @@ export function Chart({
     };
     history.forEach((point, i) => {
       const value = point[s.field];
-      if (value === null) return flush();
+      if (value === null || value === undefined) return flush();
       run.push([x(i), y(value)]);
     });
     flush();

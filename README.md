@@ -4,7 +4,7 @@ Dashboard personal para supervisar y administrar un NAS desde otro servidor. Int
 
 ## Funciones
 
-- CPU, memoria, red, actividad de discos, temperaturas, capacidad y contenedores con datos reales.
+- CPU total y por núcleo, carga, memoria y swap, red por interfaz, actividad y latencia de discos, RAID, temperaturas, capacidad y contenedores con datos reales.
 - Varios hosts con estado de conexión independiente: el NAS y el Servidor de apps. Mantenimiento cambia de host sin perder el resto del panel.
 - Recogida cada 5 segundos con alguna pestaña visible y cada 30 segundos en segundo plano; historial de 30 días.
 - Cuenta personal con Better Auth: correo/contraseña y passkeys. Registro público cerrado después del alta inicial.

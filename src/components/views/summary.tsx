@@ -181,6 +181,9 @@ export function SummaryView({
                     <th scope="col" className="numeric">
                       RAM
                     </th>
+                    <th scope="col" className="numeric">
+                      Red
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -200,11 +203,16 @@ export function SummaryView({
                       <td className={`numeric ${styles.compactValue}`}>
                         {bytes(c.memory)}
                       </td>
+                      <td className={`numeric ${styles.compactValue}`}>
+                        {c.network
+                          ? bytes((c.network.rx ?? 0) + (c.network.tx ?? 0), true)
+                          : "—"}
+                      </td>
                     </tr>
                   ))}
                   {!busiest.length && (
                     <tr className="empty-row">
-                      <td colSpan={4}>Ningún servicio en marcha</td>
+                      <td colSpan={5}>Ningún servicio en marcha</td>
                     </tr>
                   )}
                 </tbody>

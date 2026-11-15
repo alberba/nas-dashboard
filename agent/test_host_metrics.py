@@ -160,6 +160,33 @@ class HostSampleTest(unittest.TestCase):
             [("nvme0n1", 1.5, 2.0, 0.8), ("sda", 2.0, 2.0, 0.5)],
         )
 
+    def test_system_details_come_from_cpuinfo_and_the_host_root(self):
+        write(
+            self.proc / "cpuinfo",
+            """processor : 0
+model name : 13th Gen Intel(R) Core(TM) i3-1315U
+siblings : 8
+cpu cores : 6
+physical id : 0
+""",
+        )
+        write(
+            self.base / "root" / "etc" / "os-release",
+            'PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"\n',
+        )
+
+        sample = host_metrics.HostSampler(clock=Clock(1000)).sample(
+            self.proc, self.sys, {}, [], self.base / "root"
+        )
+
+        self.assertEqual(sample["system"]["cpuModel"], "13th Gen Intel(R) Core(TM) i3-1315U")
+        self.assertEqual(sample["system"]["cores"], 6)
+        self.assertEqual(sample["system"]["threads"], 8)
+        self.assertEqual(sample["system"]["sockets"], 1)
+        self.assertEqual(sample["system"]["osName"], "Debian GNU/Linux 12 (bookworm)")
+        self.assertEqual(sample["system"]["memoryTotal"], 1_024_000_000)
+        self.assertTrue(sample["system"]["kernel"])
+
     def test_missing_optional_files_do_not_break_the_sample(self):
         (self.proc / "loadavg").unlink()
         sample = self.sample(host_metrics.HostSampler(clock=Clock(1000)))

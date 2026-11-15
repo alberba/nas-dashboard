@@ -14,6 +14,7 @@ Los campos anteriores se conservan. Se añaden:
 
 | Campo | Unidades | Origen |
 | --- | --- | --- |
+| `system` | texto y bytes | Modelo de CPU, núcleos, hilos, sockets, arquitectura, kernel, SO y RAM total |
 | `cpuCores` | % por hilo | `/host/proc/stat` |
 | `cpuBreakdown` | % | `user`, `system`, `iowait`, `steal`, `idle`, `irq`, `softirq`, `nice` |
 | `load` | — | `/host/proc/loadavg` (1, 5 y 15 min) |
@@ -25,10 +26,12 @@ Los campos anteriores se conservan. Se añaden:
 | `raid` | bytes y texto | `/host/proc/mdstat` y `/sys/block/md*/md/*` |
 | `temperatures` | °C | `hwmon`; conserva la etiqueta del sensor |
 
-`cpu`, `cpuCores`, `cpuBreakdown`, `network.rx`, `network.tx` e `io` son `null`
-en la primera muestra o tras reiniciar el agente, porque necesitan una lectura
-anterior para calcular la tasa. `memory.total` sigue siendo la suma de
-`MemTotal`; `memory.used` es `MemTotal - MemAvailable`.
+`cpu`, `cpuCores`, `cpuBreakdown`, `network.rx`, `network.tx`, `io` y
+`containers[].network` son `null` en la primera muestra o tras reiniciar el
+agente, porque necesitan una lectura anterior para calcular la tasa.
+`memory.total` sigue siendo la suma de `MemTotal`; `memory.used` es
+`MemTotal - MemAvailable`. La red por contenedor suma las interfaces de Docker y
+se expresa en bytes por segundo (`rx`/`tx`).
 
 ### Volúmenes
 

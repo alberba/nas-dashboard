@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { seriesSummary } from "../src/components/views/series";
+import {
+  formatSeries,
+  isRate,
+  isScaled,
+  seriesSummary,
+} from "../src/components/views/series";
 
 const at = (minute: number) =>
   new Date(Date.UTC(2026, 10, 13, 10, minute)).toISOString();
@@ -32,5 +37,14 @@ describe("seriesSummary", () => {
       samples: 0,
     });
     expect(seriesSummary([], "cpu").samples).toBe(0);
+  });
+
+  it("formats load, latency and missing values with the right units", () => {
+    expect(formatSeries("load1", 1.234)).toBe("1,23");
+    expect(formatSeries("readAwait", 1.2)).toBe("1,2 ms");
+    expect(formatSeries("swap", null)).toBe("sin datos");
+    expect(isRate("ioRead")).toBe(true);
+    expect(isScaled("load1")).toBe(true);
+    expect(isScaled("memory")).toBe(false);
   });
 });

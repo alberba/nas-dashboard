@@ -7,9 +7,20 @@ import server
 
 
 class FakeHost:
-    def sample(self, proc, sys, roots, extra):
+    def sample(self, proc, sys, roots, extra, root=None):
         return {
             "timestamp": 1000.0,
+            "system": {
+                "hostname": "nas",
+                "cpuModel": "Intel Core i3-1315U",
+                "cores": 6,
+                "threads": 8,
+                "sockets": 1,
+                "arch": "x86_64",
+                "kernel": "6.18.15",
+                "osName": "Debian GNU/Linux 12",
+                "memoryTotal": 8_000_000,
+            },
             "cpu": 12.3,
             "cpuCores": [10.0, 14.6],
             "cpuBreakdown": {
@@ -124,6 +135,7 @@ class MetricsRouteTest(unittest.TestCase):
         status, body = self.request("/metrics")
 
         self.assertEqual(status, 200)
+        self.assertEqual(body["system"]["cpuModel"], "Intel Core i3-1315U")
         self.assertEqual(body["cpuCores"], [10.0, 14.6])
         self.assertEqual(body["load"], [0.5, 0.6, 0.7])
         self.assertEqual(body["memory"]["swap"], {"total": 2_000_000, "used": 500_000})

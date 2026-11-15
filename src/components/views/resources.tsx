@@ -1,10 +1,21 @@
 import { bytes, percent, uptime } from "@/lib/format";
 import type { Metrics, Overview } from "@/lib/types";
 import { Chart } from "../chart";
-import { Panel, StatusDot, StatusStrip } from "../ui";
+import { Panel, StatusStrip } from "../ui";
 import styles from "./overview.module.css";
 import {
-  Meter,
+  CpuPanel,
+  IoPanel,
+  LatencyPanel,
+  MemoryPanel,
+  NetworkPanel,
+  RaidPanel,
+  SystemPanel,
+  TemperaturesPanel,
+  VolumesPanel,
+  volumesOf,
+} from "./resource-panels";
+import {
   Range,
   SeriesKey,
   celsius,
@@ -13,39 +24,51 @@ import {
   occupation,
   temperatureLevel,
   volumeLevel,
-  type Level,
 } from "./shared";
 import type { Series } from "./series";
 
-const charts: { series: Series; measure: "average" | "peak" }[] = [
+const charts: { series: Series[]; measure: "average" | "peak" }[] = [
   {
-    series: { field: "cpu", label: "CPU", color: "var(--accent)" },
+    series: [{ field: "cpu", label: "CPU", color: "var(--accent)" }],
     measure: "average",
   },
   {
-    series: { field: "memory", label: "Memoria", color: "var(--lilac)" },
+    series: [
+      { field: "memory", label: "Memoria", color: "var(--lilac)" },
+      { field: "swap", label: "Swap", color: "var(--peach)" },
+    ],
     measure: "average",
   },
   {
-    series: { field: "rx", label: "Red · entrada", color: "var(--gain)" },
+    series: [
+      { field: "load1", label: "Carga 1 min", color: "var(--accent)" },
+      { field: "load5", label: "Carga 5 min", color: "var(--peach)" },
+      { field: "load15", label: "Carga 15 min", color: "var(--lilac)" },
+    ],
+    measure: "average",
+  },
+  {
+    series: [
+      { field: "rx", label: "Red · entrada", color: "var(--gain)" },
+      { field: "tx", label: "Red · salida", color: "var(--peach)" },
+    ],
     measure: "peak",
   },
   {
-    series: { field: "tx", label: "Red · salida", color: "var(--peach)" },
+    series: [
+      { field: "ioRead", label: "Disco · lectura", color: "var(--gain)" },
+      { field: "ioWrite", label: "Disco · escritura", color: "var(--peach)" },
+    ],
     measure: "peak",
+  },
+  {
+    series: [
+      { field: "readAwait", label: "Lectura", color: "var(--gain)" },
+      { field: "writeAwait", label: "Escritura", color: "var(--peach)" },
+    ],
+    measure: "average",
   },
 ];
-
-const temperatureWords: Record<Level, string> = {
-  normal: "normal",
-  watch: "vigilar",
-  high: "alta",
-};
-const volumeWords: Record<Level, string> = {
-  normal: "con espacio",
-  watch: "vigilar",
-  high: "casi lleno",
-};
 
 export function ResourcesView({
   data,
@@ -59,8 +82,9 @@ export function ResourcesView({
   setRange: (range: string) => void;
 }) {
   const memory = (metrics.memory.used / metrics.memory.total) * 100;
-  const fullest = metrics.disks.reduce<Metrics["disks"][number] | null>(
-    (top, disk) => (!top || occupation(disk) > occupation(top) ? disk : top),
+  const volumes = volumesOf(metrics);
+  const fullest = volumes.reduce<(typeof volumes)[number] | null>(
+    (top, volume) => (!top || occupation(volume) > occupation(top) ? volume : top),
     null,
   );
   const fullestLevel = fullest
@@ -72,6 +96,7 @@ export function ResourcesView({
   const heat = hottest
     ? temperatureLevel(hottest.value, data.settings.temperature)
     : null;
+  const swap = metrics.memory.swap;
 
   return (
     <div className="page-stack">
@@ -82,7 +107,9 @@ export function ResourcesView({
             id: "cpu",
             label: "CPU",
             value: percent(metrics.cpu),
-            detail: "uso ahora",
+            detail: metrics.load
+              ? `carga ${metrics.load[0].toLocaleString("es", { maximumFractionDigits: 2 })}`
+              : "uso ahora",
           },
           {
             id: "memory",
@@ -90,6 +117,16 @@ export function ResourcesView({
             value: bytes(metrics.memory.used),
             detail: `${percent(memory)} de ${bytes(metrics.memory.total)}`,
           },
+          ...(swap
+            ? [
+                {
+                  id: "swap",
+                  label: "Swap",
+                  value: bytes(swap.used),
+                  detail: `${percent(swap.total ? (swap.used / swap.total) * 100 : 0)} de ${bytes(swap.total)}`,
+                },
+              ]
+            : []),
           {
             id: "network",
             label: "Red",
@@ -130,178 +167,42 @@ export function ResourcesView({
       >
         <div className={styles.historyGrid}>
           {charts.map(({ series, measure }) => (
-            <div className={styles.chartCell} key={series.field}>
-              <SeriesKey
+            <div className={styles.chartCell} key={series[0].field}>
+              <div className={styles.seriesKeys}>
+                {series.map((item) => (
+                  <SeriesKey
+                    key={item.field}
+                    history={data.history}
+                    series={item}
+                    measure={measure}
+                  />
+                ))}
+              </div>
+              <Chart
+                id={series[0].field}
                 history={data.history}
                 series={series}
-                measure={measure}
-              />
-              <Chart
-                id={series.field}
-                history={data.history}
-                series={[series]}
-                description={describeChart(data.history, [series], range)}
+                description={describeChart(data.history, series, range)}
               />
             </div>
           ))}
         </div>
       </Panel>
       <div className="columns">
-        <Panel
-          id="volumes-title"
-          title="Volúmenes"
-          count={metrics.disks.length}
-          className="main-column"
-        >
-          <div className="table-scroll">
-            <table className={`data-table ${styles.table}`} data-volume-table="">
-              <thead>
-                <tr>
-                  <th scope="col">Volumen</th>
-                  <th scope="col">Ruta</th>
-                  <th scope="col" className="numeric">
-                    Ocupado
-                  </th>
-                  <th scope="col" className="numeric">
-                    Libre
-                  </th>
-                  <th scope="col" className="numeric">
-                    Capacidad
-                  </th>
-                  <th scope="col">Uso</th>
-                </tr>
-              </thead>
-              <tbody>
-                {metrics.disks.map((disk) => {
-                  const used = occupation(disk);
-                  const level = volumeLevel(used, data.settings.disk);
-                  const tone = levelTone[level];
-                  return (
-                    <tr key={disk.root} data-volume={disk.root} data-level={level}>
-                      <td className="name-cell">
-                        <span className="row-title">
-                          <StatusDot tone={tone} />
-                          <strong>{disk.name}</strong>
-                        </span>
-                        <span className={`row-meta ${tone}`}>
-                          {volumeWords[level]} · {bytes(disk.free)} libres de{" "}
-                          {bytes(disk.total)}
-                        </span>
-                      </td>
-                      <td className="mono soft">{disk.root}</td>
-                      <td className="numeric">{bytes(disk.used)}</td>
-                      <td className="numeric">{bytes(disk.free)}</td>
-                      <td className="numeric">{bytes(disk.total)}</td>
-                      <td className={styles.compactValue}>
-                        <span className={styles.usage}>
-                          <Meter
-                            label={`Ocupación de ${disk.name}`}
-                            value={used}
-                            tone={tone}
-                          />
-                          <span className={tone}>{percent(Math.round(used))}</span>
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {!metrics.disks.length && (
-                  <tr className="empty-row">
-                    <td colSpan={6}>Sin volúmenes</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </Panel>
+        <div className={`main-column ${styles.column}`}>
+          <CpuPanel metrics={metrics} />
+          <MemoryPanel metrics={metrics} />
+          <NetworkPanel metrics={metrics} />
+          <LatencyPanel metrics={metrics} />
+        </div>
         <div className="side-column">
-          <Panel
-            id="temperatures-title"
-            title="Temperaturas"
-            count={metrics.temperatures.length}
-          >
-            <div className="table-scroll">
-              <table className={`data-table ${styles.table}`} data-sensor-table="">
-                <thead>
-                  <tr>
-                    <th scope="col">Sensor</th>
-                    <th scope="col" className="numeric">
-                      Valor
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {metrics.temperatures.map((sensor) => {
-                    const level = temperatureLevel(
-                      sensor.value,
-                      data.settings.temperature,
-                    );
-                    return (
-                      <tr
-                        key={sensor.name}
-                        data-sensor={sensor.name}
-                        data-level={level}
-                      >
-                        <td className="name-cell">
-                          <span className="row-title">
-                            <StatusDot tone={levelTone[level]} />
-                            <strong>{sensor.name}</strong>
-                          </span>
-                          <span className={`row-meta ${levelTone[level]}`}>
-                            {temperatureWords[level]}
-                          </span>
-                        </td>
-                        <td className={`numeric ${styles.compactValue}`}>
-                          {celsius(sensor.value)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {!metrics.temperatures.length && (
-                    <tr className="empty-row">
-                      <td colSpan={2}>Sin sensores</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </Panel>
-          <Panel id="io-title" title="Actividad de discos">
-            <div className="table-scroll">
-              <table className={`data-table ${styles.table}`} data-io-table="">
-                <thead>
-                  <tr>
-                    <th scope="col">Medida</th>
-                    <th scope="col" className="numeric">
-                      Ahora
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(
-                    [
-                      ["read", "Lectura", metrics.io.read],
-                      ["write", "Escritura", metrics.io.write],
-                    ] as const
-                  ).map(([id, label, value]) => (
-                    <tr key={id} data-io={id}>
-                      <td className="name-cell">
-                        <span className="row-title">
-                          <StatusDot tone={value ? "accent" : "muted"} />
-                          <strong>{label}</strong>
-                        </span>
-                      </td>
-                      <td className={`numeric ${styles.compactValue}`}>
-                        {bytes(value, true)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Panel>
+          <RaidPanel metrics={metrics} />
+          <SystemPanel metrics={metrics} />
+          <TemperaturesPanel metrics={metrics} settings={data.settings} />
+          <IoPanel metrics={metrics} />
         </div>
       </div>
+      <VolumesPanel metrics={metrics} settings={data.settings} />
     </div>
   );
 }

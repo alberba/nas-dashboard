@@ -61,6 +61,7 @@ ROOTS = configured_roots(
 )
 PROC = Path(os.getenv("HOST_PROC", "/host/proc"))
 SYS = Path(os.getenv("HOST_SYS", "/host/sys"))
+HOST_ROOT = Path(os.getenv("HOST_ROOT", "/host/root"))
 TOKEN = os.getenv("AGENT_TOKEN", "")
 ALLOWED_NETWORKS = allowed_networks(os.getenv("ALLOWED_IPS", "127.0.0.1"))
 PROTECTED = updates.protected_names(os.getenv("PROTECTED_CONTAINERS", ""))
@@ -284,7 +285,7 @@ EXTRA_FILESYSTEMS = configured_extra_filesystems()
 unhealthy_observed_since = {}
 
 
-def container_stat(item, active=None, protected=None):
+def container_stat(item, active=None, protected=None, now=None):
     result = lifecycle.classify_one(
         item,
         active if active is not None else set(),
@@ -303,21 +304,35 @@ def container_stat(item, active=None, protected=None):
         "status": item["Status"],
         "cpu": None,
         "memory": None,
+        "network": None,
         "compose": {"project": project, "service": service} if project and service else None,
     })
     if result["state"] != "running":
+        container_previous.pop(ident, None)
         return result
     ident = result["id"]
     try:
         st = docker("GET", "/containers/" + ident + "/stats?stream=false&one-shot=true")
         cpu = st["cpu_stats"]
         total, system = cpu["cpu_usage"]["total_usage"], cpu.get("system_cpu_usage", 0)
-        prev = container_previous.get(ident)
-        if prev and system > prev[1]:
-            result["cpu"] = round((total - prev[0]) / (system - prev[1]) * cpu.get("online_cpus", 1) * 100, 1)
-        container_previous[ident] = (total, system)
+        previous = container_previous.get(ident)
+        if previous and system > previous[1]:
+            result["cpu"] = round((total - previous[0]) / (system - previous[1]) * cpu.get("online_cpus", 1) * 100, 1)
         mem = st.get("memory_stats", {})
         result["memory"] = max(0, mem.get("usage", 0) - mem.get("stats", {}).get("inactive_file", 0))
+        received = sent = 0
+        for network in (st.get("networks") or {}).values():
+            received += network.get("rx_bytes", 0)
+            sent += network.get("tx_bytes", 0)
+        timestamp = time.time() if now is None else now
+        result["network"] = {"rx": None, "tx": None}
+        if previous and timestamp > previous[4]:
+            elapsed = timestamp - previous[4]
+            if received >= previous[2]:
+                result["network"]["rx"] = max(0.0, (received - previous[2]) / elapsed)
+            if sent >= previous[3]:
+                result["network"]["tx"] = max(0.0, (sent - previous[3]) / elapsed)
+        container_previous[ident] = (total, system, received, sent, timestamp)
     except Exception:
         pass
     return result
@@ -325,7 +340,7 @@ def container_stat(item, active=None, protected=None):
 
 def metrics():
     global container_cache
-    sample = HOST.sample(PROC, SYS, ROOTS, EXTRA_FILESYSTEMS)
+    sample = HOST.sample(PROC, SYS, ROOTS, EXTRA_FILESYSTEMS, HOST_ROOT)
     now = sample["timestamp"]
     if now - container_cache[0] > 10:
         items = docker("GET", "/containers/json?all=true")
@@ -333,7 +348,11 @@ def metrics():
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
             container_cache = (
                 now,
-                list(pool.map(lambda item: container_stat(item, active), items)),
+                list(
+                    pool.map(
+                        lambda item: container_stat(item, active, now=now), items
+                    )
+                ),
             )
     return {
         **sample,

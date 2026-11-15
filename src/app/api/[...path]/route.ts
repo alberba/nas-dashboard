@@ -309,9 +309,20 @@ async function handle(
         grouped AS (SELECT date_bin(make_interval(secs => ${bucket}), at, timestamp '2000-01-01') AS at,
           avg((data->>'cpu')::float) AS cpu,
           avg((data->'memory'->>'used')::float / nullif((data->'memory'->>'total')::float, 0) * 100) AS memory,
-          avg((data->'network'->>'rx')::float) AS rx, avg((data->'network'->>'tx')::float) AS tx
+          avg((data->'memory'->'swap'->>'used')::float / nullif((data->'memory'->'swap'->>'total')::float, 0) * 100) AS swap,
+          avg((data->'network'->>'rx')::float) AS rx, avg((data->'network'->>'tx')::float) AS tx,
+          avg((data->'io'->>'read')::float) AS "ioRead", avg((data->'io'->>'write')::float) AS "ioWrite",
+          avg((data->'load'->>0)::float) AS "load1",
+          avg((data->'load'->>1)::float) AS "load5",
+          avg((data->'load'->>2)::float) AS "load15",
+          avg((data->'io'->'latency'->>'readMs')::float) AS "readAwait",
+          avg((data->'io'->'latency'->>'writeMs')::float) AS "writeAwait",
+          avg((data->'io'->'latency'->>'utilization')::float) AS "utilization"
           FROM samples WHERE "hostId" = ${host.id} AND at > now() - make_interval(secs => ${seconds}) GROUP BY 1)
-        SELECT series.at, grouped.cpu, grouped.memory, grouped.rx, grouped.tx FROM series LEFT JOIN grouped USING(at) ORDER BY series.at`);
+        SELECT series.at, grouped.cpu, grouped.memory, grouped.swap, grouped.rx, grouped.tx,
+          grouped."ioRead", grouped."ioWrite", grouped."load1", grouped."load5", grouped."load15",
+          grouped."readAwait", grouped."writeAwait", grouped."utilization"
+        FROM series LEFT JOIN grouped USING(at) ORDER BY series.at`);
       const statuses = await hostStatuses(hosts);
       return json({
         host: publicHost(host),
