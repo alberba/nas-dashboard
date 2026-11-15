@@ -16,9 +16,12 @@ services:
       APPDATA_ROOT: /media-stack-appdata
       HOST_ROLE: instance
       MEDIA_STACK_ENV_FILE: /media-stack-env/.env
+      EXTRA_FILESYSTEMS: ${EXTRA_FILESYSTEMS:-Sistema=/host/root}
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
+      # Solo para statvfs del volumen raíz (Sistema); no se recorre.
+      - /:/host/root:ro
       - /var/run/docker.sock:/var/run/docker.sock
       - ${NAS_MEDIA_PATH:?Set NAS_MEDIA_PATH}:/nas/media
       - ${NAS_TORRENTS_PATH:?Set NAS_TORRENTS_PATH}:/nas/torrents

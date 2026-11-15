@@ -19,6 +19,7 @@ from urllib.parse import urlparse, parse_qs, urlencode
 import deployments
 import env_settings
 import host_commands
+import host_metrics
 import lifecycle
 import logs
 import maintenance
@@ -261,9 +262,23 @@ def files(root, relative):
     return sorted(entries, key=lambda x: (not x["directory"], x["name"].lower()))
 
 
-previous = None
+HOST = host_metrics.HostSampler()
 container_cache = (0, [])
 container_previous = {}
+
+
+def configured_extra_filesystems():
+    entries = []
+    appdata = os.getenv("APPDATA_ROOT")
+    if appdata:
+        entries.append(("Datos de apps", appdata))
+    entries.extend(
+        host_metrics.parse_extra_filesystems(os.getenv("EXTRA_FILESYSTEMS", ""))
+    )
+    return entries
+
+
+EXTRA_FILESYSTEMS = configured_extra_filesystems()
 
 
 unhealthy_observed_since = {}
@@ -309,63 +324,22 @@ def container_stat(item, active=None, protected=None):
 
 
 def metrics():
-    global previous, container_cache
-    now = time.time()
-    cpu = list(map(int, (PROC / "stat").read_text().splitlines()[0].split()[1:9]))
-    mem = {line.split(":")[0]: int(line.split()[1]) * 1024 for line in (PROC / "meminfo").read_text().splitlines()}
-    rx = tx = 0
-    for line in (PROC / "net/dev").read_text().splitlines()[2:]:
-        name, data = line.split(":")
-        if not re.match(r"^(eth|en|bond|wlan)", name.strip()):
-            continue
-        values = list(map(int, data.split()))
-        rx += values[0]
-        tx += values[8]
-    read_bytes = write_bytes = 0
-    for line in (PROC / "diskstats").read_text().splitlines():
-        bits = line.split()
-        if re.fullmatch(r"sd[a-z]+|nvme\d+n\d+|mmcblk\d+", bits[2]):
-            read_bytes += int(bits[5]) * 512
-            write_bytes += int(bits[9]) * 512
-    cpu_percent = net_rx = net_tx = disk_read = disk_write = None
-    if previous:
-        dt = now - previous[0]
-        dc = sum(cpu) - sum(previous[1])
-        idle = cpu[3] + cpu[4] - previous[1][3] - previous[1][4]
-        cpu_percent = round(max(0, min(100, (1 - idle / dc) * 100)), 1) if dc > 0 else None
-        net_rx, net_tx = max(0, (rx - previous[2]) / dt), max(0, (tx - previous[3]) / dt)
-        disk_read, disk_write = max(0, (read_bytes - previous[4]) / dt), max(0, (write_bytes - previous[5]) / dt)
-    previous = (now, cpu, rx, tx, read_bytes, write_bytes)
-    disks = []
-    seen = set()
-    for root, path in ROOTS.items():
-        st = os.stat(path)
-        if st.st_dev in seen:
-            continue
-        seen.add(st.st_dev)
-        usage = shutil.disk_usage(path)
-        disks.append({"name": "Volumen de películas" if root == "media" else "Descargas", "root": root,
-                      "total": usage.total, "used": usage.used, "free": usage.free})
-    temperatures = []
-    for sensor in SYS.glob("class/hwmon/hwmon*/temp*_input"):
-        try:
-            value = int(sensor.read_text()) / 1000
-            label_path = sensor.with_name(sensor.name.replace("_input", "_label"))
-            label = label_path.read_text().strip() if label_path.exists() else (sensor.parent / "name").read_text().strip()
-            if 0 < value < 150:
-                temperatures.append({"name": label, "value": value})
-        except (OSError, ValueError):
-            pass
+    global container_cache
+    sample = HOST.sample(PROC, SYS, ROOTS, EXTRA_FILESYSTEMS)
+    now = sample["timestamp"]
     if now - container_cache[0] > 10:
         items = docker("GET", "/containers/json?all=true")
         active = lifecycle.active_projects(items, PROTECTED)
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
-            container_cache = (now, list(pool.map(lambda item: container_stat(item, active), items)))
-    return {"timestamp": now, "hostname": os.getenv("NAS_NAME", "NAS"), "cpu": cpu_percent,
-            "memory": {"total": mem["MemTotal"], "used": mem["MemTotal"] - mem["MemAvailable"]},
-            "network": {"rx": net_rx, "tx": net_tx}, "io": {"read": disk_read, "write": disk_write},
-            "uptime": float((PROC / "uptime").read_text().split()[0]), "disks": disks,
-            "temperatures": temperatures, "containers": container_cache[1]}
+            container_cache = (
+                now,
+                list(pool.map(lambda item: container_stat(item, active), items)),
+            )
+    return {
+        **sample,
+        "hostname": os.getenv("NAS_NAME", "NAS"),
+        "containers": container_cache[1],
+    }
 
 
 def update_container(body):

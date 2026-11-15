@@ -12,6 +12,56 @@ export type ContainerCompose = {
   project: string;
   service: string;
 };
+export type CpuBreakdown = {
+  user: number;
+  system: number;
+  iowait: number;
+  steal: number;
+  idle: number;
+  irq: number;
+  softirq: number;
+  nice: number;
+};
+export type NetworkInterface = {
+  name: string;
+  /** Bytes per second; null until the agent has a previous counter. */
+  rx: number | null;
+  tx: number | null;
+  /** Cumulative bytes since boot. */
+  rxTotal: number;
+  txTotal: number;
+};
+export type Filesystem = {
+  name: string;
+  total: number;
+  used: number;
+  free: number;
+};
+export type IoDeviceLatency = {
+  name: string;
+  readMs: number | null;
+  writeMs: number | null;
+  utilization: number | null;
+  weightedMs: number | null;
+};
+export type IoLatency = {
+  readMs: number | null;
+  writeMs: number | null;
+  utilization: number | null;
+  weightedMs: number | null;
+  devices: IoDeviceLatency[];
+};
+export type RaidArray = {
+  name: string;
+  level: string | null;
+  state: string | null;
+  disks: number | null;
+  capacity: number | null;
+  degraded: number | null;
+  syncAction: string | null;
+  syncCompleted: string | null;
+  syncSpeed: string | null;
+};
 export type Container = {
   id: string;
   name: string;
@@ -35,9 +85,26 @@ export type Metrics = {
   timestamp: number;
   hostname: string;
   cpu: number | null;
-  memory: { total: number; used: number };
-  network: { rx: number | null; tx: number | null };
-  io: { read: number | null; write: number | null };
+  /** Per-thread busy percentages; null until the agent has a previous sample. */
+  cpuCores?: (number | null)[] | null;
+  cpuBreakdown?: CpuBreakdown | null;
+  load?: [number, number, number] | null;
+  memory: {
+    total: number;
+    used: number;
+    cache?: number;
+    swap?: { total: number; used: number };
+  };
+  network: {
+    rx: number | null;
+    tx: number | null;
+    interfaces?: NetworkInterface[];
+  };
+  io: {
+    read: number | null;
+    write: number | null;
+    latency?: IoLatency | null;
+  };
   uptime: number;
   disks: {
     name: string;
@@ -46,6 +113,8 @@ export type Metrics = {
     used: number;
     free: number;
   }[];
+  filesystems?: Filesystem[];
+  raid?: RaidArray[];
   temperatures: { name: string; value: number }[];
   containers: Container[];
 };

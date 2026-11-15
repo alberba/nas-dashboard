@@ -78,7 +78,7 @@ cd agent
 docker compose --env-file .env.apps -f compose.apps.yaml up -d --build
 ```
 
-La instantánea de Mantenimiento monta en solo lectura el checkout y el estado de media-stack. Configura `MEDIA_STACK_CHECKOUT_PATH` y `MEDIA_STACK_APPDATA_PATH` en el NAS; en el Servidor de apps usa `--apps-stack-path` y `--apps-appdata-path` al generar la configuración. La imagen del agente incluye `smartctl` y lee los discos del host a través del contenedor auxiliar, sin instalar nada en el NAS ni ejecutar acciones sobre los discos. El contrato completo está en `agent/MAINTENANCE.md`.
+La instantánea de Mantenimiento monta en solo lectura el checkout y el estado de media-stack. Configura `MEDIA_STACK_CHECKOUT_PATH` y `MEDIA_STACK_APPDATA_PATH` en el NAS; en el Servidor de apps usa `--apps-stack-path` y `--apps-appdata-path` al generar la configuración. La imagen del agente incluye `smartctl` y lee los discos del host a través del contenedor auxiliar, sin instalar nada en el NAS ni ejecutar acciones sobre los discos. El contrato completo está en `agent/MAINTENANCE.md`; las métricas nativas y sus unidades, en `agent/METRICS.md`.
 
 El agente del NAS también escribe los ajustes que faltan de una release retenida. Para hacerlo sin montar el checkout con escritura, el `.env` real vive en un directorio dedicado (`MEDIA_STACK_ENV_PATH`, `/volume2/media-stack-env` por defecto) y el checkout lo enlaza:
 
