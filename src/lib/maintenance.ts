@@ -113,6 +113,29 @@ export type MaintenanceDockerUsage = {
   reclaimable: number;
 };
 
+/** One container as the agent sees it: page, version and update availability. */
+export type MaintenanceContainer = {
+  id: string;
+  name: string;
+  image: string | null;
+  /** Readable version from the image labels, or a non-floating tag. */
+  version: string | null;
+  tag: string | null;
+  /** Public page from the container's own labels, never invented. */
+  url: string | null;
+  /** The agent accepts a Compose pull and recreate for this container. */
+  canUpdate: boolean;
+  /** true: the registry digest differs; false: up to date; null: unknown. */
+  updateAvailable: boolean | null;
+  /** Unix seconds of the last registry check. */
+  checkedAt: number | null;
+};
+
+export type MaintenanceContainers = {
+  available: boolean;
+  items: MaintenanceContainer[];
+};
+
 export type MaintenanceSnapshot = {
   /** Snapshot generation time, in seconds since the Unix epoch. */
   timestamp: number;
@@ -134,6 +157,8 @@ export type MaintenanceSnapshot = {
     at: string | null;
   };
   disks: MaintenanceDisks;
+  /** Optional: agents before this section leave it undefined. */
+  containers?: MaintenanceContainers;
   units: MaintenanceUnit[];
   failedUnits: {
     stack: MaintenanceFailedUnit[];

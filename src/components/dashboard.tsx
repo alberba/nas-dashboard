@@ -615,6 +615,7 @@ export function Dashboard({ name }: { name: string }) {
                     disabled={!connected || busy}
                     lastAt={data.lastAt}
                     request={request}
+                    appDomain={appDomain}
                     onSensitiveSettled={() => void refresh()}
                   />
                 )}

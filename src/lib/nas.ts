@@ -14,10 +14,19 @@ export class NasInvalidResponse extends Data.TaggedError("NasInvalidResponse")<{
 
 export type AgentHost = Pick<HostConfig, "url" | "token">;
 
+/** A Compose pull and recreate can outlast the normal action timeout. */
+export const CONTAINER_UPDATE_TIMEOUT_MS = 300_000;
+
+function durationFor(body: unknown, timeoutMs?: number) {
+  const fallback = body === undefined ? 25_000 : 45_000;
+  return `${Math.ceil((timeoutMs ?? fallback) / 1000)} seconds` as const;
+}
+
 export function nasEffectForHost<T>(
   host: AgentHost,
   path: string,
   body?: unknown,
+  timeoutMs?: number,
 ): Effect.Effect<T, NasUnavailable | NasRejected | NasInvalidResponse> {
   return Effect.gen(function* () {
     const response = yield* Effect.tryPromise({
@@ -48,7 +57,7 @@ export function nasEffectForHost<T>(
     return data as T;
   }).pipe(
     Effect.timeoutOrElse({
-      duration: body === undefined ? "25 seconds" : "45 seconds",
+      duration: durationFor(body, timeoutMs),
       orElse: () => Effect.fail(new NasUnavailable({ cause: "timeout" })),
     }),
   );
@@ -67,9 +76,10 @@ export async function nasForHost<T>(
   host: AgentHost,
   path: string,
   body?: unknown,
+  timeoutMs?: number,
 ): Promise<T> {
   const result = await Effect.runPromise(
-    Effect.result(nasEffectForHost<T>(host, path, body)),
+    Effect.result(nasEffectForHost<T>(host, path, body, timeoutMs)),
   );
   if (Result.isFailure(result)) throw result.failure;
   return result.success;

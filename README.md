@@ -8,7 +8,7 @@ Dashboard personal para supervisar y administrar un NAS desde otro servidor. Int
 - Varios hosts con estado de conexión independiente: el NAS y el Servidor de apps. Mantenimiento cambia de host sin perder el resto del panel.
 - Recogida cada 5 segundos con alguna pestaña visible y cada 30 segundos en segundo plano; historial de 30 días.
 - Cuenta personal con Better Auth: correo/contraseña y passkeys. Registro público cerrado después del alta inicial.
-- Inicio, parada y reinicio de contenedores; reinicio del NAS con confirmación explícita.
+- Inicio, parada y reinicio de contenedores; enlace a la página de cada servicio, versión de su imagen y actualización con aviso previo; reinicio del NAS con confirmación explícita.
 - Explorador limitado a dos carpetas: renombrar, mover, enviar a papelera, restaurar y vaciar. Caducidad de 7 días.
 - Avisos internos y Web Push al móvil, con notificación de recuperación y umbrales editables.
 - Accesos a servicios y registro de las acciones realizadas.

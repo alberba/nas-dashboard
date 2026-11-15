@@ -116,6 +116,18 @@ async function fakeAgent(token: string): Promise<FakeAgent> {
       );
       return;
     }
+    if ((body as { action?: string }).action === "update-container") {
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(
+        JSON.stringify({
+          state: "updated",
+          name: "jellyfin",
+          service: "jellyfin",
+          image: "lscr.io/linuxserver/jellyfin:latest",
+        }),
+      );
+      return;
+    }
     response.writeHead(200, { "Content-Type": "application/json" });
     response.end(
       JSON.stringify({
@@ -311,6 +323,34 @@ describe.skipIf(!baseUrl)("container removal API", () => {
     expect(response.status).toBe(200);
     const [operation] = await db.select().from(tables.operations);
     expect(operation.hostId).toBe("apps");
+  });
+
+  it("updates a container image on the selected host and records the operation", async () => {
+    const response = await api(
+      "/api/action?host=nas-home",
+      { action: "update-container", id: containerId },
+      { "Idempotency-Key": crypto.randomUUID() },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      status: "success",
+      result: { state: "updated", name: "jellyfin" },
+    });
+    expect(agent.requests).toEqual([
+      {
+        method: "POST",
+        path: "/action",
+        body: { action: "update-container", id: containerId },
+      },
+    ]);
+    const [operation] = await db.select().from(tables.operations);
+    expect(operation).toMatchObject({
+      hostId: "nas-home",
+      action: "update-container",
+      target: containerId,
+      status: "success",
+    });
   });
 
   it("replays an idempotency key without deleting twice or across hosts", async () => {

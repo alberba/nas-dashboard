@@ -495,3 +495,109 @@ test("rebooting the NAS asks for the typed phrase and sends one action that carr
   expect(sent[0].key).toMatch(/^[0-9a-f-]{36}$/);
   expect(sent[0].body).toMatchObject({ action: "reboot" });
 });
+
+test("a container links to its page, shows its version and updates with warnings", async ({
+  page,
+}) => {
+  await signIn(page);
+  const jellyfinId = String("jellyfin").padEnd(64, "0");
+  const snapshot = {
+    timestamp: Math.floor(Date.now() / 1000),
+    role: "instance",
+    follower: {
+      available: true,
+      state: "idle",
+      installed: {
+        release: "v3.2.1",
+        commit: "a".repeat(40),
+        bootstrap: false,
+        installedAt: new Date(Date.now() - 14_400_000).toISOString(),
+      },
+      pending: null,
+      failed: null,
+    },
+    security: { pins: [], pending: null, review: [] },
+    backup: { status: "ok", at: new Date(Date.now() - 3_600_000).toISOString() },
+    disks: { available: false, devices: [] },
+    containers: {
+      available: true,
+      items: [
+        {
+          id: jellyfinId,
+          name: "jellyfin",
+          image: "lscr.io/linuxserver/jellyfin:latest",
+          version: "10.10.7",
+          tag: "latest",
+          url: "https://jellyfin.alberba.es",
+          canUpdate: true,
+          updateAvailable: true,
+          checkedAt: Math.floor(Date.now() / 1000),
+        },
+      ],
+    },
+    units: [],
+    failedUnits: { stack: [], other: [] },
+    reboot: { available: true, required: false },
+    docker: {
+      available: true,
+      images: { count: 1, size: 1e9, reclaimable: 0 },
+      containers: { count: 1, size: 1e6 },
+      volumes: { count: 0, size: 0 },
+      buildCache: { count: 0, size: 0 },
+      total: 1e9,
+      reclaimable: 0,
+    },
+    degraded: [],
+  };
+  await page.route("**/api/maintenance*", (route) =>
+    route.fulfill({
+      json: {
+        host: { id: "nas-home", name: "NAS-HOME", role: "instance" },
+        snapshot,
+      },
+    }),
+  );
+  await page.route("**/api/verification", (route) =>
+    route.fulfill({
+      json: {
+        method: "passkey",
+        recent: true,
+        reason: null,
+        verifiedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+        ttlSeconds: 300,
+      },
+    }),
+  );
+  const sent: unknown[] = [];
+  await page.route("**/api/action*", async (route) => {
+    sent.push(route.request().postDataJSON());
+    await route.fulfill({ json: { ok: true, status: "success" } });
+  });
+
+  await page.goto("/?view=maintenance&tab=status");
+  const row = mainContainer(page, "jellyfin");
+  await expect(row.locator("[data-container-link]")).toHaveAttribute(
+    "href",
+    "https://jellyfin.alberba.es",
+  );
+  await expect(row.locator("[data-container-version]")).toHaveAttribute(
+    "data-container-version",
+    "10.10.7",
+  );
+  await expect(page.locator('[data-container="tailscale"] [data-action="update"]')).toHaveCount(0);
+
+  const update = row.locator('[data-action="update"]');
+  await expect(update).toHaveAttribute("data-update-available", "");
+  await update.click();
+
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toHaveAttribute("data-verification-recent", "true");
+  await expect(dialog.locator('[data-consequence="warn"]')).toHaveCount(3);
+  const confirm = dialog.locator("[data-confirm]");
+  await expect(confirm).toBeDisabled();
+
+  await dialog.locator('input[type="checkbox"]').check();
+  await confirm.click();
+  expect(sent).toEqual([{ action: "update-container", id: jellyfinId }]);
+});

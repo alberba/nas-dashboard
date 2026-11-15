@@ -66,6 +66,23 @@ class FakeSmart:
         return self.section
 
 
+class FakeContainers:
+    def __init__(self, section=None, error=None):
+        self.calls = 0
+        self.invalidated = []
+        self.section = section or {"available": True, "items": []}
+        self.error = error
+
+    def read(self):
+        self.calls += 1
+        if self.error:
+            raise self.error
+        return self.section
+
+    def invalidate(self, reference=None):
+        self.invalidated.append(reference)
+
+
 class SnapshotTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -480,6 +497,47 @@ class SnapshotTest(unittest.TestCase):
         self.assertIn("units", snapshot["degraded"])
         self.assertEqual(snapshot["follower"]["state"], "unknown")
         self.assertTrue(snapshot["docker"]["available"])
+
+    def test_container_access_and_versions_are_published(self):
+        reader = FakeContainers(
+            {
+                "available": True,
+                "items": [{"id": "a" * 64, "name": "jellyfin", "version": "10.10.7"}],
+            }
+        )
+        snapshot = maintenance.Maintenance(
+            appdata=self.appdata,
+            host_reader=self.host,
+            docker_reader=self.docker,
+            container_reader=reader,
+            clock=lambda: 1000.0,
+        )
+
+        value = snapshot.snapshot()
+
+        self.assertEqual(value["containers"]["items"][0]["version"], "10.10.7")
+        self.assertNotIn("containers", value["degraded"])
+        self.assertEqual(reader.calls, 1)
+
+        snapshot.invalidate_container("lscr.io/linuxserver/jellyfin:latest")
+        self.assertEqual(
+            reader.invalidated, ["lscr.io/linuxserver/jellyfin:latest"]
+        )
+
+    def test_a_failing_container_read_degrades_only_that_section(self):
+        snapshot = maintenance.Maintenance(
+            appdata=self.appdata,
+            host_reader=self.host,
+            docker_reader=self.docker,
+            container_reader=FakeContainers(error=OSError("docker unavailable")),
+            clock=lambda: 1000.0,
+        )
+
+        value = snapshot.snapshot()
+
+        self.assertEqual(value["containers"], {"available": False, "items": []})
+        self.assertIn("containers", value["degraded"])
+        self.assertTrue(value["docker"]["available"])
 
 
 class RecordingExecutor:

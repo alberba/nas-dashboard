@@ -169,6 +169,22 @@ el valor vacío documentado y `degraded` puede indicar el fallo de lectura.
       "total": 42012000000,
       "reclaimable": 30000000000
     },
+    "containers": {
+      "available": true,
+      "items": [
+        {
+          "id": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+          "name": "jellyfin",
+          "image": "lscr.io/linuxserver/jellyfin:latest",
+          "version": "10.10.7-ls279",
+          "tag": "latest",
+          "url": "https://jellyfin.example.com",
+          "canUpdate": true,
+          "updateAvailable": true,
+          "checkedAt": 1763040000
+        }
+      ]
+    },
     "degraded": []
   }
 }
@@ -177,6 +193,33 @@ el valor vacío documentado y `degraded` puede indicar el fallo de lectura.
 `timestamp` es la hora de generación en segundos Unix. Las fechas son ISO 8601 en UTC.
 Los tamaños de Docker son bytes y salen de `GET /system/df`; `reclaimable` es una
 estimación (imágenes sin contenedor y caché no usada), no un borrado implícito.
+
+### Contenedores, versiones y actualizaciones
+
+Cada elemento de `containers.items` sale de `GET /containers/json?all=1` y de la
+inspección de su imagen (`GET /images/{id}/json`). `version` es la etiqueta
+`org.opencontainers.image.version` (o `org.label-schema.version`, `version`,
+`build_version`), y si no existe, una etiqueta de imagen que no sea flotante
+(`latest`, `stable`, …). `tag` es siempre la etiqueta de la referencia.
+
+`url` solo se rellena con hechos: la etiqueta `hub.url` o el primer `Host(…)` de las
+reglas de Traefik del contenedor. El hub añade después los enlaces de su catálogo de
+aplicaciones; el agente no inventa subdominios.
+
+`canUpdate` exige un contenedor en ejecución, no protegido, de un solo uso falso, con
+etiquetas de Compose y una imagen con `RepoDigests`. `updateAvailable` compara el digest
+local con el manifiesto del registro (`GET /distribution/{name}/json`); `true` significa
+que hay otro digest, `false` que coinciden y `null` que no se pudo comprobar. Las
+consultas al registro se cachean una hora por referencia y se descartan tras una
+actualización. `checkedAt` es la hora Unix de la última comprobación.
+
+La actualización es la acción `POST /action` con
+`{ "action": "update-container", "id": "<64 hex>" }`. El agente valida el contenedor y
+su plan de Compose, ejecuta `docker compose … pull <servicio>` y después
+`docker compose … up -d --no-deps <servicio>` en el host. No acepta rutas, servicios
+ni opciones del cliente: salen de las etiquetas del propio contenedor. Un fallo al
+descargar responde 400 sin tocar nada; un fallo al recrear responde 502 porque el
+servicio puede haber quedado a medias. Nunca se reintenta solo.
 
 ### Franja de Mantenimiento · Estado
 

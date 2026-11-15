@@ -14,6 +14,7 @@ import threading
 import time
 
 import smart
+import updates
 
 INSTANCE_UNITS = (
     "media-stack-merged-updates",
@@ -732,6 +733,7 @@ class Maintenance:
         host_reader,
         docker_reader,
         smart_reader=None,
+        container_reader=None,
         clock=time.time,
         cache_seconds=60,
         stack_prefix="media-stack",
@@ -743,6 +745,7 @@ class Maintenance:
         self.host_reader = host_reader
         self.docker_reader = docker_reader
         self.smart_reader = smart_reader
+        self.container_reader = container_reader
         self.clock = clock
         try:
             self.cache_seconds = max(0.0, float(cache_seconds))
@@ -753,17 +756,22 @@ class Maintenance:
         self._lock = threading.Lock()
 
     @classmethod
-    def from_env(cls):
+    def from_env(cls, protected=()):
         executor = HostExecutor()
+        role = os.getenv("HOST_ROLE", "instance")
         return cls(
             appdata=os.getenv("APPDATA_ROOT", "/media-stack-appdata"),
-            role=os.getenv("HOST_ROLE", "instance"),
-            unit_names=parse_unit_names(
-                os.getenv("MAINTENANCE_UNITS"), os.getenv("HOST_ROLE", "instance")
-            ),
+            role=role,
+            unit_names=parse_unit_names(os.getenv("MAINTENANCE_UNITS"), role),
             host_reader=HostReader(executor=executor),
             docker_reader=DockerUsage(),
             smart_reader=smart.SmartMonitor(executor=DiskExecutor()),
+            container_reader=updates.ContainerUpdates(
+                DockerSocket(),
+                role=role,
+                stack_path=os.getenv("MEDIA_STACK_CHECKOUT_PATH"),
+                protected=protected,
+            ),
             cache_seconds=os.getenv("MAINTENANCE_CACHE_SECONDS", "60"),
             stack_prefix=os.getenv("MAINTENANCE_STACK_PREFIX", "media-stack"),
         )
@@ -784,6 +792,12 @@ class Maintenance:
             self._cached = None
             self._expires = 0.0
 
+    def invalidate_container(self, reference=None):
+        """Forgets a registry answer after a pull and rebuilds the snapshot."""
+        if self.container_reader is not None:
+            self.container_reader.invalidate(reference)
+        self.invalidate()
+
     def _build(self, now):
         errors = []
         defaults = {
@@ -797,6 +811,7 @@ class Maintenance:
             "security": {"pins": [], "pending": None, "review": []},
             "backup": {"status": "unknown", "at": None},
             "disks": {"available": False, "devices": []},
+            "containers": {"available": False, "items": []},
             "units": [],
             "failedUnits": {"stack": [], "other": []},
             "reboot": {"available": False, "required": None},
@@ -817,6 +832,9 @@ class Maintenance:
             "disks": self.smart_reader.read
             if self.smart_reader
             else lambda: {"available": False, "devices": []},
+            "containers": self.container_reader.read
+            if self.container_reader
+            else lambda: {"available": False, "items": []},
             "units": lambda: units_section(self.host_reader, self.unit_names),
             "failedUnits": lambda: failed_units_section(
                 self.host_reader, self.stack_prefix
