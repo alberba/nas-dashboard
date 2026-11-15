@@ -23,6 +23,7 @@ import lifecycle
 import logs
 import maintenance
 import maintenance_actions
+import updates
 
 
 def configured_roots(enabled, media, torrents):
@@ -61,18 +62,14 @@ PROC = Path(os.getenv("HOST_PROC", "/host/proc"))
 SYS = Path(os.getenv("HOST_SYS", "/host/sys"))
 TOKEN = os.getenv("AGENT_TOKEN", "")
 ALLOWED_NETWORKS = allowed_networks(os.getenv("ALLOWED_IPS", "127.0.0.1"))
-PROTECTED = {"hub-agent", "hub-agent-apps", "npm", "tailscale"} | {
-    name.strip()
-    for name in os.getenv("PROTECTED_CONTAINERS", "").split(",")
-    if name.strip()
-}
+PROTECTED = updates.protected_names(os.getenv("PROTECTED_CONTAINERS", ""))
 ALLOW_REBOOT = os.getenv("ALLOW_REBOOT", "true").strip().lower() not in (
     "0",
     "false",
     "no",
     "off",
 )
-MAINTENANCE = maintenance.Maintenance.from_env()
+MAINTENANCE = maintenance.Maintenance.from_env(protected=PROTECTED)
 COMMANDS = host_commands.HostCommands(
     role=MAINTENANCE.role,
     unit_names=MAINTENANCE.unit_names,
@@ -82,6 +79,9 @@ ACTIONS = maintenance_actions.MaintenanceActions.from_env()
 DEPLOYMENTS = deployments.Deployments.from_env()
 ENV_SETTINGS = env_settings.EnvSettings(DEPLOYMENTS)
 LOCK = threading.RLock()
+UPDATE_LOCK = threading.Lock()
+UPDATE_DOCKER = maintenance.DockerSocket(timeout=15)
+UPDATE_EXECUTOR = maintenance.HostExecutor()
 
 
 class UnixHTTP(http.client.HTTPConnection):
@@ -368,6 +368,30 @@ def metrics():
             "temperatures": temperatures, "containers": container_cache[1]}
 
 
+def update_container(body):
+    """One Compose pull+up, outside the short request lock, never in parallel."""
+    global container_cache
+    ident = body.get("id", "")
+    if not lifecycle.valid_id(ident):
+        raise ValueError("Contenedor no válido")
+    if not UPDATE_LOCK.acquire(blocking=False):
+        raise ValueError("Ya hay una actualización en curso en este host")
+    try:
+        result = updates.run_update(
+            UPDATE_DOCKER,
+            UPDATE_EXECUTOR,
+            ident,
+            role=MAINTENANCE.role,
+            stack_path=os.getenv("MEDIA_STACK_CHECKOUT_PATH"),
+            protected=PROTECTED,
+        )
+    finally:
+        UPDATE_LOCK.release()
+    container_cache = (0, [])
+    MAINTENANCE.invalidate_container(result.get("image"))
+    return result
+
+
 def execute(body):
     global container_cache
     action = body.get("action")
@@ -459,6 +483,20 @@ class Handler(BaseHTTPRequestHandler):
                 body = json.loads(self.rfile.read(size))
                 self.respond(200, ENV_SETTINGS.save(body))
                 return
+            if self.command == "POST" and route.path == "/action":
+                size = int(self.headers.get("Content-Length", 0))
+                if not 0 < size <= 8192:
+                    raise ValueError("Solicitud no válida")
+                body = json.loads(self.rfile.read(size))
+                if not isinstance(body, dict):
+                    raise ValueError("Solicitud no válida")
+                if body.get("action") == "update-container":
+                    # Pulling can take minutes: keep /metrics and /logs free.
+                    self.respond(200, update_container(body))
+                    return
+                with LOCK:
+                    self.respond(200, execute(body))
+                return
             with LOCK:
                 if self.command == "GET" and route.path == "/metrics":
                     result = metrics()
@@ -491,11 +529,6 @@ class Handler(BaseHTTPRequestHandler):
                             raise ValueError("Comando de host no permitido")
                     finally:
                         MAINTENANCE.invalidate()
-                elif self.command == "POST" and route.path == "/action":
-                    size = int(self.headers.get("Content-Length", 0))
-                    if not 0 < size <= 8192:
-                        raise ValueError("Solicitud no válida")
-                    result = execute(json.loads(self.rfile.read(size)))
                 else:
                     self.respond(404, {"error": "No encontrado"})
                     return

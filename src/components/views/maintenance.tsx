@@ -5,6 +5,7 @@ import {
 } from "./use-maintenance-snapshot";
 import { Fragment, useRef, useState } from "react";
 import {
+  ArrowUpRight,
   ChevronDown,
   Lock,
   Play,
@@ -44,9 +45,11 @@ import {
 } from "./remove-container";
 import { useRenovate } from "./use-renovate";
 import { containerUpdates } from "@/lib/renovate-view";
+import { containerAccess, containerUpdate } from "@/lib/container-access";
 import { routeHref } from "./routes";
 import extraStyles from "./maintenance-extra.module.css";
 import { ContainerLogsRow } from "./container-logs";
+import { UpdateContainerButton, useUpdateContainer } from "./update-container";
 
 const filterLabels: Record<ContainerFilterId, string> = {
   all: "Todos",
@@ -101,6 +104,7 @@ function MaintenanceContent({
   expected,
   disabled,
   request,
+  appDomain,
   onSensitiveSettled,
 }: {
   metrics: Metrics;
@@ -109,6 +113,8 @@ function MaintenanceContent({
   disabled: boolean;
   lastAt: string | null;
   request: (action: ActionRequest) => void;
+  /** Base domain used to build the curated application links. */
+  appDomain: string;
   /** Called when a sensitive action finishes, so the shell can refresh. */
   onSensitiveSettled?: (outcome: SensitiveActionOutcome) => void;
 }) {
@@ -200,6 +206,7 @@ function MaintenanceContent({
               expected={expected}
               disabled={disabled}
               request={request}
+              appDomain={appDomain}
               updates={updates}
               empty={mainEmpty}
             />
@@ -239,6 +246,7 @@ function MaintenanceContent({
               expected={expected}
               disabled={disabled}
               request={request}
+              appDomain={appDomain}
               updates={updates}
               empty={stoppedEmpty}
             />
@@ -298,6 +306,7 @@ function ContainerTable({
   expected,
   disabled,
   request,
+  appDomain,
   updates,
   empty,
 }: {
@@ -306,6 +315,7 @@ function ContainerTable({
   expected: string[];
   disabled: boolean;
   request: (action: ActionRequest) => void;
+  appDomain: string;
   updates: Map<string, { number: number; url: string }[]>;
   empty: string | null;
 }) {
@@ -321,6 +331,7 @@ function ContainerTable({
           <tr>
             <th scope="col">Contenedor</th>
             <th scope="col">Estado</th>
+            <th scope="col">Versión</th>
             <th scope="col" className="numeric">
               <span className="sr-only">Acciones</span>
             </th>
@@ -334,12 +345,13 @@ function ContainerTable({
               problem={needsAttention(container, expected)}
               disabled={disabled}
               request={request}
+              appDomain={appDomain}
               updates={updates.get(container.id) ?? []}
             />
           ))}
           {!containers.length && (
             <tr className="empty-row" data-empty={emptyState}>
-              <td colSpan={3}>{empty ?? "Ningún contenedor"}</td>
+              <td colSpan={4}>{empty ?? "Ningún contenedor"}</td>
             </tr>
           )}
         </tbody>
@@ -362,6 +374,7 @@ function ContainerRow(props: {
   problem: boolean;
   disabled: boolean;
   request: (action: ActionRequest) => void;
+  appDomain: string;
   updates: { number: number; url: string }[];
 }) {
   const [logsOpen, setLogsOpen] = useState(false);
@@ -373,7 +386,7 @@ function ContainerRow(props: {
         logsOpen={logsOpen}
         toggleLogs={() => setLogsOpen((open) => !open)}
       />
-      {logsOpen && <ContainerLogsRow id={id} name={name} columns={7} />}
+      {logsOpen && <ContainerLogsRow id={id} name={name} columns={4} />}
     </Fragment>
   );
 }
@@ -383,6 +396,7 @@ function ContainerLine({
   problem,
   disabled,
   request,
+  appDomain,
   logsOpen,
   toggleLogs,
   updates,
@@ -391,12 +405,16 @@ function ContainerLine({
   problem: boolean;
   disabled: boolean;
   request: (action: ActionRequest) => void;
+  appDomain: string;
   logsOpen: boolean;
   toggleLogs: () => void;
   updates: { number: number; url: string }[];
 }) {
   const scope = useHostScope();
   const snapshot = useMaintenanceSnapshot().snapshot;
+  const imageUpdate = containerUpdate(snapshot?.containers, c.id);
+  const access = containerAccess({ container: c, update: imageUpdate, appDomain });
+  const updater = useUpdateContainer();
   const pin = snapshot?.security.pins.find(
     (p) => p.service === (c.composeService ?? c.compose?.service),
   );
@@ -440,7 +458,21 @@ function ContainerLine({
         <td className="name-cell">
           <span className="row-title">
             <StatusDot tone={tone} />
-            <strong>{c.name}</strong>
+            {access.url ? (
+              <a
+                className={extraStyles.nameLink}
+                href={access.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={access.url}
+                data-container-link=""
+              >
+                <strong>{c.name}</strong>
+                <ArrowUpRight aria-hidden="true" />
+              </a>
+            ) : (
+              <strong>{c.name}</strong>
+            )}
             <ContainerLifecycleTag container={c} />
             {pin && (
               <span className="gain" data-container-pin="">
@@ -470,6 +502,9 @@ function ContainerLine({
           </span>
           <span className={`row-meta ${tone}`}>
             {stateText}
+            {access.version && (
+              <span className="muted">{" · "}{access.version}</span>
+            )}
             {update && (
               <span className="accent">
                 {" · "}actualización #{update.number}
@@ -479,15 +514,38 @@ function ContainerLine({
           </span>
         </td>
         <td className={`${tone} ${extraStyles.stateText}`}>{stateText}</td>
+        <td className="mono" data-container-version={access.version ?? ""}>
+          <span className="row-title">
+            {access.version ?? "—"}
+            {access.updateAvailable === true && (
+              <span
+                className={extraStyles.updateTag}
+                data-update-available=""
+              >
+                nueva
+              </span>
+            )}
+          </span>
+        </td>
         <td className="numeric actions-cell">
           <div className="row-actions">
             {removal.dialog}
+            {updater.dialog}
             <RemoveContainerButton
               container={c}
               disabled={disabled}
               pending={removal.isPending(c)}
               onRemove={removal.remove}
             />
+            {access.canUpdate && access.updateAvailable !== false && (
+              <UpdateContainerButton
+                container={c}
+                available={access.updateAvailable === true}
+                disabled={disabled}
+                pending={updater.isPending(c)}
+                onUpdate={(container) => updater.update(container, access.version)}
+              />
+            )}
             <button
               type="button"
               className="row-button"

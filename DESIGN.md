@@ -98,6 +98,14 @@ Fondo `--panel`, borde `--line`, radio `18px`, `overflow: hidden`. Cabecera de `
 ### Pastilla de actualización
 Píldora con borde `--accent` y texto `--accent`: `nueva versión · #PR`. Es un enlace a la PR en la sección Despliegues.
 
+### Versión y actualización de la imagen
+La columna **Versión** muestra `org.opencontainers.image.version` o, si no existe, la etiqueta de la imagen cuando no es flotante. Sin dato, `—`. En móvil la versión pasa a la línea secundaria de la fila.
+
+Cuando el digest del registro no coincide con el local, junto a la versión aparece la píldora `nueva` y la acción `Actualizar` se tiñe de `--accent`. La acción abre el diálogo de acción sensible con las advertencias (reinicio del servicio, descarga de la imagen y falta de reversión automática) y exige marcar que se han leído antes de confirmar. Un resultado incierto queda pendiente y nunca se repite solo.
+
+### Enlace al servicio
+El nombre del contenedor es un enlace externo cuando el agente declara una página (`hub.url` o una regla `Host(…)` de Traefik) o cuando el catálogo de Aplicaciones lo asigna a un subdominio. Sin página conocida, el nombre queda como texto: el hub no inventa enlaces.
+
 ### Etiquetas de estado
 Píldora de `11px`, peso 800, borde `--line`, texto en el color semántico: `patch`, `requiere Worker`, `Instalada`, `Retenida`, `Fallida · restaurada`.
 

@@ -25,7 +25,7 @@ import {
 } from "@/lib/verification-api";
 import { removeContainer } from "@/lib/lifecycle";
 import { verificationStore } from "@/lib/verification";
-import { nasForHost, NasRejected } from "@/lib/nas";
+import { nasForHost, NasRejected, CONTAINER_UPDATE_TIMEOUT_MS } from "@/lib/nas";
 import {
   getHosts,
   primaryHost,
@@ -427,6 +427,9 @@ async function handle(
           host,
           "/action",
           body,
+          body.action === "update-container"
+            ? CONTAINER_UPDATE_TIMEOUT_MS
+            : undefined,
         );
         const status = body.action === "reboot" ? "pending" : "success";
         await db
@@ -436,7 +439,9 @@ async function handle(
             detail:
               status === "pending"
                 ? "Reinicio solicitado; esperando que el host vuelva a responder."
-                : "Operación completada y comprobada.",
+                : body.action === "update-container"
+                  ? "Contenedor actualizado: imagen descargada y servicio recreado."
+                  : "Operación completada y comprobada.",
           })
           .where(eq(operations.id, operationId));
         if (

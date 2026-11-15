@@ -17,6 +17,10 @@ export const actionSchema = z.discriminatedUnion("action", [
     id: z.string().regex(/^[a-f0-9]{64}$/),
   }),
   z.object({
+    action: z.literal("update-container"),
+    id: z.string().regex(/^[a-f0-9]{64}$/),
+  }),
+  z.object({
     action: z.literal("reboot"),
     confirmation: z.literal("REINICIAR NAS"),
   }),
