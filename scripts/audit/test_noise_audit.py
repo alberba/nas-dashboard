@@ -1161,6 +1161,186 @@ class ReportModelTest(unittest.TestCase):
         )
 
 
+TELEGRAM_EMITTERS = {
+    "upgrade-script",
+    "merged-updates",
+    "security-updater",
+    "security-monitor",
+    "wud",
+    "backup",
+    "issue-automator",
+    "unknown-smart",
+}
+
+
+class ShutdownOrderTest(unittest.TestCase):
+    def test_the_five_steps_are_fixed_and_wud_goes_last(self):
+        order = noise_audit.build_shutdown_order()
+
+        self.assertEqual(
+            [step["emitter"] for step in order["order"]],
+            [
+                "upgrade-script",
+                "merged-updates",
+                "security-updater",
+                "security-monitor",
+                "wud",
+            ],
+        )
+        for step in order["order"]:
+            for field in ("emitter", "families", "replacement", "reversibility", "reason"):
+                self.assertTrue(step[field], (step["emitter"], field))
+
+    def test_the_eight_telegram_emitters_are_covered_exactly_once(self):
+        order = noise_audit.build_shutdown_order()
+
+        emitters = [
+            step["emitter"]
+            for group in ("order", "narrowed", "out_of_scope")
+            for step in order[group]
+        ]
+
+        self.assertEqual(len(emitters), 8)
+        self.assertEqual(len(set(emitters)), 8)
+        self.assertEqual(set(emitters), TELEGRAM_EMITTERS)
+
+    def test_the_copy_is_narrowed_and_never_shut_off(self):
+        order = noise_audit.build_shutdown_order()
+
+        self.assertNotIn("backup", [step["emitter"] for step in order["order"]])
+        self.assertEqual(order["never_shut_off"], ["backup"])
+        narrowed = order["narrowed"][0]
+        self.assertEqual(narrowed["emitter"], "backup")
+        self.assertEqual(narrowed["to"], "backup-failed")
+        self.assertEqual(narrowed["origin"], "media-stack backup")
+        self.assertEqual(narrowed["requirement"], "SEC-06")
+        self.assertEqual(narrowed["reason"], "PITFALLS #24")
+
+    def test_issue_automator_and_smart_wait_for_phase_eight(self):
+        order = noise_audit.build_shutdown_order()
+
+        self.assertEqual(
+            {step["emitter"] for step in order["out_of_scope"]},
+            {"issue-automator", "unknown-smart"},
+        )
+        for step in order["out_of_scope"]:
+            self.assertEqual(step["revisit"], "phase 8")
+
+    def test_the_aggregate_publishes_the_shutdown_order(self):
+        aggregate = noise_audit.aggregate([row()], source_metadata())
+
+        self.assertEqual(aggregate["shutdown_order"]["never_shut_off"], ["backup"])
+
+
+class TemporalMarkerTest(unittest.TestCase):
+    def test_the_four_milestones_keep_their_date(self):
+        markers = noise_audit.build_temporal_markers()
+
+        self.assertEqual(len(markers), 4)
+        self.assertEqual(
+            {marker["id"]: marker["date"] for marker in markers},
+            {
+                "16d824e": "2026-10-16",
+                "d6831af": "2026-11-03",
+                "38061f0": "2026-11-03",
+                "cc8d8a3": "2026-11-08",
+            },
+        )
+        for marker in markers:
+            self.assertTrue(marker["effect"], marker["id"])
+            self.assertTrue(marker["cutoff"], marker["id"])
+            self.assertIsInstance(marker["date_only"], bool)
+
+    def test_the_wud_release_is_labelled_as_the_wud_version(self):
+        markers = {marker["id"]: marker for marker in noise_audit.build_temporal_markers()}
+
+        self.assertIn("9.8.0", markers["cc8d8a3"]["effect"])
+
+
+class TrendTest(unittest.TestCase):
+    def test_e3_is_split_into_two_closed_halves(self):
+        self.assertEqual(
+            noise_audit.E3_SPLIT["E3a"], {"from": "2026-11-03", "to": "2026-11-07"}
+        )
+        self.assertEqual(
+            noise_audit.E3_SPLIT["E3b"], {"from": "2026-11-08", "to": "2026-11-12"}
+        )
+
+    def test_the_trend_publishes_five_eras_and_four_markers(self):
+        trend = noise_audit.build_trend_table(era_shape_rows())
+
+        self.assertEqual(set(trend["eras"]), {"E1", "E2", "E3a", "E3b", "E4"})
+        self.assertEqual(len(trend["markers"]), 4)
+        for entry in trend["eras"].values():
+            self.assertIn("messages", entry)
+            self.assertIn("by_family", entry)
+            self.assertIn("markers_before", entry)
+            self.assertIn("markers_after", entry)
+
+    def test_markers_are_split_around_each_era(self):
+        trend = noise_audit.build_trend_table(era_shape_rows())
+
+        self.assertIn("16d824e", trend["eras"]["E3a"]["markers_before"])
+        self.assertIn("d6831af", trend["eras"]["E3a"]["markers_after"])
+        self.assertIn("38061f0", trend["eras"]["E3a"]["markers_after"])
+        self.assertIn("cc8d8a3", trend["eras"]["E3b"]["markers_after"])
+        self.assertEqual(trend["eras"]["E1"]["markers_before"], [])
+
+    @unittest.skipUnless(real_export_path().exists(), "export real no disponible")
+    def test_the_real_export_keeps_e3_whole_and_four_wud_in_e3a(self):
+        rows = telegram_export.parse_export(real_export_path())
+        trend = noise_audit.build_trend_table(rows)
+        eras = noise_audit.build_eras(rows)
+
+        self.assertEqual(
+            trend["eras"]["E3a"]["messages"] + trend["eras"]["E3b"]["messages"],
+            eras["E3"]["messages"],
+        )
+        self.assertEqual(trend["eras"]["E3a"]["by_family"]["wud"], 4)
+        self.assertEqual(
+            [trend["eras"][name]["messages"] for name in ("E1", "E2", "E4")],
+            [8, 105, 15],
+        )
+
+
+class FootnoteTest(unittest.TestCase):
+    def test_the_three_notes_exist_with_id_title_and_body(self):
+        notes = noise_audit.build_footnotes(noise_audit.build_eras(era_shape_rows()))
+
+        self.assertEqual(
+            {note["id"] for note in notes},
+            {"denominator", "push_coverage", "ack_unavailable"},
+        )
+        for note in notes:
+            self.assertTrue(note["title"], note["id"])
+            self.assertTrue(note["body"], note["id"])
+
+    def test_the_denominator_note_keeps_the_recalculated_rates(self):
+        notes = {
+            note["id"]: note
+            for note in noise_audit.build_footnotes(
+                noise_audit.build_eras(era_shape_rows())
+            )
+        }
+        body = notes["denominator"]["body"]
+
+        self.assertIn("0,05", body)
+        self.assertIn("1,25", body)
+        self.assertIn("0,04", body)
+        self.assertIn("1,15", body)
+
+    def test_the_aggregate_publishes_the_new_sections(self):
+        aggregate = noise_audit.aggregate(era_shape_rows(), source_metadata())
+
+        self.assertIn("shutdown_order", aggregate)
+        self.assertIn("trend", aggregate)
+        self.assertEqual(len(aggregate["trend"]["markers"]), 4)
+        self.assertEqual(
+            {note["id"] for note in aggregate["footnotes"]},
+            {"denominator", "push_coverage", "ack_unavailable"},
+        )
+
+
 def era_shape_rows():
     shape = {"E1": (8, "2026-05-01T12:00:00"), "E2": (105, "2026-10-01T12:00:00"),
              "E3": (20, "2026-11-05T12:00:00"), "E4": (15, "2026-11-20T12:00:00")}
