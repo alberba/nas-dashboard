@@ -1341,6 +1341,137 @@ class FootnoteTest(unittest.TestCase):
         )
 
 
+class FinalReportTest(unittest.TestCase):
+    def aggregate(self, *texts):
+        rows = [
+            row(id=f"message{index}", text=text)
+            for index, text in enumerate(texts, 1)
+        ]
+        rows.extend(era_shape_rows())
+        return noise_audit.aggregate(rows, source_metadata())
+
+    def test_the_sections_cover_the_declared_ids_in_order(self):
+        model = noise_audit.build_report_model(self.aggregate())
+
+        ids = [section["id"] for section in model["sections"]]
+
+        self.assertEqual(len(noise_audit.REPORT_SECTION_IDS), 15)
+        self.assertEqual(len(set(noise_audit.REPORT_SECTION_IDS)), 15)
+        self.assertEqual(ids, list(noise_audit.REPORT_SECTION_IDS))
+
+    def test_every_section_declares_a_known_source_and_content(self):
+        model = noise_audit.build_report_model(self.aggregate())
+
+        for section in model["sections"]:
+            self.assertIn(
+                section["source"], {"export", "codigo", "state", "no medido"}
+            )
+            self.assertTrue(section["title"], section["id"])
+            self.assertTrue(
+                section.get("tables") or section.get("paragraphs"), section["id"]
+            )
+
+    def test_the_report_hash_matches_the_export_hash(self):
+        aggregate = self.aggregate()
+
+        model = noise_audit.build_report_model(aggregate)
+
+        self.assertEqual(model["source_hash"], aggregate["source"]["sha256"])
+        self.assertEqual(aggregate["report"]["source_hash"], aggregate["source"]["sha256"])
+
+    def test_the_render_never_carries_a_message_body(self):
+        sentinel = "cuerpo-secreto-centinela"
+        aggregate = self.aggregate(wud_text("demo", "2.0.0"), sentinel)
+
+        rendered = noise_audit.render_report(
+            noise_audit.build_report_model(aggregate)
+        )
+
+        self.assertNotIn(sentinel, rendered)
+        self.assertNotIn(sentinel, json.dumps(aggregate, ensure_ascii=False))
+
+    def test_the_json_never_carries_the_text_key_or_an_absolute_home_path(self):
+        serialised = json.dumps(self.aggregate(), ensure_ascii=False)
+
+        self.assertNotIn('"text"', serialised)
+        self.assertNotIn("text", serialised)
+        self.assertNotIn(str(Path.home()), serialised)
+
+    def test_missing_push_and_ack_values_render_as_a_dash(self):
+        aggregate = self.aggregate()
+        model = noise_audit.build_report_model(aggregate)
+        sections = {section["id"]: section for section in model["sections"]}
+
+        push_cells = [
+            row
+            for table in sections["push"].get("tables", [])
+            for row in table["rows"]
+        ]
+        target_cells = [
+            row
+            for table in sections["objetivo"].get("tables", [])
+            for row in table["rows"]
+        ]
+
+        self.assertTrue(any(None in row for row in push_cells))
+        self.assertTrue(any(None in row for row in target_cells))
+        rendered = noise_audit.render_report(model)
+        self.assertIn("—", rendered)
+        self.assertNotIn("Valor actual | 0", rendered)
+
+    def test_check_report_accepts_the_rendered_report_and_rejects_a_change(self):
+        aggregate = self.aggregate()
+        rendered = noise_audit.render_report(
+            noise_audit.build_report_model(aggregate)
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            json_path = Path(directory) / "01-AUDIT.json"
+            md_path = Path(directory) / "01-AUDIT.md"
+            json_path.write_text(
+                noise_audit.canonical_json(aggregate), encoding="utf-8"
+            )
+            md_path.write_text(rendered, encoding="utf-8")
+
+            self.assertTrue(noise_audit.check_report(json_path, md_path))
+
+            md_path.write_text(rendered + "alterado\n", encoding="utf-8")
+            self.assertFalse(noise_audit.check_report(json_path, md_path))
+
+    def test_the_reproducibility_section_names_both_checks(self):
+        model = noise_audit.build_report_model(self.aggregate())
+        sections = {section["id"]: section for section in model["sections"]}
+        body = " ".join(sections["reproducibilidad"].get("paragraphs", []))
+
+        self.assertIn("--check-repro", body)
+        self.assertIn("--check-report", body)
+        self.assertIn(model["source_hash"], body)
+
+    def test_the_assumptions_section_lists_eight_entries(self):
+        model = noise_audit.build_report_model(self.aggregate())
+        sections = {section["id"]: section for section in model["sections"]}
+
+        rows = [
+            row
+            for table in sections["supuestos"].get("tables", [])
+            for row in table["rows"]
+        ]
+
+        self.assertEqual(len(rows), 8)
+        self.assertEqual({row[0] for row in rows}, {f"A{index}" for index in range(1, 9)})
+
+    @unittest.skipUnless(real_export_path().exists(), "export real no disponible")
+    def test_the_real_export_renders_all_sections_and_the_push_dash(self):
+        aggregate = noise_audit.aggregate(
+            telegram_export.parse_export(real_export_path()), source_metadata()
+        )
+
+        rendered = noise_audit.render_report(aggregate["report"])
+
+        for section_id in noise_audit.REPORT_SECTION_IDS:
+            self.assertIn(f"<!-- id: {section_id} -->", rendered)
+        self.assertIn("—", rendered)
+
+
 def era_shape_rows():
     shape = {"E1": (8, "2026-05-01T12:00:00"), "E2": (105, "2026-10-01T12:00:00"),
              "E3": (20, "2026-11-05T12:00:00"), "E4": (15, "2026-11-20T12:00:00")}
