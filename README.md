@@ -145,12 +145,16 @@ pnpm typecheck
 pnpm lint
 pnpm test
 pnpm test:agent
+pnpm test:audit
+pnpm audit:noise -- --export "/ruta/absoluta/al/messages.html"
 pnpm build
 pnpm exec playwright install chromium
 pnpm test:e2e
 ```
 
 Playwright usa una base de datos de desarrollo/pruebas, crea una cuenta de prueba cuando está vacía y comprueba acceso, registro cerrado, origen de peticiones, navegación, móvil y passkeys con un autenticador virtual. No apuntes estas pruebas a producción. Los tests del agente utilizan archivos temporales; las operaciones `renameat2` requieren Linux.
+
+La auditoría del ruido de Telegram (`scripts/audit/`) usa solo la biblioteca estándar de Python 3: no instala dependencias ni toca `pnpm-lock.yaml`. `pnpm audit:noise -- --export` recibe la ruta absoluta al `messages.html` exportado, que vive fuera del repositorio y no se copia aquí; el NDJSON normalizado se escribe en `/tmp/noise-audit/messages.ndjson` y el JSON de agregados de la fase en `.planning/phases/01-auditor-a-del-ruido/01-AUDIT.json`.
 
 TypeScript 7 compila la aplicación. ESLint todavía requiere la API JavaScript de TypeScript 6, instalada mediante el alias `typescript-api` y cargada solo en el proceso de lint. Se puede retirar ese adaptador cuando typescript-eslint admita TypeScript 7.
 

@@ -3,6 +3,7 @@
     "bot_messages": 146,
     "date_separators": 45,
     "days_with_messages": 45,
+    "denominator_note": "CONTEXT publicó 0,04/día en E1 y 1,15/día en E4 sin declarar el denominador. Aquí el rate usa días inclusivos: E1 8/156 = 0,05 y E4 15/12 = 1,25; los conteos no cambian.",
     "first_at": "2026-04-25T18:13:42",
     "inclusive_days": 214,
     "last_at": "2026-11-24T06:08:00",
@@ -11,6 +12,138 @@
     "operator_messages": 2,
     "span_days": 213
   },
+  "eras": {
+    "E1": {
+      "by_family": {
+        "issue-incident": 2,
+        "issue-test": 2,
+        "smart": 2
+      },
+      "events": 8,
+      "from": "2026-04-25",
+      "inclusive_days": 156,
+      "messages": 8,
+      "rate": 0.05,
+      "span_days": 155,
+      "to": "2026-09-27"
+    },
+    "E2": {
+      "by_family": {
+        "backup": 2,
+        "issue-incident": 1,
+        "security-digest": 1,
+        "security-update": 15,
+        "wud": 86
+      },
+      "events": 105,
+      "from": "2026-09-28",
+      "inclusive_days": 36,
+      "messages": 105,
+      "rate": 2.92,
+      "span_days": 35,
+      "to": "2026-11-02"
+    },
+    "E3": {
+      "by_family": {
+        "release-apply": 1,
+        "release-stop": 5,
+        "release-upgrade": 1,
+        "security-update": 9,
+        "wud": 4
+      },
+      "events": 20,
+      "from": "2026-11-03",
+      "inclusive_days": 10,
+      "messages": 20,
+      "rate": 2.0,
+      "span_days": 9,
+      "to": "2026-11-12"
+    },
+    "E4": {
+      "by_family": {
+        "release-apply": 3,
+        "security-update": 7,
+        "wud": 5
+      },
+      "events": 15,
+      "from": "2026-11-13",
+      "inclusive_days": 12,
+      "messages": 15,
+      "rate": 1.25,
+      "span_days": 11,
+      "to": "2026-11-24"
+    }
+  },
+  "evidence_sources": [
+    {
+      "access": "ruta de D-01, fuera del repositorio",
+      "id": "export",
+      "label": "Export del chat de Telegram",
+      "proves": "mensajes, fechas, remitentes y texto de la ventana completa",
+      "status": "available"
+    },
+    {
+      "access": "lectura directa del appdata",
+      "id": "backup-status",
+      "label": "Último resultado de copia",
+      "path": "backup/last-status",
+      "proves": "si la última copia terminó bien o mal",
+      "status": "available"
+    },
+    {
+      "access": "lectura directa del appdata",
+      "id": "security-status",
+      "label": "Última pasada del monitor de seguridad",
+      "path": "security-monitor/last-status.json",
+      "proves": "imágenes revisadas y candidatas de la última pasada",
+      "status": "available"
+    },
+    {
+      "access": "lectura directa del appdata",
+      "id": "security-notified",
+      "label": "CVEs ya notificados por imagen",
+      "path": "security-monitor/notified-updates.json",
+      "proves": "qué hallazgos ya salieron por Telegram",
+      "status": "available"
+    },
+    {
+      "access": "lectura directa del appdata",
+      "id": "update-outbox",
+      "label": "Outbox del actualizador de seguridad",
+      "path": "security-monitor/update-notifications.json",
+      "proves": "mensajes pendientes del actualizador",
+      "status": "denied"
+    },
+    {
+      "access": "lectura directa del appdata",
+      "id": "failed-release",
+      "label": "Último release fallido",
+      "path": "security-monitor/merged-releases/failed-release.json",
+      "proves": "configuración del último release que falló",
+      "status": "denied"
+    },
+    {
+      "access": "docker logs por contenedor",
+      "id": "docker-logs",
+      "label": "Logs de Docker en el NAS",
+      "proves": "corroborar envíos recientes",
+      "status": "partial"
+    },
+    {
+      "access": "journalctl -u media-stack-*",
+      "id": "journal",
+      "label": "Journal del sistema",
+      "proves": "histórico de ejecuciones",
+      "status": "unavailable"
+    },
+    {
+      "access": "PostgreSQL del hub vía SSH o UI autenticada",
+      "id": "alerts",
+      "label": "Tabla alerts del hub",
+      "proves": "aperturas y recuperaciones de push",
+      "status": "unavailable"
+    }
+  ],
   "inventory": {
     "emitters": [
       {

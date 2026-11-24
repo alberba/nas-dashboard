@@ -251,6 +251,87 @@ EMITTER_BY_FAMILY = {
     for family in emitter["families"]
 }
 
+# Eras are closed calendar windows; the denominator is inclusive_days, never the
+# number of days that happen to carry messages.
+ERA_WINDOWS = {
+    "E1": {"from": "2026-04-25", "to": "2026-09-27"},
+    "E2": {"from": "2026-09-28", "to": "2026-11-02"},
+    "E3": {"from": "2026-11-03", "to": "2026-11-12"},
+    "E4": {"from": "2026-11-13", "to": "2026-11-24"},
+}
+
+# Read-only evidence: `path` is relative to the appdata root passed as --state-root.
+EVIDENCE_SOURCES = (
+    {
+        "id": "export",
+        "label": "Export del chat de Telegram",
+        "access": "ruta de D-01, fuera del repositorio",
+        "proves": "mensajes, fechas, remitentes y texto de la ventana completa",
+        "status": "available",
+    },
+    {
+        "id": "backup-status",
+        "label": "Último resultado de copia",
+        "access": "lectura directa del appdata",
+        "proves": "si la última copia terminó bien o mal",
+        "status": "available",
+        "path": "backup/last-status",
+    },
+    {
+        "id": "security-status",
+        "label": "Última pasada del monitor de seguridad",
+        "access": "lectura directa del appdata",
+        "proves": "imágenes revisadas y candidatas de la última pasada",
+        "status": "available",
+        "path": "security-monitor/last-status.json",
+    },
+    {
+        "id": "security-notified",
+        "label": "CVEs ya notificados por imagen",
+        "access": "lectura directa del appdata",
+        "proves": "qué hallazgos ya salieron por Telegram",
+        "status": "available",
+        "path": "security-monitor/notified-updates.json",
+    },
+    {
+        "id": "update-outbox",
+        "label": "Outbox del actualizador de seguridad",
+        "access": "lectura directa del appdata",
+        "proves": "mensajes pendientes del actualizador",
+        "status": "denied",
+        "path": "security-monitor/update-notifications.json",
+    },
+    {
+        "id": "failed-release",
+        "label": "Último release fallido",
+        "access": "lectura directa del appdata",
+        "proves": "configuración del último release que falló",
+        "status": "denied",
+        "path": "security-monitor/merged-releases/failed-release.json",
+    },
+    {
+        "id": "docker-logs",
+        "label": "Logs de Docker en el NAS",
+        "access": "docker logs por contenedor",
+        "proves": "corroborar envíos recientes",
+        "status": "partial",
+    },
+    {
+        "id": "journal",
+        "label": "Journal del sistema",
+        "access": "journalctl -u media-stack-*",
+        "proves": "histórico de ejecuciones",
+        "status": "unavailable",
+    },
+    {
+        "id": "alerts",
+        "label": "Tabla alerts del hub",
+        "access": "PostgreSQL del hub vía SSH o UI autenticada",
+        "proves": "aperturas y recuperaciones de push",
+        "status": "unavailable",
+    },
+)
+
 
 def classify(text):
     """Return the first matching family plus its join keys; never raise per message."""
@@ -305,6 +386,90 @@ def build_inventory(rows):
     }
 
 
+def _as_day(value):
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value)[:10])
+
+
+def build_family_counts(rows, start, end):
+    """Count the bot families inside the closed window ``[start, end]``."""
+    start_day, end_day = _as_day(start), _as_day(end)
+    counts = Counter()
+    for row in rows:
+        if sender_kind(row.get("sender")) != "bot":
+            continue
+        day = _as_day(row["sent_at"])
+        if start_day <= day <= end_day:
+            counts[classify(row.get("text"))["family"]] += 1
+    return dict(counts)
+
+
+def build_rates(eras):
+    """The only source of ``rate``: messages per inclusive calendar day."""
+    return {
+        name: (
+            round(era["messages"] / era["inclusive_days"], 2)
+            if era["inclusive_days"]
+            else 0.0
+        )
+        for name, era in eras.items()
+    }
+
+
+def build_eras(rows):
+    """Segment the dataset into the four closed eras with an explicit denominator."""
+    eras = {}
+    for name, window in ERA_WINDOWS.items():
+        start = _as_day(window["from"])
+        end = _as_day(window["to"])
+        inclusive_days = (end - start).days + 1
+        messages = sum(
+            1
+            for row in rows
+            if start <= _as_day(row["sent_at"]) <= end
+        )
+        eras[name] = {
+            "from": window["from"],
+            "to": window["to"],
+            "inclusive_days": inclusive_days,
+            "span_days": inclusive_days - 1,
+            "messages": messages,
+            # Placeholder until 01-02 counts the WUD scan passes.
+            "events": messages,
+            "by_family": build_family_counts(rows, start, end),
+        }
+    for name, rate in build_rates(eras).items():
+        eras[name]["rate"] = rate
+    return eras
+
+
+def build_evidence_sources(state_root=None):
+    """Describe the nine evidence sources; probe them only when a root is given."""
+    sources = []
+    for source in EVIDENCE_SOURCES:
+        entry = dict(source)
+        if state_root is not None:
+            relative = source.get("path")
+            readable = None
+            exists = None
+            if relative:
+                target = Path(state_root) / relative
+                exists = target.exists()
+                try:
+                    with target.open("rb") as handle:
+                        handle.read(1)
+                    readable = True
+                except OSError:
+                    readable = False
+            entry["exists"] = exists
+            entry["readable"] = readable
+        sources.append(entry)
+    return sources
+
+
 def sender_kind(sender):
     """Classify a sender as ``bot`` or ``operator``; the export names only the bot."""
     return "bot" if sender in BOT_SENDERS else "operator"
@@ -337,10 +502,15 @@ def build_dataset_summary(rows, source):
         "inclusive_days": span_days + 1,
         "missing_time": sum(1 for row in rows if row.get("time") is None),
         "days_with_messages": len(days),
+        "denominator_note": (
+            "CONTEXT publicó 0,04/día en E1 y 1,15/día en E4 sin declarar el denominador. "
+            "Aquí el rate usa días inclusivos: E1 8/156 = 0,05 y E4 15/12 = 1,25; "
+            "los conteos no cambian."
+        ),
     }
 
 
-def aggregate(rows, source, alerts=None):
+def aggregate(rows, source, alerts=None, state_root=None):
     """Build the aggregate document. ``alerts`` is reserved for the push adapter."""
     return {
         "schema_version": SCHEMA_VERSION,
@@ -348,6 +518,8 @@ def aggregate(rows, source, alerts=None):
         "dataset": build_dataset_summary(rows, source),
         "sender_split": build_sender_split(rows),
         "inventory": build_inventory(rows),
+        "eras": build_eras(rows),
+        "evidence_sources": build_evidence_sources(state_root),
     }
 
 
@@ -412,13 +584,20 @@ def main(argv=None):
         "--print-summary", action="store_true", help="imprime una línea de resumen"
     )
     parser.add_argument(
+        "--state-root",
+        default=None,
+        help="raíz del appdata para probar las fuentes de evidencia (solo lectura)",
+    )
+    parser.add_argument(
         "--force", action="store_true", help="sobrescribe las salidas existentes"
     )
     args = parser.parse_args(argv)
 
     _refuse_overwrite((args.out_json, args.out_md, args.ndjson), args.force)
     rows, stats = telegram_export.parse_export_document(args.export)
-    result = aggregate(rows, _source_metadata(args.export, stats))
+    result = aggregate(
+        rows, _source_metadata(args.export, stats), state_root=args.state_root
+    )
 
     telegram_export.write_ndjson(rows, args.ndjson)
     out_json = Path(args.out_json)
