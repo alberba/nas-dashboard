@@ -24,6 +24,17 @@ SCHEMA_VERSION = 1
 BOT_SENDERS = frozenset({"NAS Monitor"})
 PUBLISHED_SOURCE_FIELDS = ("path_hint", "sha256", "bytes", "exported_mtime_note")
 
+SIGNATURES = ()
+EMITTERS = ()
+
+
+def classify(text):
+    raise NotImplementedError
+
+
+def build_inventory(rows):
+    raise NotImplementedError
+
 
 def sender_kind(sender):
     """Classify a sender as ``bot`` or ``operator``; the export names only the bot."""
