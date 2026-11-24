@@ -39,8 +39,13 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 3 plans
 
 Plans:
+**Wave 1**
 - [ ] 01-01: Reconstruir el inventario de emisores y recolectar 30–90 días desde logs, archivos de estado y export del chat
+
+**Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 01-02: Cuantificar recuperaciones, duplicados push + Telegram, distribución horaria y top de claves
+
+**Wave 3** *(blocked on Wave 2 completion)*
 - [ ] 01-03: Fijar el mapa alerta/digest/silencio, el orden de apagado y el objetivo de éxito
 
 **Repo:** hub + lectura de logs de `media-stack` (sin commits)
