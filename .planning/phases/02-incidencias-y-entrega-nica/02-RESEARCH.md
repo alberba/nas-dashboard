@@ -1,6 +1,7 @@
 # Fase 2 · Incidencias y entrega única · Investigación
 
-**Fecha:** 2026-11-24  
+**Fecha:** 2026-11-24
+
 **Confianza:** alta en las primitivas de PostgreSQL, el código existente y la semántica de entrega. Media en el comportamiento visible de Web Push por dispositivo, pendiente de prueba física.
 
 <user_constraints>
