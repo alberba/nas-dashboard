@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 import noise_audit
@@ -16,6 +17,21 @@ def real_export_path():
     if configured:
         return Path(configured)
     return Path.home() / "Downloads" / "ChatExport_NAS Monitor" / "messages.html"
+
+
+ALERTS_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "alerts_sample.csv"
+
+
+def wud_text(container, target_tag):
+    return (
+        f"New tag found for container {container}\n\n"
+        f"Container {container} running with tag 1.0.0 "
+        f"can be updated to tag {target_tag}"
+    )
+
+
+def security_update_text(*lines):
+    return "Demo Monitor — autoactualización de seguridad\n\n" + "\n".join(lines)
 
 
 def row(**overrides):
@@ -406,6 +422,157 @@ class RecoveryTest(unittest.TestCase):
             146,
         )
         self.assertEqual(telegram["recovery_messages"], 0)
+
+
+class PushAdapterTest(unittest.TestCase):
+    def test_the_synthetic_fixture_keeps_four_valid_rows(self):
+        loaded = noise_audit.load_alerts_csv(ALERTS_FIXTURE)
+
+        self.assertEqual(loaded["skipped_rows"], 0)
+        self.assertEqual(len(loaded["rows"]), 4)
+        opened = [entry for entry in loaded["rows"] if entry["resolvedAt"] is None]
+        self.assertEqual(len(opened), 2)
+        self.assertIn("unknown-key", {entry["key"] for entry in loaded["rows"]})
+
+    def test_a_malformed_row_is_counted_and_skipped(self):
+        content = (
+            "hostId,key,severity,at,resolvedAt\n"
+            "nas-home,backup-failed,critical,2026-11-20T03:00:00Z,\n"
+            "nas-home,backup-failed,critical,,\n"
+            "nas-home,backup-failed,critical,not-a-date,\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "alerts.csv"
+            path.write_text(content, encoding="utf-8")
+
+            loaded = noise_audit.load_alerts_csv(path)
+
+        self.assertEqual(len(loaded["rows"]), 1)
+        self.assertEqual(loaded["skipped_rows"], 2)
+        self.assertIsNone(loaded["rows"][0]["resolvedAt"])
+
+    def test_a_different_header_is_rejected(self):
+        content = "hostId,key,severity,at\nnas-home,backup-failed,critical,2026-11-20T03:00:00Z\n"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "alerts.csv"
+            path.write_text(content, encoding="utf-8")
+
+            with self.assertRaises(ValueError):
+                noise_audit.load_alerts_csv(path)
+
+    def test_wall_clock_conversion_resolves_the_dst_offset(self):
+        before = noise_audit.to_instant("2026-10-24T12:00:00")
+        after = noise_audit.to_instant("2026-10-26T12:00:00")
+        change = noise_audit.to_instant("2026-10-25T02:30:00")
+
+        self.assertEqual(
+            before, datetime(2026, 10, 24, 10, 0, tzinfo=timezone.utc)
+        )
+        self.assertEqual(
+            after, datetime(2026, 10, 26, 11, 0, tzinfo=timezone.utc)
+        )
+        self.assertEqual(
+            change, datetime(2026, 10, 25, 0, 30, tzinfo=timezone.utc)
+        )
+
+
+class DuplicateTest(unittest.TestCase):
+    def test_a_wud_message_matching_two_lines_counts_once(self):
+        rows = [
+            row(id="wud1", sent_at="2026-05-01T10:00:00",
+                text=wud_text("demo", "2.0.0")),
+            row(id="security1", sent_at="2026-05-01T12:00:00",
+                text=security_update_text(
+                    "demo → 2.0.0: manual: missing healthcheck",
+                    "demo → 2.0.0: manual: still missing healthcheck",
+                )),
+        ]
+
+        inter_system = noise_audit.build_duplicates(rows)["inter_system"]
+
+        self.assertEqual(inter_system["messages"], 1)
+        self.assertEqual(len(inter_system["items"]), 1)
+
+    def test_a_manual_review_is_not_a_real_update(self):
+        rows = [
+            row(id="wud1", sent_at="2026-05-01T10:00:00",
+                text=wud_text("demo", "2.0.0")),
+            row(id="security1", sent_at="2026-05-01T12:00:00",
+                text=security_update_text(
+                    "demo → 2.0.0: manual: missing healthcheck"
+                )),
+            row(id="wud2", sent_at="2026-05-02T10:00:00",
+                text=wud_text("other", "3.0.0")),
+            row(id="security2", sent_at="2026-05-02T12:00:00",
+                text=security_update_text(
+                    "other → 3.0.0: actualizada; comprobación de salud correcta"
+                )),
+        ]
+
+        inter_system = noise_audit.build_duplicates(rows)["inter_system"]
+
+        self.assertEqual(inter_system["messages"], 2)
+        self.assertEqual(inter_system["manual_only"], 1)
+        self.assertEqual(inter_system["real_update"], 1)
+
+    def test_same_target_requires_the_exact_tag(self):
+        rows = [
+            row(id="wud1", sent_at="2026-05-01T10:00:00",
+                text=wud_text("demo", "2.0.0")),
+            row(id="security1", sent_at="2026-05-01T12:00:00",
+                text=security_update_text(
+                    "demo → 2.0.1: actualizada; comprobación de salud correcta"
+                )),
+        ]
+
+        inter_system = noise_audit.build_duplicates(rows)["inter_system"]
+
+        self.assertEqual(inter_system["same_target"], 0)
+        self.assertFalse(inter_system["items"][0]["same_target"])
+
+    def test_without_a_csv_the_channel_duplicate_is_unavailable(self):
+        rows = [
+            row(id="backup1", sent_at="2026-11-20T04:10:00",
+                text="Backup of demo-host FAILED:\n- cannot open the repository"),
+        ]
+
+        duplicates = noise_audit.build_duplicates(rows)
+        inter_channel = duplicates["inter_channel"]
+
+        self.assertNotIn("total", duplicates)
+        self.assertNotIn("duplicates", duplicates)
+        self.assertEqual(inter_channel["status"], "unavailable")
+        self.assertIsNone(inter_channel["duplicates"])
+        self.assertIsNone(inter_channel["latency_s"])
+
+    def test_with_a_csv_the_copy_latency_comes_from_alerts_at(self):
+        alerts = noise_audit.load_alerts_csv(ALERTS_FIXTURE)
+        rows = [
+            row(id="backup1", sent_at="2026-11-20T04:10:00", hour=4,
+                text="Backup of demo-host FAILED:\n- cannot open the repository"),
+        ]
+
+        joins = noise_audit.join_push_windows(alerts["rows"], rows)
+        inter_channel = noise_audit.build_duplicates(rows, alerts)["inter_channel"]
+
+        self.assertEqual(len(joins), 1)
+        self.assertEqual(joins[0]["push_latency_s"], 600.0)
+        self.assertEqual(joins[0]["push_status"], "measured")
+        self.assertEqual(joins[0]["push_resolved_at"], "2026-11-20T03:25:00Z")
+        self.assertEqual(inter_channel["status"], "measured")
+        self.assertEqual(inter_channel["duplicates"], 1)
+        self.assertEqual(inter_channel["latency_s"], 600.0)
+
+    @unittest.skipUnless(real_export_path().exists(), "export real no disponible")
+    def test_the_real_export_reproduces_the_inter_system_duplicate(self):
+        rows = telegram_export.parse_export(real_export_path())
+
+        inter_system = noise_audit.build_duplicates(rows)["inter_system"]
+
+        self.assertEqual(inter_system["messages"], 14)
+        self.assertEqual(inter_system["same_target"], 12)
+        self.assertEqual(inter_system["real_update"], 1)
+        self.assertEqual(inter_system["manual_only"], 13)
 
 
 class EraTest(unittest.TestCase):

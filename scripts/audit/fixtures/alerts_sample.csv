@@ -1,0 +1,5 @@
+hostId,key,severity,at,resolvedAt
+nas-home,backup-failed,critical,2026-11-20T03:00:00Z,2026-11-20T03:25:00Z
+nas-home,backup-failed,warning,2026-11-21T03:00:00Z,
+nas-home,disk-health,critical,2026-11-22T03:00:00Z,2026-11-22T04:00:00Z
+nas-home,unknown-key,info,2026-11-23T03:00:00Z,
