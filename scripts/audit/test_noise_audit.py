@@ -221,6 +221,31 @@ class InventoryTest(unittest.TestCase):
             self.assertIn("messages", entry)
             self.assertIn("by_family", entry)
 
+    def test_the_recovery_and_cutover_flags_follow_one_source_of_truth(self):
+        inventory = self.inventory(
+            *[text for _family, text, _expected in SIGNATURE_CASES]
+        )
+        shutdown = noise_audit.build_shutdown_order()
+        cutover = {
+            entry["emitter"]
+            for bucket in ("order", "narrowed")
+            for entry in shutdown[bucket]
+        }
+
+        for entry in inventory["emitters"]:
+            families = entry["families"] or ["hub"]
+            capability = any(
+                noise_audit.RECOVERY_CAPABLE[family]["can_emit_recovery"]
+                for family in families
+            )
+            self.assertEqual(entry["can_emit_recovery"], capability, entry["id"])
+            self.assertEqual(entry["in_cutover"], entry["id"] in cutover, entry["id"])
+        issue = next(
+            entry for entry in inventory["emitters"] if entry["id"] == "issue-automator"
+        )
+        self.assertFalse(issue["in_cutover"])
+        self.assertFalse(issue["can_emit_recovery"])
+
     def test_every_telegram_emitter_count_adds_up_to_the_bot_messages(self):
         inventory = self.inventory(
             *[text for _family, text, _expected in SIGNATURE_CASES]
@@ -451,6 +476,21 @@ class PushAdapterTest(unittest.TestCase):
         self.assertEqual(loaded["skipped_rows"], 2)
         self.assertIsNone(loaded["rows"][0]["resolvedAt"])
 
+    def test_a_recovery_before_its_decision_is_a_skipped_row(self):
+        content = (
+            "hostId,key,severity,at,resolvedAt\n"
+            "nas-home,backup-failed,critical,2026-11-20T03:00:00Z,"
+            "2026-11-20T02:00:00Z\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "alerts.csv"
+            path.write_text(content, encoding="utf-8")
+
+            loaded = noise_audit.load_alerts_csv(path)
+
+        self.assertEqual(loaded["rows"], [])
+        self.assertEqual(loaded["skipped_rows"], 1)
+
     def test_a_different_header_is_rejected(self):
         content = "hostId,key,severity,at\nnas-home,backup-failed,critical,2026-11-20T03:00:00Z\n"
         with tempfile.TemporaryDirectory() as directory:
@@ -459,6 +499,17 @@ class PushAdapterTest(unittest.TestCase):
 
             with self.assertRaises(ValueError):
                 noise_audit.load_alerts_csv(path)
+
+    def test_a_time_less_message_is_not_joined_to_push(self):
+        alerts = noise_audit.load_alerts_csv(ALERTS_FIXTURE)
+        message = row(
+            id="backup1",
+            sent_at="2026-11-20",
+            time=None,
+            text="Backup of demo-host FAILED:\n- cannot open the repository",
+        )
+
+        self.assertEqual(noise_audit.join_push_windows(alerts["rows"], [message]), [])
 
     def test_wall_clock_conversion_resolves_the_dst_offset(self):
         before = noise_audit.to_instant("2026-10-24T12:00:00")
@@ -560,6 +611,21 @@ class DuplicateTest(unittest.TestCase):
 
         self.assertEqual(inter_system["messages"], 1)
         self.assertIsNone(inter_system["items"][0]["latency_min"])
+        self.assertIsNone(inter_system["latency_min"])
+
+    def test_a_time_less_wud_message_does_not_invent_a_latency(self):
+        rows = [
+            row(id="wud1", sent_at="2026-05-01", time=None,
+                text=wud_text("demo", "2.0.0")),
+            row(id="security1", sent_at="2026-05-01T12:00:00",
+                text=security_update_text(
+                    "demo → 2.0.0: manual: missing healthcheck"
+                )),
+        ]
+
+        inter_system = noise_audit.build_duplicates(rows)["inter_system"]
+
+        self.assertEqual(inter_system["messages"], 0)
         self.assertIsNone(inter_system["latency_min"])
 
     def test_without_a_csv_the_channel_duplicate_is_unavailable(self):
@@ -955,7 +1021,8 @@ class EraTest(unittest.TestCase):
 
         self.assertIn("0,04", dataset["denominator_note"])
         self.assertIn("1,15", dataset["denominator_note"])
-        self.assertIn("inclusivos", dataset["denominator_note"])
+        self.assertIn("0,05", dataset["denominator_note"])
+        self.assertIn("1,25", dataset["denominator_note"])
 
     @unittest.skipUnless(real_export_path().exists(), "export real no disponible")
     def test_the_real_export_reproduces_the_era_counts(self):
@@ -1447,8 +1514,16 @@ class FinalReportTest(unittest.TestCase):
 
         self.assertTrue(any(None in row for row in push_cells))
         self.assertTrue(any(None in row for row in target_cells))
+        hub_row = next(
+            row
+            for row in sections["recuperaciones"]["tables"][0]["rows"]
+            if row[0] == "hub_push"
+        )
+        self.assertEqual(hub_row[1:5], [None, None, None, None])
+        ack_row = next(row for row in target_cells if row[0] == "Valor actual")
         rendered = noise_audit.render_report(model)
-        self.assertIn("—", rendered)
+        self.assertIsNone(ack_row[1])
+        self.assertIn("| Valor actual | — |", rendered)
         self.assertNotIn("Valor actual | 0", rendered)
 
     def test_check_report_accepts_the_rendered_report_and_rejects_a_change(self):
@@ -1468,6 +1543,53 @@ class FinalReportTest(unittest.TestCase):
 
             md_path.write_text(rendered + "alterado\n", encoding="utf-8")
             self.assertFalse(noise_audit.check_report(json_path, md_path))
+
+    def test_check_report_rejects_an_aggregate_that_drifted_from_the_model(self):
+        aggregate = self.aggregate()
+        rendered = noise_audit.render_report(
+            noise_audit.build_report_model(aggregate)
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            json_path = Path(directory) / "01-AUDIT.json"
+            md_path = Path(directory) / "01-AUDIT.md"
+            drifted = json.loads(noise_audit.canonical_json(aggregate))
+            drifted["dataset"]["messages"] = 9999
+            json_path.write_text(
+                noise_audit.canonical_json(drifted), encoding="utf-8"
+            )
+            md_path.write_text(rendered, encoding="utf-8")
+
+            self.assertFalse(noise_audit.check_report(json_path, md_path))
+
+    def test_the_report_reflects_a_measured_push_column(self):
+        alerts = noise_audit.load_alerts_csv(ALERTS_FIXTURE)
+        aggregate = noise_audit.aggregate(
+            [row(id="message1", text=wud_text("demo", "2.0.0"))],
+            source_metadata(),
+            alerts,
+        )
+
+        sections = {
+            section["id"]: section
+            for section in noise_audit.build_report_model(aggregate)["sections"]
+        }
+        hub = next(
+            entry
+            for entry in sections["recuperaciones"]["tables"][0]["rows"]
+            if entry[0] == "hub_push"
+        )
+        hub_push = aggregate["recoveries"]["hub_push"]
+
+        self.assertEqual(hub[1], hub_push["openings"])
+        self.assertEqual(hub[3], hub_push["recovery_messages"])
+        self.assertEqual(hub[5], "measured")
+        self.assertEqual(sections["push"]["source"], "state")
+        push_rows = {
+            row[0]: row[1]
+            for row in sections["push"]["tables"][0]["rows"]
+        }
+        self.assertEqual(push_rows["Estado"], "measured")
+        self.assertEqual(push_rows["Filas"], aggregate["push"]["rows"])
 
     def test_the_reproducibility_section_names_both_checks(self):
         model = noise_audit.build_report_model(self.aggregate())

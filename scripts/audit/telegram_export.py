@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import html
 import json
+import os
 from datetime import datetime
 from html.parser import HTMLParser
 from pathlib import Path
@@ -120,6 +121,10 @@ class TelegramExport(HTMLParser):
             self._mode, self._depth, self._buf = "service", 1, []
             return
         if classes in MESSAGE_CLASSES and str(attributes.get("id") or "").startswith("message"):
+            # A text-less message (media, sticker) has no ``text`` div to close it;
+            # flush the previous row before opening the next one so it is never lost.
+            if self._row is not None:
+                self._close_row("")
             self._row = {
                 "id": attributes.get("id"),
                 "joined": classes.endswith(" joined"),
@@ -152,6 +157,8 @@ class TelegramExport(HTMLParser):
             self.date_separators += 1
         elif mode == "from":
             self._sender = html.unescape(value).strip() or None
+            if self._row is not None:
+                self._row["_own_sender"] = self._sender
         elif mode == "text":
             self._close_row(value)
 
@@ -167,14 +174,23 @@ class TelegramExport(HTMLParser):
         if self._mode:
             self._buf.append(f"&#{name};")
 
+    def close(self):
+        super().close()
+        if self._row is not None:
+            self._close_row("")
+
     def _close_row(self, value):
         row, self._row = self._row, None
         if row is None:
             return
         moment, has_clock = parse_title(row.get("title"))
-        sender = self._sender
+        sender = row.pop("_own_sender", None)
         if sender is None:
-            raise ValueError("mensaje sin remitente previo")
+            if not row["joined"]:
+                raise ValueError("mensaje no joined sin remitente")
+            sender = self._sender
+            if sender is None:
+                raise ValueError("mensaje joined sin remitente previo")
         text = normalize_text(value)
         row.pop("title", None)
         row.update(
@@ -218,10 +234,22 @@ def parse_export(path, expected_sha256=EXPECTED_SHA256):
 
 
 def write_ndjson(rows, path):
-    """Write the normalised rows outside the repository, one JSON object per line."""
+    """Write the normalised rows outside the repository, one JSON object per line.
+
+    The rows carry every message body, so the intermediate is private to the
+    operator: the directory is created 0700 and the file 0600, and a symlink at
+    the target path is refused instead of followed.
+    """
     target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    with target.open("w", encoding="utf-8") as handle:
+    parent = target.parent
+    created = not parent.exists()
+    parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if created:
+        os.chmod(parent, 0o700)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(target, flags, 0o600)
+    os.fchmod(descriptor, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
         for row in rows:
             handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
     return target

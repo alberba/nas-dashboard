@@ -642,6 +642,22 @@ def build_inventory(rows):
             }
         )
 
+    shutdown = build_shutdown_order()
+    cutover = {
+        entry["emitter"]
+        for key in ("order", "narrowed")
+        for entry in shutdown[key]
+    }
+    capability = {
+        family: spec["can_emit_recovery"] for family, spec in RECOVERY_CAPABLE.items()
+    }
+    for emitter in emitters:
+        emitter_families = emitter["families"] or ["hub"]
+        emitter["can_emit_recovery"] = any(
+            capability.get(family, False) for family in emitter_families
+        )
+        emitter["in_cutover"] = emitter["id"] in cutover
+
     hub = next(entry for entry in emitters if entry["id"] == "hub")
     return {
         "emitters": emitters,
@@ -889,6 +905,8 @@ def load_alerts_csv(path):
                 at = _parse_utc(raw.get("at"))
                 resolved_raw = (raw.get("resolvedAt") or "").strip()
                 resolved_at = _parse_utc(resolved_raw) if resolved_raw else None
+                if resolved_at is not None and resolved_at < at:
+                    raise ValueError("resolvedAt anterior a at")
             except (AttributeError, TypeError, ValueError):
                 skipped_rows += 1
                 continue
@@ -922,7 +940,7 @@ def join_push_windows(alerts, rows):
     """One alerts row per Telegram message, inside the declared channel window."""
     joined = []
     for row in rows:
-        if sender_kind(row.get("sender")) != "bot":
+        if sender_kind(row.get("sender")) != "bot" or row.get("time") is None:
             continue
         classified = classify(row.get("text"))
         alert_keys, window = _push_match(classified)
@@ -973,9 +991,13 @@ def _inter_system(rows):
     window = timedelta(days=2)
     items = []
     for wud_row, wud_classified in wud:
+        if wud_row.get("time") is None:
+            continue
         wud_at = datetime.fromisoformat(wud_row["sent_at"])
         hits = []
         for security_row, security_classified in security:
+            if security_row.get("time") is None:
+                continue
             security_at = datetime.fromisoformat(security_row["sent_at"])
             if abs(security_at - wud_at) > window:
                 continue
@@ -1438,10 +1460,24 @@ def _decimal(value):
     return f"{value:.2f}".replace(".", ",")
 
 
-def build_footnotes(eras):
-    """Three notes: the denominator, the missing push column and the missing ack."""
+def build_footnotes(eras, push=None):
+    """Three notes: the denominator, the push column and the missing ack."""
     e1 = eras["E1"]
     e4 = eras["E4"]
+    measured_push = push is not None and push.get("status") == "measured"
+    push_body = (
+        (
+            "La columna de push se mide con el CSV de alerts: "
+            f"{push['rows']} filas y {push['skipped_rows']} omitidas; no se "
+            "infiere del volumen de Telegram."
+        )
+        if measured_push
+        else (
+            "La columna de push se publica como —: no hay CSV de la tabla "
+            "alerts, así que no se rellena con 0 ni se infiere del volumen "
+            "de Telegram."
+        )
+    )
     return [
         {
             "id": "denominator",
@@ -1459,11 +1495,7 @@ def build_footnotes(eras):
         {
             "id": "push_coverage",
             "title": "Cobertura de push",
-            "body": (
-                "La columna de push se publica como —: no hay CSV de la tabla "
-                "alerts, así que no se rellena con 0 ni se infiere del volumen "
-                "de Telegram."
-            ),
+            "body": push_body,
         },
         {
             "id": "ack_unavailable",
@@ -1557,7 +1589,9 @@ def _table(title, columns, rows):
 
 
 def _split_label(split):
-    return "; ".join(f"{outcome}→{bucket}" for outcome, bucket in split.items())
+    return "; ".join(
+        f"{outcome}→{split[outcome]}" for outcome in sorted(split)
+    )
 
 
 ASSUMPTIONS = (
@@ -1649,6 +1683,38 @@ def build_report_model(aggregate):
 
     telegram = recoveries["telegram"]
     hub_push = recoveries["hub_push"]
+    if hub_push["status"] == "measured":
+        hub_paragraph = (
+            f"El hub publica {hub_push['openings']} aperturas y "
+            f"{hub_push['recovery_messages']} recuperaciones "
+            f"(ratio {hub_push['recovery_ratio']}) desde alerts.resolvedAt."
+        )
+        hub_row = [
+            "hub_push",
+            hub_push["openings"],
+            None,
+            hub_push["recovery_messages"],
+            hub_push["recovery_ratio"],
+            hub_push["status"],
+        ]
+    else:
+        hub_paragraph = (
+            "El hub queda unavailable: sin CSV de alerts no hay cifra de push "
+            "y se publica —, nunca 0."
+        )
+        hub_row = ["hub_push", None, None, None, None, hub_push["status"]]
+    if push["status"] == "measured":
+        push_source = "state"
+        push_paragraph = (
+            f"La tabla alerts está disponible: push queda {push['status']} con "
+            f"{push['rows']} filas y {push['skipped_rows']} omitidas."
+        )
+    else:
+        push_source = "no medido"
+        push_paragraph = (
+            f"La tabla alerts no está disponible: push queda {push['status']}. "
+            "La columna se publica como — y no se infiere del volumen de Telegram."
+        )
     inter_system = duplicates["inter_system"]
     inter_channel = duplicates["inter_channel"]
     ack = target["ack"]
@@ -1860,10 +1926,7 @@ def build_report_model(aggregate):
                     f"{telegram['recovery_messages']} recuperaciones "
                     f"(ratio {telegram['recovery_ratio']})."
                 ),
-                (
-                    f"El hub queda {hub_push['status']}: sin CSV de alerts no hay "
-                    "cifra de push y se publica —, nunca 0."
-                ),
+                hub_paragraph,
             ],
             tables=[
                 _table(
@@ -1878,14 +1941,7 @@ def build_report_model(aggregate):
                             telegram["recovery_ratio"],
                             "measured",
                         ],
-                        [
-                            "hub_push",
-                            None,
-                            None,
-                            None,
-                            None,
-                            hub_push["status"],
-                        ],
+                        hub_row,
                     ],
                 )
             ],
@@ -1972,13 +2028,8 @@ def build_report_model(aggregate):
         _section(
             "push",
             "Columna de push",
-            "no medido",
-            paragraphs=[
-                (
-                    f"La tabla alerts no está disponible: push queda {push['status']}. "
-                    "La columna se publica como — y no se infiere del volumen de Telegram."
-                )
-            ],
+            push_source,
+            paragraphs=[push_paragraph],
             tables=[
                 _table(
                     "Cobertura de push",
@@ -2201,11 +2252,12 @@ def render_report(model):
 
 
 def check_report(json_path, md_path):
-    """True when the Markdown on disk is exactly what the stored model renders."""
+    """True when the JSON aggregate, the stored model and the Markdown all agree."""
     data = json.loads(Path(json_path).read_text(encoding="utf-8"))
-    expected = render_report(data["report"])
+    model = build_report_model(data)
+    expected = render_report(model)
     actual = Path(md_path).read_text(encoding="utf-8")
-    return expected == actual
+    return data.get("report") == model and expected == actual
 
 
 def check_repro(export_path):
@@ -2316,7 +2368,7 @@ def aggregate(rows, source, alerts=None, state_root=None):
     document["shutdown_order"] = build_shutdown_order()
     document["success_target"] = build_success_target(eras)
     document["trend"] = build_trend_table(rows)
-    document["footnotes"] = build_footnotes(eras)
+    document["footnotes"] = build_footnotes(eras, document["push"])
     document["report"] = build_report_model(document)
     return document
 

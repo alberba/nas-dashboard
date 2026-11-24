@@ -439,7 +439,7 @@
         "by_family": {
           "security-digest": 1
         },
-        "can_emit_recovery": true,
+        "can_emit_recovery": false,
         "channel": "telegram",
         "evidence": "stacks/monitoring/security-monitor/main.py:168-206",
         "families": [
@@ -470,7 +470,7 @@
           "release-stop": 5,
           "release-upgrade": 1
         },
-        "can_emit_recovery": true,
+        "can_emit_recovery": false,
         "channel": "telegram",
         "evidence": "scripts/upgrade.sh:30,39-51",
         "families": [
@@ -486,7 +486,7 @@
         "by_family": {
           "release-apply": 4
         },
-        "can_emit_recovery": true,
+        "can_emit_recovery": false,
         "channel": "telegram",
         "evidence": "scripts/merged_updates.py:148-163,343,347",
         "families": [
@@ -517,7 +517,7 @@
           "issue-incident": 3,
           "issue-test": 2
         },
-        "can_emit_recovery": true,
+        "can_emit_recovery": false,
         "channel": "telegram",
         "evidence": "stacks/extras/issue-automator/main.py:134-150,405-411",
         "families": [
@@ -525,7 +525,7 @@
           "issue-test"
         ],
         "id": "issue-automator",
-        "in_cutover": true,
+        "in_cutover": false,
         "job": "reporta incidencias de Seerr y responde a sus pruebas",
         "messages": 5
       },
@@ -540,7 +540,7 @@
           "smart"
         ],
         "id": "unknown-smart",
-        "in_cutover": true,
+        "in_cutover": false,
         "job": "alerta SMART del host sin código en ninguno de los dos repos",
         "messages": 2
       },
@@ -551,7 +551,7 @@
         "evidence": "src/lib/push.ts:5-33",
         "families": [],
         "id": "hub",
-        "in_cutover": true,
+        "in_cutover": false,
         "job": "notifica por Web Push, no por Telegram",
         "messages": 0
       }
@@ -1772,7 +1772,7 @@
                 "security-update",
                 "telegram",
                 "digest",
-                "updated→digest; manual→immediate; failed→immediate"
+                "failed→immediate; manual→immediate; updated→digest"
               ],
               [
                 "release-apply",

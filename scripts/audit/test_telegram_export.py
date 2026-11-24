@@ -1,5 +1,6 @@
 import json
 import os
+import stat
 import tempfile
 import unittest
 from collections import Counter
@@ -117,6 +118,58 @@ class TelegramExportTest(unittest.TestCase):
         self.assertEqual(len(lines), len(rows))
         self.assertEqual(json.loads(lines[0])["id"], "message1")
         self.assertEqual(Counter(json.loads(line)["sender"] for line in lines)[OPERATOR_NAME], 1)
+
+    def test_a_message_without_a_text_div_is_kept(self):
+        markup = """
+        <div class="message default clearfix" id="message1">
+          <div class="from_name">Bot</div>
+          <div class="pull_right date details" title="1 mayo 2026, 10:00:00">10:00</div>
+          <div class="text">hola</div>
+        </div>
+        <div class="message default clearfix joined" id="message2">
+          <div class="pull_right date details" title="1 mayo 2026, 10:01:00">10:01</div>
+        </div>
+        <div class="message default clearfix" id="message3">
+          <div class="from_name">Bot</div>
+          <div class="pull_right date details" title="1 mayo 2026, 10:02:00">10:02</div>
+          <div class="text">adios</div>
+        </div>
+        """
+        parser = telegram_export.TelegramExport()
+        parser.feed(markup)
+        parser.close()
+
+        self.assertEqual([row["id"] for row in parser.rows], ["message1", "message2", "message3"])
+        self.assertEqual(parser.rows[1]["text"], "")
+        self.assertEqual(parser.rows[1]["sender"], "Bot")
+
+    def test_a_non_joined_message_without_a_sender_raises(self):
+        markup = """
+        <div class="message default clearfix" id="message1">
+          <div class="from_name">Bot</div>
+          <div class="pull_right date details" title="1 mayo 2026, 10:00:00">10:00</div>
+          <div class="text">hola</div>
+        </div>
+        <div class="message default clearfix" id="message2">
+          <div class="pull_right date details" title="1 mayo 2026, 10:01:00">10:01</div>
+          <div class="text">sin remitente</div>
+        </div>
+        """
+        parser = telegram_export.TelegramExport()
+
+        with self.assertRaises(ValueError):
+            parser.feed(markup)
+
+    def test_the_private_ndjson_is_owner_only(self):
+        rows = sample_rows()
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "private" / "messages.ndjson"
+
+            telegram_export.write_ndjson(rows, target)
+
+            if os.name == "posix":
+                self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
+                self.assertEqual(stat.S_IMODE(target.parent.stat().st_mode), 0o700)
 
     @unittest.skipUnless(real_export_path().exists(), "export real no disponible")
     def test_the_real_export_matches_the_pinned_counts(self):

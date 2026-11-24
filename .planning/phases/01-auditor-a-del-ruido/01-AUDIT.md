@@ -265,7 +265,7 @@ WUD queda en silent y la copia en immediate. El éxito de security-update y de r
 | reboot-pending | hub | digest | — |
 | release-retained | hub | digest | — |
 | security-digest | telegram | digest | — |
-| security-update | telegram | digest | updated→digest; manual→immediate; failed→immediate |
+| security-update | telegram | digest | failed→immediate; manual→immediate; updated→digest |
 | release-apply | telegram | digest | applied→digest; failed→immediate |
 | release-upgrade | telegram | digest | — |
 | container:<name> | hub | silent | — |
