@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 01
 current_phase_name: Auditoría del ruido
 status: executing
-stopped_at: Phase 1 planning verified
-last_updated: "2026-11-24T18:13:25.681Z"
+stopped_at: Completed 01-01-PLAN.md; ready for 01-02
+last_updated: "2026-11-24T18:54:40.283Z"
 last_activity: 2026-11-24
-last_activity_desc: Fase 1 planificada y verificada
-state_head: 6c4253dd89bb7c22f022f70a21fbf7ae6a6b1d19
+last_activity_desc: Phase 01 execution started
+state_head: 1657bbd2e2e997733107af967c148bbb00465bb4
 progress:
   total_phases: 8
   completed_phases: 0
   total_plans: 3
-  completed_plans: 0
+  completed_plans: 1
   percent: 0
 ---
 
@@ -23,14 +23,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-24)
 
 **Core value:** Saber en segundos qué está pasando en los dos servidores y poder actuar sobre ellos sin abrir una consola.
-**Current focus:** Fase 1 — Auditoría del ruido
+**Current focus:** Phase 01 — Auditoría del ruido
 
 ## Current Position
 
-Phase: 01 (Auditoría del ruido) — READY TO EXECUTE
-Plan: 0 of 3 in current phase
+Phase: 01 (Auditoría del ruido) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
-Last activity: 2026-11-24 — Fase 1 planificada y verificada
+Last activity: 2026-11-24 — Phase 01 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -52,6 +52,11 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: —
 
 *Updated after each plan completion*
+**Per-Plan Metrics:**
+
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| Phase 01 P01 | 9 | 3 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -65,6 +70,7 @@ Recent decisions affecting current work:
 - [Fases 2–4]: Un solo canal primario por incidencia; push es fallback de `critical` y primario de `warning` solo con `pushWarnings=true`.
 - [Fases 6–7]: Las acciones de host desde Telegram van por handoff al hub con sesión y passkey; `TELEGRAM_DIRECT_ACTIONS=0`.
 - [Fase 2]: Renombrar `alerts` a `incidents` con `fingerprint`, timeline y `seq`, con backfill y migración inversa.
+- [Phase 01]: El rate se mide sobre días inclusivos declarados (E1 8/156, E4 15/12), no sobre días con mensajes — CONTEXT publicó 0,04 y 1,15 con denominador no declarado; el informe debe declarar el denominador
 
 ### Pending Todos
 
@@ -84,6 +90,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-24T16:32:22.741Z
-Stopped at: Phase 1 planning verified
-Resume file: .planning/phases/01-auditor-a-del-ruido/01-01-PLAN.md
+Last session: 2026-11-24T18:54:40.261Z
+Stopped at: Completed 01-01-PLAN.md; ready for 01-02
+Resume file: None
