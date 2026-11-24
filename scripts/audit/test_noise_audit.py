@@ -1002,6 +1002,165 @@ class EvidenceTest(unittest.TestCase):
         self.assertEqual(len(aggregate["evidence_sources"]), 9)
 
 
+def bucket_of(policy, key):
+    for bucket in ("immediate", "digest", "silent"):
+        for entry in policy["buckets"][bucket]:
+            if entry["key"] == key:
+                return bucket, entry
+    raise AssertionError(f"{key} no está en ningún bucket")
+
+
+class PolicyMapTest(unittest.TestCase):
+    def test_the_union_covers_the_22_keys_exactly_once(self):
+        policy = noise_audit.build_policy_map()
+
+        keys = [
+            entry["key"]
+            for bucket in ("immediate", "digest", "silent")
+            for entry in policy["buckets"][bucket]
+        ]
+        catalog = {entry["key"] for entry in noise_audit.HUB_KEYS} | {
+            entry["family"] for entry in noise_audit.TELEGRAM_FAMILIES
+        }
+
+        self.assertEqual(policy["total_keys"], 22)
+        self.assertEqual(len(keys), 22)
+        self.assertEqual(len(set(keys)), 22)
+        self.assertEqual(set(keys), catalog)
+        self.assertEqual(policy["counts"], {"immediate": 9, "digest": 9, "silent": 4})
+
+    def test_wud_is_silent_and_backup_failures_are_immediate(self):
+        policy = noise_audit.build_policy_map()
+
+        self.assertEqual(bucket_of(policy, "wud")[0], "silent")
+        self.assertEqual(bucket_of(policy, "backup")[0], "immediate")
+        self.assertEqual(bucket_of(policy, "backup-failed")[0], "immediate")
+
+    def test_security_update_splits_success_from_manual_and_failed(self):
+        policy = noise_audit.build_policy_map()
+
+        bucket, entry = bucket_of(policy, "security-update")
+
+        self.assertEqual(bucket, "digest")
+        self.assertEqual(
+            entry["split_by_outcome"],
+            {"updated": "digest", "manual": "immediate", "failed": "immediate"},
+        )
+
+    def test_release_apply_splits_applied_from_failed(self):
+        policy = noise_audit.build_policy_map()
+
+        bucket, entry = bucket_of(policy, "release-apply")
+
+        self.assertEqual(bucket, "digest")
+        self.assertEqual(
+            entry["split_by_outcome"],
+            {"applied": "digest", "failed": "immediate"},
+        )
+
+    def test_the_hub_container_key_is_silent_and_grouped_in_phase_three(self):
+        policy = noise_audit.build_policy_map()
+
+        bucket, entry = bucket_of(policy, "container:<name>")
+
+        self.assertEqual(bucket, "silent")
+        self.assertEqual(entry["grouped_in"], "phase 3")
+
+    def test_each_entry_declares_its_source_and_rationale(self):
+        policy = noise_audit.build_policy_map()
+
+        for bucket in ("immediate", "digest", "silent"):
+            for entry in policy["buckets"][bucket]:
+                self.assertTrue(entry["source"], entry["key"])
+                self.assertTrue(entry["rationale"], entry["key"])
+
+    def test_the_aggregate_publishes_the_policy_map(self):
+        aggregate = noise_audit.aggregate([row()], source_metadata())
+
+        self.assertEqual(aggregate["policy"]["total_keys"], 22)
+        self.assertEqual(
+            aggregate["policy"]["counts"],
+            {"immediate": 9, "digest": 9, "silent": 4},
+        )
+
+
+class SuccessTargetTest(unittest.TestCase):
+    def test_the_target_rests_on_the_inclusive_e4_baseline(self):
+        eras = noise_audit.build_eras(era_shape_rows())
+
+        target = noise_audit.build_success_target(eras)
+
+        self.assertEqual(target["baseline_era"], "E4")
+        self.assertEqual(target["baseline_inclusive_days"], 12)
+        self.assertEqual(target["baseline_messages_per_day"], 1.25)
+        self.assertEqual(target["window_days"], 14)
+        self.assertGreater(target["proactive_messages_per_day"], 0)
+        self.assertLessEqual(
+            target["proactive_messages_per_day"],
+            target["baseline_messages_per_day"],
+        )
+
+    def test_the_ack_block_defines_median_p90_and_publishes_no_value(self):
+        target = noise_audit.build_success_target(
+            noise_audit.build_eras(era_shape_rows())
+        )
+        ack = target["ack"]
+
+        self.assertEqual(ack["metric"], "median(sentAt -> ackAt)")
+        self.assertEqual(ack["guard"], "p90")
+        self.assertTrue(ack["per_severity"])
+        self.assertEqual(ack["immediate_median_target_minutes"], 15)
+        self.assertEqual(ack["p90_guard_minutes"], 60)
+        self.assertIsNone(ack["current"])
+        self.assertEqual(ack["status"], "not_measurable")
+
+    def test_the_aggregate_publishes_the_success_target(self):
+        aggregate = noise_audit.aggregate(era_shape_rows(), source_metadata())
+
+        self.assertIsNone(aggregate["success_target"]["ack"]["current"])
+
+
+class ReportModelTest(unittest.TestCase):
+    def test_the_model_publishes_the_policy_and_target_sections(self):
+        aggregate = noise_audit.aggregate(era_shape_rows(), source_metadata())
+
+        model = noise_audit.build_report_model(aggregate)
+
+        ids = [section["id"] for section in model["sections"]]
+        self.assertIn("politica", ids)
+        self.assertIn("objetivo", ids)
+        self.assertEqual(model["source_hash"], aggregate["source"]["sha256"])
+
+    def test_the_render_is_not_empty_and_keeps_the_policy_section(self):
+        aggregate = noise_audit.aggregate(era_shape_rows(), source_metadata())
+
+        rendered = noise_audit.render_report(
+            noise_audit.build_report_model(aggregate)
+        )
+
+        self.assertIsInstance(rendered, str)
+        self.assertTrue(rendered.strip())
+        self.assertIn("politica", rendered)
+        self.assertIn("objetivo", rendered)
+
+    @unittest.skipUnless(real_export_path().exists(), "export real no disponible")
+    def test_the_real_export_fixes_the_expected_policy_and_target(self):
+        aggregate = noise_audit.aggregate(
+            telegram_export.parse_export(real_export_path()), source_metadata()
+        )
+
+        self.assertEqual(
+            aggregate["policy"]["counts"],
+            {"immediate": 9, "digest": 9, "silent": 4},
+        )
+        self.assertEqual(
+            aggregate["success_target"]["baseline_messages_per_day"], 1.25
+        )
+        self.assertLessEqual(
+            aggregate["success_target"]["proactive_messages_per_day"], 1.25
+        )
+
+
 def era_shape_rows():
     shape = {"E1": (8, "2026-05-01T12:00:00"), "E2": (105, "2026-10-01T12:00:00"),
              "E3": (20, "2026-11-05T12:00:00"), "E4": (15, "2026-11-20T12:00:00")}
