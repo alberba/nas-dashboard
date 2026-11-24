@@ -17,18 +17,18 @@ La agrupación por caída de host, el envío del resumen diario, los callbacks d
 
 ### Envío sin confirmación
 
-- **D-01.** Si Telegram pudo aceptar el envío inicial y el worker perdió la confirmación, registrar un resultado de entrega incierto y mostrar el motivo en el hub. Ese intento no se reenvía automáticamente y tampoco activa el push de respaldo, incluso para críticas. Una entrega incierta no equivale a un fallo definitivo.
-- **D-02.** Se mantiene el push de respaldo para incidencias críticas cuando el fallo de Telegram es definitivo y está confirmado. Los rechazos 429 se reintentan según `retry_after`. Los 400, 403 y 404 se registran como fallos permanentes y visibles.
+- **D-01:** Si Telegram pudo aceptar el envío inicial y el worker perdió la confirmación, registrar un resultado de entrega incierto y mostrar el motivo en el hub. Ese intento no se reenvía automáticamente y tampoco activa el push de respaldo, incluso para críticas. Una entrega incierta no equivale a un fallo definitivo.
+- **D-02:** Se mantiene el push de respaldo para incidencias críticas cuando el fallo de Telegram es definitivo y está confirmado. Los rechazos 429 se reintentan según `retry_after`. Los 400, 403 y 404 se registran como fallos permanentes y visibles.
 
 ### Incidencias abiertas al migrar
 
-- **D-03.** Conservar los avisos existentes en el hub al migrar de `alerts` a `incidents`. El backfill y el primer arranque no generan un nuevo aviso por las incidencias que ya estaban abiertas, aunque se confirme que sigan críticas. Las incidencias nuevas siguen la política de la fase 1.
+- **D-03:** Conservar los avisos existentes en el hub al migrar de `alerts` a `incidents`. El backfill y el primer arranque no generan un nuevo aviso por las incidencias que ya estaban abiertas, aunque se confirme que sigan críticas. Las incidencias nuevas siguen la política de la fase 1.
 
 ### Escalada a crítica
 
-- **D-04.** Recalcular la severidad en cada evaluación válida y reflejar la transición en el hub. Si la incidencia esperaba el resumen y todavía no se había enviado, la escalada a crítica activa su primer aviso inmediato según la política de críticas.
-- **D-05.** Si ya llegó por push, actualizar la notificación existente en la bandeja con la misma etiqueta y sin volver a interrumpir. La escalada no abre un envío por Telegram. El plan debe comprobar cómo evitar que la actualización vuelva a mostrar un aviso descartado.
-- **D-06.** Si ya hay mensaje en Telegram, editar ese mismo mensaje al cambiar la severidad. Cuando una incidencia se resuelve, usar el aviso original o su registro para el futuro resumen, sin emitir un nuevo mensaje de recuperación.
+- **D-04:** Recalcular la severidad en cada evaluación válida y reflejar la transición en el hub. Si la incidencia esperaba el resumen y todavía no se había enviado, la escalada a crítica activa su primer aviso inmediato según la política de críticas.
+- **D-05:** Si ya llegó por push, actualizar la notificación existente en la bandeja con la misma etiqueta y sin volver a interrumpir. La escalada no abre un envío por Telegram. El plan debe comprobar cómo evitar que la actualización vuelva a mostrar un aviso descartado.
+- **D-06:** Si ya hay mensaje en Telegram, editar ese mismo mensaje al cambiar la severidad. Cuando una incidencia se resuelve, usar el aviso original o su registro para el futuro resumen, sin emitir un nuevo mensaje de recuperación.
 
 ### Decisiones delegadas a la planificación
 
