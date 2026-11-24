@@ -11,7 +11,7 @@ import argparse
 import json
 import re
 from collections import Counter
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import telegram_export
@@ -260,6 +260,82 @@ ERA_WINDOWS = {
     "E4": {"from": "2026-11-13", "to": "2026-11-24"},
 }
 
+OPENING_FAMILIES = (
+    "wud",
+    "release-stop",
+    "backup",
+    "issue-incident",
+    "smart",
+)
+INFORMATIONAL_FAMILIES = (
+    "security-digest",
+    "release-apply",
+    "release-upgrade",
+    "issue-test",
+)
+SECURITY_UPDATE_OPENING_OUTCOMES = ("manual", "failed")
+RECOVERY_TEMPLATE_MARKER = "— recuperación completada:"
+
+# Recovery capability is a property of the message family, not of a count: the
+# Telegram export cannot prove a recovery that the emitter does not publish.
+RECOVERY_CAPABLE = {
+    "wud": {
+        "can_emit_recovery": False,
+        "channel": "telegram",
+        "reason": "WUD no anuncia el cese del tag pendiente",
+    },
+    "security-digest": {
+        "can_emit_recovery": False,
+        "channel": "telegram",
+        "reason": "El digest no declara recuperaciones",
+    },
+    "security-update": {
+        "can_emit_recovery": True,
+        "channel": "telegram",
+        "recovery_template": "— recuperación completada: <service>",
+    },
+    "release-stop": {
+        "can_emit_recovery": False,
+        "channel": "telegram",
+        "reason": "upgrade.sh no anuncia la reanudación",
+    },
+    "release-apply": {
+        "can_emit_recovery": False,
+        "channel": "telegram",
+        "reason": "merged_updates.py no emite un mensaje de cierre",
+    },
+    "release-upgrade": {
+        "can_emit_recovery": False,
+        "channel": "telegram",
+        "reason": "El éxito del upgrade no cierra un aviso previo",
+    },
+    "backup": {
+        "can_emit_recovery": False,
+        "channel": "telegram",
+        "reason": "La copia recuperada no se anuncia por Telegram",
+    },
+    "issue-incident": {
+        "can_emit_recovery": False,
+        "channel": "telegram",
+        "reason": "issue-automator no anuncia el cierre de la incidencia",
+    },
+    "issue-test": {
+        "can_emit_recovery": False,
+        "channel": "telegram",
+        "reason": "Una prueba manual no abre ni cierra un estado",
+    },
+    "smart": {
+        "can_emit_recovery": False,
+        "channel": "telegram",
+        "reason": "El emisor SMART no está localizado y no tiene plantilla de recuperación",
+    },
+    "hub": {
+        "can_emit_recovery": True,
+        "channel": "push",
+        "recovery_template": "Recuperado: <title>",
+    },
+}
+
 # Read-only evidence: `path` is relative to the appdata root passed as --state-root.
 EVIDENCE_SOURCES = (
     {
@@ -446,6 +522,143 @@ def build_eras(rows):
     return eras
 
 
+def _is_recovery(value, classified):
+    """The updater's recovery template is the only one that can appear in Telegram."""
+    return (
+        classified["family"] == "security-update"
+        and RECOVERY_TEMPLATE_MARKER in value
+    )
+
+
+def build_openings(rows):
+    """Split the bot messages into openings, informational and recoveries.
+
+    A message counts once, even when the updater lists several services in it.
+    """
+    counts = {"openings": 0, "informational": 0, "recovery_messages": 0}
+    by_family = {}
+    for row in rows:
+        if sender_kind(row.get("sender")) != "bot":
+            continue
+        value = row.get("text") or ""
+        classified = classify(value)
+        family_name = classified["family"]
+        entry = by_family.setdefault(
+            family_name,
+            {
+                "messages": 0,
+                "openings": 0,
+                "informational": 0,
+                "recovery_messages": 0,
+            },
+        )
+        entry["messages"] += 1
+        if _is_recovery(value, classified):
+            bucket = "recovery_messages"
+        elif family_name in OPENING_FAMILIES:
+            bucket = "openings"
+        elif family_name == "release-apply":
+            bucket = (
+                "openings"
+                if classified.get("outcome") == "failed"
+                else "informational"
+            )
+        elif family_name == "security-update":
+            outcomes = {
+                update["outcome"] for update in classified.get("updates", [])
+            }
+            bucket = (
+                "openings"
+                if outcomes & set(SECURITY_UPDATE_OPENING_OUTCOMES)
+                else "informational"
+            )
+        else:
+            # Known informational families, plus an unmatched bot message: it
+            # never opens a state and it never proves a recovery.
+            bucket = "informational"
+        counts[bucket] += 1
+        entry[bucket] += 1
+    return {**counts, "by_family": by_family}
+
+
+def _alert_rows(alerts):
+    if alerts is None:
+        return None
+    if isinstance(alerts, dict):
+        return alerts.get("rows", [])
+    return list(alerts)
+
+
+def _iso_utc(value):
+    if value is None:
+        return None
+    moment = value
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _hub_push(alerts):
+    rows = _alert_rows(alerts)
+    if rows is None:
+        return {
+            "status": "unavailable",
+            "source": "alerts.resolvedAt",
+            "openings": None,
+            "recovery_messages": None,
+            "recovery_ratio": None,
+            "push_decision_at": None,
+            "push_resolved_at": None,
+            "push_latency_s": None,
+        }
+    resolved = [entry for entry in rows if entry.get("resolvedAt") is not None]
+    first = min(resolved, key=lambda entry: entry["at"]) if resolved else None
+    return {
+        "status": "measured",
+        "source": "alerts.resolvedAt",
+        "openings": len(rows),
+        "recovery_messages": len(resolved),
+        "recovery_ratio": round(len(resolved) / len(rows), 4) if rows else 0.0,
+        "push_decision_at": _iso_utc(first["at"]) if first else None,
+        "push_resolved_at": _iso_utc(first["resolvedAt"]) if first else None,
+        "push_latency_s": (
+            round((first["resolvedAt"] - first["at"]).total_seconds(), 2)
+            if first
+            else None
+        ),
+    }
+
+
+def build_recoveries(rows, alerts=None):
+    """Publish each channel separately; never add Telegram and hub into one figure."""
+    split = build_openings(rows)
+    openings = split["openings"]
+    recovery_messages = split["recovery_messages"]
+    capabilities = {}
+    for family_name in [name for name, _matcher in SIGNATURES] + ["hub"]:
+        capability = RECOVERY_CAPABLE[family_name]
+        capabilities[family_name] = {
+            "can_emit_recovery": capability["can_emit_recovery"],
+            "channel": capability["channel"],
+            "recovery_template": capability.get("recovery_template"),
+            "reason": capability.get("reason"),
+        }
+    return {
+        "telegram": {
+            "messages": sum(entry["messages"] for entry in split["by_family"].values()),
+            "openings": openings,
+            "informational": split["informational"],
+            "recovery_messages": recovery_messages,
+            "recovery_ratio": (
+                round(recovery_messages / openings, 4) if openings else 0.0
+            ),
+            "by_family": split["by_family"],
+            "by_family_capability": capabilities,
+        },
+        "hub_push": _hub_push(alerts),
+    }
+
+
 def build_evidence_sources(state_root=None):
     """Describe the nine evidence sources; probe them only when a root is given."""
     sources = []
@@ -511,7 +724,7 @@ def build_dataset_summary(rows, source):
 
 
 def aggregate(rows, source, alerts=None, state_root=None):
-    """Build the aggregate document. ``alerts`` is reserved for the push adapter."""
+    """Build the aggregate document; ``alerts`` is the optional push adapter input."""
     return {
         "schema_version": SCHEMA_VERSION,
         "source": {field: source.get(field) for field in PUBLISHED_SOURCE_FIELDS},
@@ -519,6 +732,7 @@ def aggregate(rows, source, alerts=None, state_root=None):
         "sender_split": build_sender_split(rows),
         "inventory": build_inventory(rows),
         "eras": build_eras(rows),
+        "recoveries": build_recoveries(rows, alerts),
         "evidence_sources": build_evidence_sources(state_root),
     }
 

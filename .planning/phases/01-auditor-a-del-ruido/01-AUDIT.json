@@ -299,6 +299,155 @@
     "operator": 2,
     "unknown": []
   },
+  "recoveries": {
+    "hub_push": {
+      "openings": null,
+      "push_decision_at": null,
+      "push_latency_s": null,
+      "push_resolved_at": null,
+      "recovery_messages": null,
+      "recovery_ratio": null,
+      "source": "alerts.resolvedAt",
+      "status": "unavailable"
+    },
+    "telegram": {
+      "by_family": {
+        "backup": {
+          "informational": 0,
+          "messages": 2,
+          "openings": 2,
+          "recovery_messages": 0
+        },
+        "issue-incident": {
+          "informational": 0,
+          "messages": 3,
+          "openings": 3,
+          "recovery_messages": 0
+        },
+        "issue-test": {
+          "informational": 2,
+          "messages": 2,
+          "openings": 0,
+          "recovery_messages": 0
+        },
+        "release-apply": {
+          "informational": 4,
+          "messages": 4,
+          "openings": 0,
+          "recovery_messages": 0
+        },
+        "release-stop": {
+          "informational": 0,
+          "messages": 5,
+          "openings": 5,
+          "recovery_messages": 0
+        },
+        "release-upgrade": {
+          "informational": 1,
+          "messages": 1,
+          "openings": 0,
+          "recovery_messages": 0
+        },
+        "security-digest": {
+          "informational": 1,
+          "messages": 1,
+          "openings": 0,
+          "recovery_messages": 0
+        },
+        "security-update": {
+          "informational": 18,
+          "messages": 31,
+          "openings": 13,
+          "recovery_messages": 0
+        },
+        "smart": {
+          "informational": 0,
+          "messages": 2,
+          "openings": 2,
+          "recovery_messages": 0
+        },
+        "wud": {
+          "informational": 0,
+          "messages": 95,
+          "openings": 95,
+          "recovery_messages": 0
+        }
+      },
+      "by_family_capability": {
+        "backup": {
+          "can_emit_recovery": false,
+          "channel": "telegram",
+          "reason": "La copia recuperada no se anuncia por Telegram",
+          "recovery_template": null
+        },
+        "hub": {
+          "can_emit_recovery": true,
+          "channel": "push",
+          "reason": null,
+          "recovery_template": "Recuperado: <title>"
+        },
+        "issue-incident": {
+          "can_emit_recovery": false,
+          "channel": "telegram",
+          "reason": "issue-automator no anuncia el cierre de la incidencia",
+          "recovery_template": null
+        },
+        "issue-test": {
+          "can_emit_recovery": false,
+          "channel": "telegram",
+          "reason": "Una prueba manual no abre ni cierra un estado",
+          "recovery_template": null
+        },
+        "release-apply": {
+          "can_emit_recovery": false,
+          "channel": "telegram",
+          "reason": "merged_updates.py no emite un mensaje de cierre",
+          "recovery_template": null
+        },
+        "release-stop": {
+          "can_emit_recovery": false,
+          "channel": "telegram",
+          "reason": "upgrade.sh no anuncia la reanudación",
+          "recovery_template": null
+        },
+        "release-upgrade": {
+          "can_emit_recovery": false,
+          "channel": "telegram",
+          "reason": "El éxito del upgrade no cierra un aviso previo",
+          "recovery_template": null
+        },
+        "security-digest": {
+          "can_emit_recovery": false,
+          "channel": "telegram",
+          "reason": "El digest no declara recuperaciones",
+          "recovery_template": null
+        },
+        "security-update": {
+          "can_emit_recovery": true,
+          "channel": "telegram",
+          "reason": null,
+          "recovery_template": "— recuperación completada: <service>"
+        },
+        "smart": {
+          "can_emit_recovery": false,
+          "channel": "telegram",
+          "reason": "El emisor SMART no está localizado y no tiene plantilla de recuperación",
+          "recovery_template": null
+        },
+        "wud": {
+          "can_emit_recovery": false,
+          "channel": "telegram",
+          "reason": "WUD no anuncia el cese del tag pendiente",
+          "recovery_template": null
+        }
+      },
+      "informational": 26,
+      "messages": 146,
+      "openings": 120,
+      "recovery_messages": 0,
+      "recovery_ratio": 0.0
+    }
+  },
   "schema_version": 1,
   "sender_split": {
     "bot": 146,
