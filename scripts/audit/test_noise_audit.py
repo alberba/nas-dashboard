@@ -768,7 +768,7 @@ class WindowTest(unittest.TestCase):
     def test_era_events_count_scan_passes_plus_non_wud_bot_messages(self):
         rows = era_shape_rows()
         rows.extend(
-            row(id=f"wud{index}", sent_at="2026-10-01T10:0{index}:00",
+            row(id=f"wud{index}", sent_at=f"2026-10-01T10:0{index}:00",
                 text=wud_text("demo", f"1.0.{index}"))
             for index in range(3)
         )

@@ -141,7 +141,7 @@
         "issue-test": 2,
         "smart": 2
       },
-      "events": 8,
+      "events": 6,
       "from": "2026-04-25",
       "inclusive_days": 156,
       "messages": 8,
@@ -157,7 +157,7 @@
         "security-update": 15,
         "wud": 86
       },
-      "events": 105,
+      "events": 62,
       "from": "2026-09-28",
       "inclusive_days": 36,
       "messages": 105,
@@ -173,7 +173,7 @@
         "security-update": 9,
         "wud": 4
       },
-      "events": 20,
+      "events": 19,
       "from": "2026-11-03",
       "inclusive_days": 10,
       "messages": 20,
@@ -266,6 +266,141 @@
       "status": "unavailable"
     }
   ],
+  "histogram": {
+    "buckets": {
+      "0": 17,
+      "1": 0,
+      "10": 1,
+      "11": 1,
+      "12": 8,
+      "13": 2,
+      "14": 0,
+      "15": 5,
+      "16": 3,
+      "17": 2,
+      "18": 29,
+      "19": 4,
+      "2": 0,
+      "20": 1,
+      "21": 8,
+      "22": 19,
+      "23": 2,
+      "3": 0,
+      "4": 7,
+      "5": 1,
+      "6": 38,
+      "7": 0,
+      "8": 0,
+      "9": 0
+    },
+    "by_era": {
+      "E1": {
+        "0": 0,
+        "1": 0,
+        "10": 0,
+        "11": 0,
+        "12": 0,
+        "13": 0,
+        "14": 0,
+        "15": 0,
+        "16": 0,
+        "17": 0,
+        "18": 6,
+        "19": 1,
+        "2": 0,
+        "20": 0,
+        "21": 1,
+        "22": 0,
+        "23": 0,
+        "3": 0,
+        "4": 0,
+        "5": 0,
+        "6": 0,
+        "7": 0,
+        "8": 0,
+        "9": 0
+      },
+      "E2": {
+        "0": 12,
+        "1": 0,
+        "10": 1,
+        "11": 1,
+        "12": 7,
+        "13": 2,
+        "14": 0,
+        "15": 5,
+        "16": 3,
+        "17": 0,
+        "18": 21,
+        "19": 3,
+        "2": 0,
+        "20": 1,
+        "21": 6,
+        "22": 18,
+        "23": 2,
+        "3": 0,
+        "4": 1,
+        "5": 0,
+        "6": 22,
+        "7": 0,
+        "8": 0,
+        "9": 0
+      },
+      "E3": {
+        "0": 2,
+        "1": 0,
+        "10": 0,
+        "11": 0,
+        "12": 1,
+        "13": 0,
+        "14": 0,
+        "15": 0,
+        "16": 0,
+        "17": 0,
+        "18": 1,
+        "19": 0,
+        "2": 0,
+        "20": 0,
+        "21": 1,
+        "22": 1,
+        "23": 0,
+        "3": 0,
+        "4": 6,
+        "5": 0,
+        "6": 8,
+        "7": 0,
+        "8": 0,
+        "9": 0
+      },
+      "E4": {
+        "0": 3,
+        "1": 0,
+        "10": 0,
+        "11": 0,
+        "12": 0,
+        "13": 0,
+        "14": 0,
+        "15": 0,
+        "16": 0,
+        "17": 2,
+        "18": 1,
+        "19": 0,
+        "2": 0,
+        "20": 0,
+        "21": 0,
+        "22": 0,
+        "23": 0,
+        "3": 0,
+        "4": 0,
+        "5": 1,
+        "6": 8,
+        "7": 0,
+        "8": 0,
+        "9": 0
+      }
+    },
+    "missing_time": 0
+  },
   "inventory": {
     "emitters": [
       {
@@ -576,6 +711,78 @@
       "recovery_ratio": 0.0
     }
   },
+  "repetitions": {
+    "extra_messages": 14,
+    "groups": [
+      {
+        "container": "qbittorrent",
+        "extra_messages": 3,
+        "messages": 4,
+        "target_tag": "5.2.3_v2.0.15-ls478"
+      },
+      {
+        "container": "qbittorrent",
+        "extra_messages": 2,
+        "messages": 3,
+        "target_tag": "5.2.4_v2.0.15-ls480"
+      },
+      {
+        "container": "radarr",
+        "extra_messages": 1,
+        "messages": 2,
+        "target_tag": "6.4.4.10685-ls319"
+      },
+      {
+        "container": "radarr-vo",
+        "extra_messages": 1,
+        "messages": 2,
+        "target_tag": "6.4.4.10685-ls319"
+      },
+      {
+        "container": "sonarr",
+        "extra_messages": 1,
+        "messages": 2,
+        "target_tag": "4.0.20.3014-ls328"
+      },
+      {
+        "container": "sonarr",
+        "extra_messages": 1,
+        "messages": 2,
+        "target_tag": "4.0.20.3014-ls329"
+      },
+      {
+        "container": "sonarr-vo",
+        "extra_messages": 1,
+        "messages": 2,
+        "target_tag": "4.0.20.3014-ls328"
+      },
+      {
+        "container": "sonarr-vo",
+        "extra_messages": 1,
+        "messages": 2,
+        "target_tag": "4.0.20.3014-ls329"
+      },
+      {
+        "container": "tdarr",
+        "extra_messages": 1,
+        "messages": 2,
+        "target_tag": "2.93.01"
+      },
+      {
+        "container": "tdarr",
+        "extra_messages": 1,
+        "messages": 2,
+        "target_tag": "3.00.00"
+      },
+      {
+        "container": "tdarr",
+        "extra_messages": 1,
+        "messages": 2,
+        "target_tag": "3.01.00"
+      }
+    ],
+    "repeated_groups": 11
+  },
   "schema_version": 1,
   "sender_split": {
     "bot": 146,
@@ -586,5 +793,611 @@
     "exported_mtime_note": "exportado 2026-11-24T16:15:24; la ventana termina en el último mensaje",
     "path_hint": "messages.html",
     "sha256": "fe32cd3a63464261527d74ee77f53696b1b5837f58206230e15fa93291fdbe74"
+  },
+  "top_keys": [
+    {
+      "by_era": {
+        "E1": 0,
+        "E2": 15,
+        "E3": 9,
+        "E4": 7
+      },
+      "key": "security:update",
+      "messages": 31,
+      "share": 0.212
+    },
+    {
+      "by_era": {
+        "E1": 0,
+        "E2": 13,
+        "E3": 2,
+        "E4": 0
+      },
+      "key": "wud:tdarr",
+      "messages": 15,
+      "share": 0.103
+    },
+    {
+      "by_era": {
+        "E1": 0,
+        "E2": 8,
+        "E3": 1,
+        "E4": 1
+      },
+      "key": "wud:radarr",
+      "messages": 10,
+      "share": 0.068
+    }
+  ],
+  "windows": {
+    "30d": {
+      "by_emitter": {
+        "backup": {
+          "messages": 0,
+          "rate": 0.0
+        },
+        "hub": {
+          "messages": 0,
+          "rate": 0.0
+        },
+        "issue-automator": {
+          "messages": 0,
+          "rate": 0.0
+        },
+        "merged-updates": {
+          "messages": 4,
+          "rate": 0.13
+        },
+        "security-monitor": {
+          "messages": 0,
+          "rate": 0.0
+        },
+        "security-updater": {
+          "messages": 20,
+          "rate": 0.67
+        },
+        "unknown-smart": {
+          "messages": 0,
+          "rate": 0.0
+        },
+        "upgrade-script": {
+          "messages": 6,
+          "rate": 0.2
+        },
+        "wud": {
+          "messages": 14,
+          "rate": 0.47
+        }
+      },
+      "by_family": {
+        "release-apply": 4,
+        "release-stop": 5,
+        "release-upgrade": 1,
+        "security-update": 20,
+        "wud": 14
+      },
+      "from": "2026-10-26",
+      "inclusive_days": 30,
+      "messages": 44,
+      "rate": 1.47,
+      "to": "2026-11-24"
+    },
+    "60d": {
+      "by_emitter": {
+        "backup": {
+          "messages": 2,
+          "rate": 0.03
+        },
+        "hub": {
+          "messages": 0,
+          "rate": 0.0
+        },
+        "issue-automator": {
+          "messages": 1,
+          "rate": 0.02
+        },
+        "merged-updates": {
+          "messages": 4,
+          "rate": 0.07
+        },
+        "security-monitor": {
+          "messages": 1,
+          "rate": 0.02
+        },
+        "security-updater": {
+          "messages": 31,
+          "rate": 0.52
+        },
+        "unknown-smart": {
+          "messages": 0,
+          "rate": 0.0
+        },
+        "upgrade-script": {
+          "messages": 6,
+          "rate": 0.1
+        },
+        "wud": {
+          "messages": 95,
+          "rate": 1.58
+        }
+      },
+      "by_family": {
+        "backup": 2,
+        "issue-incident": 1,
+        "release-apply": 4,
+        "release-stop": 5,
+        "release-upgrade": 1,
+        "security-digest": 1,
+        "security-update": 31,
+        "wud": 95
+      },
+      "from": "2026-09-26",
+      "inclusive_days": 60,
+      "messages": 140,
+      "rate": 2.33,
+      "to": "2026-11-24"
+    },
+    "90d": {
+      "by_emitter": {
+        "backup": {
+          "messages": 2,
+          "rate": 0.02
+        },
+        "hub": {
+          "messages": 0,
+          "rate": 0.0
+        },
+        "issue-automator": {
+          "messages": 5,
+          "rate": 0.06
+        },
+        "merged-updates": {
+          "messages": 4,
+          "rate": 0.04
+        },
+        "security-monitor": {
+          "messages": 1,
+          "rate": 0.01
+        },
+        "security-updater": {
+          "messages": 31,
+          "rate": 0.34
+        },
+        "unknown-smart": {
+          "messages": 0,
+          "rate": 0.0
+        },
+        "upgrade-script": {
+          "messages": 6,
+          "rate": 0.07
+        },
+        "wud": {
+          "messages": 95,
+          "rate": 1.06
+        }
+      },
+      "by_family": {
+        "backup": 2,
+        "issue-incident": 3,
+        "issue-test": 2,
+        "release-apply": 4,
+        "release-stop": 5,
+        "release-upgrade": 1,
+        "security-digest": 1,
+        "security-update": 31,
+        "wud": 95
+      },
+      "from": "2026-08-27",
+      "inclusive_days": 90,
+      "messages": 144,
+      "rate": 1.6,
+      "to": "2026-11-24"
+    }
+  },
+  "wud_events": {
+    "messages": 95,
+    "messages_per_event": 1.86,
+    "passes": [
+      {
+        "containers": [
+          "bazarr",
+          "jackett",
+          "prowlarr",
+          "qbittorrent",
+          "qui",
+          "radarr",
+          "radarr-vo",
+          "seerr",
+          "sonarr",
+          "sonarr-vo",
+          "tdarr"
+        ],
+        "end": "2026-09-28T22:21:28",
+        "start": "2026-09-28T22:19:58"
+      },
+      {
+        "containers": [
+          "qbittorrent"
+        ],
+        "end": "2026-09-28T22:30:14",
+        "start": "2026-09-28T22:29:36"
+      },
+      {
+        "containers": [
+          "qbittorrent",
+          "tdarr"
+        ],
+        "end": "2026-09-29T12:01:09",
+        "start": "2026-09-29T12:00:28"
+      },
+      {
+        "containers": [
+          "jackett",
+          "wud"
+        ],
+        "end": "2026-09-30T23:39:50",
+        "start": "2026-09-30T23:39:39"
+      },
+      {
+        "containers": [
+          "tdarr"
+        ],
+        "end": "2026-10-01T12:00:09",
+        "start": "2026-10-01T12:00:09"
+      },
+      {
+        "containers": [
+          "jackett",
+          "tdarr"
+        ],
+        "end": "2026-10-01T13:07:17",
+        "start": "2026-10-01T13:07:04"
+      },
+      {
+        "containers": [
+          "maintainerr"
+        ],
+        "end": "2026-10-02T06:00:21",
+        "start": "2026-10-02T06:00:21"
+      },
+      {
+        "containers": [
+          "beszel",
+          "beszel-agent",
+          "homarr",
+          "jackett"
+        ],
+        "end": "2026-10-03T00:01:35",
+        "start": "2026-10-03T00:00:14"
+      },
+      {
+        "containers": [
+          "jackett"
+        ],
+        "end": "2026-10-03T12:50:50",
+        "start": "2026-10-03T12:50:50"
+      },
+      {
+        "containers": [
+          "tdarr"
+        ],
+        "end": "2026-10-03T18:00:45",
+        "start": "2026-10-03T18:00:45"
+      },
+      {
+        "containers": [
+          "maintainerr"
+        ],
+        "end": "2026-10-04T00:00:36",
+        "start": "2026-10-04T00:00:36"
+      },
+      {
+        "containers": [
+          "homarr",
+          "tdarr"
+        ],
+        "end": "2026-10-04T06:00:59",
+        "start": "2026-10-04T06:00:59"
+      },
+      {
+        "containers": [
+          "homarr"
+        ],
+        "end": "2026-10-04T10:47:21",
+        "start": "2026-10-04T10:47:21"
+      },
+      {
+        "containers": [
+          "wire-it-1052896-gw"
+        ],
+        "end": "2026-10-04T12:50:59",
+        "start": "2026-10-04T12:50:59"
+      },
+      {
+        "containers": [
+          "wire-it-1936860-gw"
+        ],
+        "end": "2026-10-04T19:07:50",
+        "start": "2026-10-04T19:07:50"
+      },
+      {
+        "containers": [
+          "admiring_jemison",
+          "wud"
+        ],
+        "end": "2026-10-04T21:47:57",
+        "start": "2026-10-04T21:43:15"
+      },
+      {
+        "containers": [
+          "nice_keldysh"
+        ],
+        "end": "2026-10-04T21:53:59",
+        "start": "2026-10-04T21:53:59"
+      },
+      {
+        "containers": [
+          "radarr",
+          "radarr-vo",
+          "strange_engelbart"
+        ],
+        "end": "2026-10-04T22:04:54",
+        "start": "2026-10-04T22:04:32"
+      },
+      {
+        "containers": [
+          "radarr-vo"
+        ],
+        "end": "2026-10-05T06:01:28",
+        "start": "2026-10-05T06:01:28"
+      },
+      {
+        "containers": [
+          "homarr",
+          "homarr-v2-native-preview",
+          "homarr-v2-native-preview-mock",
+          "jackett",
+          "radarr"
+        ],
+        "end": "2026-10-05T18:01:27",
+        "start": "2026-10-05T18:00:43"
+      },
+      {
+        "containers": [
+          "jackett"
+        ],
+        "end": "2026-10-06T18:01:36",
+        "start": "2026-10-06T18:01:36"
+      },
+      {
+        "containers": [
+          "prowlarr"
+        ],
+        "end": "2026-10-07T19:28:50",
+        "start": "2026-10-07T19:28:50"
+      },
+      {
+        "containers": [
+          "sonarr-vo"
+        ],
+        "end": "2026-10-10T18:01:06",
+        "start": "2026-10-10T18:01:06"
+      },
+      {
+        "containers": [
+          "sonarr"
+        ],
+        "end": "2026-10-11T00:01:08",
+        "start": "2026-10-11T00:01:08"
+      },
+      {
+        "containers": [
+          "tdarr"
+        ],
+        "end": "2026-10-11T06:00:05",
+        "start": "2026-10-11T06:00:05"
+      },
+      {
+        "containers": [
+          "qbittorrent"
+        ],
+        "end": "2026-10-12T00:00:51",
+        "start": "2026-10-12T00:00:51"
+      },
+      {
+        "containers": [
+          "radarr"
+        ],
+        "end": "2026-10-12T18:01:21",
+        "start": "2026-10-12T18:01:21"
+      },
+      {
+        "containers": [
+          "jackett",
+          "qui",
+          "radarr-vo"
+        ],
+        "end": "2026-10-12T18:32:15",
+        "start": "2026-10-12T18:31:53"
+      },
+      {
+        "containers": [
+          "quirky_lehmann"
+        ],
+        "end": "2026-10-12T18:39:07",
+        "start": "2026-10-12T18:39:07"
+      },
+      {
+        "containers": [
+          "homarr"
+        ],
+        "end": "2026-10-13T18:00:15",
+        "start": "2026-10-13T18:00:15"
+      },
+      {
+        "containers": [
+          "jackett",
+          "sonarr",
+          "sonarr-vo"
+        ],
+        "end": "2026-10-13T21:12:08",
+        "start": "2026-10-13T21:12:00"
+      },
+      {
+        "containers": [
+          "tdarr"
+        ],
+        "end": "2026-10-14T00:00:28",
+        "start": "2026-10-14T00:00:28"
+      },
+      {
+        "containers": [
+          "qbittorrent",
+          "sonarr",
+          "sonarr-vo"
+        ],
+        "end": "2026-10-14T18:13:37",
+        "start": "2026-10-14T18:13:35"
+      },
+      {
+        "containers": [
+          "tdarr"
+        ],
+        "end": "2026-10-15T18:00:27",
+        "start": "2026-10-15T18:00:27"
+      },
+      {
+        "containers": [
+          "sonarr"
+        ],
+        "end": "2026-10-16T00:01:07",
+        "start": "2026-10-16T00:01:07"
+      },
+      {
+        "containers": [
+          "radarr-vo",
+          "sonarr-vo"
+        ],
+        "end": "2026-10-16T12:01:36",
+        "start": "2026-10-16T12:01:32"
+      },
+      {
+        "containers": [
+          "qbittorrent",
+          "radarr",
+          "tdarr"
+        ],
+        "end": "2026-10-16T16:27:03",
+        "start": "2026-10-16T16:26:22"
+      },
+      {
+        "containers": [
+          "prowlarr",
+          "qbittorrent",
+          "radarr",
+          "radarr-vo"
+        ],
+        "end": "2026-10-19T06:07:15",
+        "start": "2026-10-19T06:07:09"
+      },
+      {
+        "containers": [
+          "prowlarr",
+          "radarr",
+          "radarr-vo",
+          "sonarr",
+          "sonarr-vo"
+        ],
+        "end": "2026-10-21T15:30:24",
+        "start": "2026-10-21T15:30:20"
+      },
+      {
+        "containers": [
+          "radarr-vo",
+          "tdarr"
+        ],
+        "end": "2026-10-26T00:01:39",
+        "start": "2026-10-26T00:00:17"
+      },
+      {
+        "containers": [
+          "tdarr"
+        ],
+        "end": "2026-10-26T18:00:52",
+        "start": "2026-10-26T18:00:52"
+      },
+      {
+        "containers": [
+          "radarr"
+        ],
+        "end": "2026-10-27T06:01:56",
+        "start": "2026-10-27T06:01:56"
+      },
+      {
+        "containers": [
+          "tdarr"
+        ],
+        "end": "2026-10-28T00:00:20",
+        "start": "2026-10-28T00:00:20"
+      },
+      {
+        "containers": [
+          "radarr-vo",
+          "tdarr"
+        ],
+        "end": "2026-11-03T00:01:13",
+        "start": "2026-11-03T00:00:33"
+      },
+      {
+        "containers": [
+          "tdarr"
+        ],
+        "end": "2026-11-03T12:00:41",
+        "start": "2026-11-03T12:00:41"
+      },
+      {
+        "containers": [
+          "radarr"
+        ],
+        "end": "2026-11-03T18:02:28",
+        "start": "2026-11-03T18:02:28"
+      },
+      {
+        "containers": [
+          "radarr-vo"
+        ],
+        "end": "2026-11-16T06:01:27",
+        "start": "2026-11-16T06:01:27"
+      },
+      {
+        "containers": [
+          "radarr"
+        ],
+        "end": "2026-11-18T00:02:14",
+        "start": "2026-11-18T00:02:14"
+      },
+      {
+        "containers": [
+          "prowlarr"
+        ],
+        "end": "2026-11-19T18:02:11",
+        "start": "2026-11-19T18:02:11"
+      },
+      {
+        "containers": [
+          "nas-dashboard-db-1"
+        ],
+        "end": "2026-11-21T05:00:49",
+        "start": "2026-11-21T05:00:49"
+      },
+      {
+        "containers": [
+          "prowlarr"
+        ],
+        "end": "2026-11-24T00:02:04",
+        "start": "2026-11-24T00:02:04"
+      }
+    ],
+    "scan_passes": 51
   }
 }

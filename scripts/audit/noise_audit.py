@@ -881,6 +881,223 @@ def build_duplicates(rows, alerts=None):
     }
 
 
+def _hour_buckets():
+    return {str(hour): 0 for hour in range(24)}
+
+
+def build_histogram(rows):
+    """Hourly distribution in the export wall clock; never shift the hour."""
+    buckets = _hour_buckets()
+    by_era = {name: _hour_buckets() for name in ERA_WINDOWS}
+    missing_time = 0
+    for row in rows:
+        if not row.get("time") or row.get("hour") is None:
+            missing_time += 1
+            continue
+        hour = str(row["hour"])
+        buckets[hour] += 1
+        day = _as_day(row["sent_at"])
+        for name, window in ERA_WINDOWS.items():
+            if _as_day(window["from"]) <= day <= _as_day(window["to"]):
+                by_era[name][hour] += 1
+                break
+    return {"buckets": buckets, "by_era": by_era, "missing_time": missing_time}
+
+
+def key_for(row):
+    """Normalised event key: the unit the next phase will route by channel."""
+    return classify(row.get("text")).get("key", "unknown")
+
+
+def build_top_keys(rows, limit=3):
+    """Top event keys, deterministic by volume and then by key name."""
+    counts = Counter()
+    by_era = {name: Counter() for name in ERA_WINDOWS}
+    total = 0
+    for row in rows:
+        if sender_kind(row.get("sender")) != "bot":
+            continue
+        total += 1
+        key = key_for(row)
+        counts[key] += 1
+        day = _as_day(row["sent_at"])
+        for name, window in ERA_WINDOWS.items():
+            if _as_day(window["from"]) <= day <= _as_day(window["to"]):
+                by_era[name][key] += 1
+                break
+    ranked = sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))[:limit]
+    return [
+        {
+            "key": key,
+            "messages": messages,
+            "by_era": {
+                name: by_era[name].get(key, 0) for name in ERA_WINDOWS
+            },
+            "share": round(messages / total, 3) if total else 0.0,
+        }
+        for key, messages in ranked
+    ]
+
+
+def _wall_clock(value):
+    return datetime.fromisoformat(str(value))
+
+
+def build_wud_events(rows, gap_minutes=5):
+    """Group WUD messages into scan passes; 95 messages are not 95 events."""
+    gap = timedelta(minutes=gap_minutes)
+    wud = sorted(
+        (
+            (row, classify(row.get("text")))
+            for row in rows
+            if sender_kind(row.get("sender")) == "bot"
+            and classify(row.get("text"))["family"] == "wud"
+        ),
+        key=lambda pair: (pair[0]["sent_at"], pair[0].get("id") or ""),
+    )
+    passes = []
+    current = None
+    for row, classified in wud:
+        moment = _wall_clock(row["sent_at"])
+        if current is not None and moment - current["_last"] <= gap:
+            current["end"] = row["sent_at"]
+            current["_last"] = moment
+        else:
+            current = {
+                "start": row["sent_at"],
+                "end": row["sent_at"],
+                "containers": [],
+                "_last": moment,
+            }
+            passes.append(current)
+        container = classified.get("container")
+        if container and container not in current["containers"]:
+            current["containers"].append(container)
+    for entry in passes:
+        entry.pop("_last", None)
+        entry["containers"] = sorted(entry["containers"])
+    messages = len(wud)
+    return {
+        "messages": messages,
+        "scan_passes": len(passes),
+        "messages_per_event": (
+            round(messages / len(passes), 2) if passes else 0.0
+        ),
+        "passes": passes,
+    }
+
+
+def build_repetitions(rows):
+    """Repeated (container, target_tag) WUD notices, independent of duplicates."""
+    counts = Counter()
+    for row in rows:
+        if sender_kind(row.get("sender")) != "bot":
+            continue
+        classified = classify(row.get("text"))
+        if classified["family"] != "wud":
+            continue
+        counts[(classified["container"], classified["target_tag"])] += 1
+    groups = [
+        {
+            "container": container,
+            "target_tag": target_tag,
+            "messages": messages,
+            "extra_messages": messages - 1,
+        }
+        for (container, target_tag), messages in sorted(counts.items())
+        if messages > 1
+    ]
+    return {
+        "groups": groups,
+        "repeated_groups": len(groups),
+        "extra_messages": sum(group["extra_messages"] for group in groups),
+    }
+
+
+def apply_wud_events(eras, wud_events, rows):
+    """Publish the double figure: WUD scan passes plus other bot messages."""
+    classified = [
+        (row, classify(row.get("text"))["family"])
+        for row in rows
+        if sender_kind(row.get("sender")) == "bot"
+    ]
+    for name, era in eras.items():
+        start = _as_day(era["from"])
+        end = _as_day(era["to"])
+        passes = sum(
+            1
+            for entry in wud_events["passes"]
+            if start <= _as_day(entry["start"]) <= end
+        )
+        others = sum(
+            1
+            for row, family_name in classified
+            if family_name != "wud"
+            and start <= _as_day(row["sent_at"]) <= end
+        )
+        era["events"] = passes + others
+    return eras
+
+
+def _window_emitter(row):
+    if sender_kind(row.get("sender")) != "bot":
+        return "operator"
+    family_name = classify(row.get("text"))["family"]
+    if family_name == "unknown":
+        return "unknown"
+    return EMITTER_BY_FAMILY.get(family_name, "unknown")
+
+
+def build_windows(rows, days=(30, 60, 90)):
+    """Rolling windows anchored at the last message day, with per-emitter rates."""
+    if not rows:
+        raise ValueError("no hay filas para construir las ventanas")
+    last_day = max(_as_day(row["sent_at"]) for row in rows)
+    windows = {}
+    for size in days:
+        start = last_day - timedelta(days=size - 1)
+        selected = [
+            row
+            for row in rows
+            if start <= _as_day(row["sent_at"]) <= last_day
+        ]
+        by_family = Counter()
+        by_emitter = {
+            emitter["id"]: {"messages": 0, "rate": 0.0}
+            for emitter in EMITTERS
+        }
+        for row in selected:
+            emitter_id = _window_emitter(row)
+            by_emitter.setdefault(emitter_id, {"messages": 0, "rate": 0.0})
+            by_emitter[emitter_id]["messages"] += 1
+            if sender_kind(row.get("sender")) == "bot":
+                by_family[classify(row.get("text"))["family"]] += 1
+        for entry in by_emitter.values():
+            entry["rate"] = round(entry["messages"] / size, 2)
+        messages = len(selected)
+        windows[f"{size}d"] = {
+            "from": start.isoformat(),
+            "to": last_day.isoformat(),
+            "messages": messages,
+            "inclusive_days": size,
+            "rate": round(messages / size, 2),
+            "by_family": dict(by_family),
+            "by_emitter": by_emitter,
+        }
+    return windows
+
+
+def check_repro(export_path):
+    """Aggregate the same export twice and compare the canonical bytes."""
+    serialised = []
+    for _attempt in range(2):
+        rows, stats = telegram_export.parse_export_document(str(export_path))
+        serialised.append(
+            canonical_json(aggregate(rows, _source_metadata(str(export_path), stats)))
+        )
+    return {"reproducible": serialised[0] == serialised[1]}
+
+
 def build_evidence_sources(state_root=None):
     """Describe the nine evidence sources; probe them only when a root is given."""
     sources = []
@@ -947,15 +1164,23 @@ def build_dataset_summary(rows, source):
 
 def aggregate(rows, source, alerts=None, state_root=None):
     """Build the aggregate document; ``alerts`` is the optional push adapter input."""
+    eras = build_eras(rows)
+    wud_events = build_wud_events(rows)
+    apply_wud_events(eras, wud_events, rows)
     return {
         "schema_version": SCHEMA_VERSION,
         "source": {field: source.get(field) for field in PUBLISHED_SOURCE_FIELDS},
         "dataset": build_dataset_summary(rows, source),
         "sender_split": build_sender_split(rows),
         "inventory": build_inventory(rows),
-        "eras": build_eras(rows),
+        "eras": eras,
         "recoveries": build_recoveries(rows, alerts),
         "duplicates": build_duplicates(rows, alerts),
+        "histogram": build_histogram(rows),
+        "wud_events": wud_events,
+        "repetitions": build_repetitions(rows),
+        "top_keys": build_top_keys(rows),
+        "windows": build_windows(rows),
         "push": {
             "status": "unavailable" if alerts is None else "measured",
             "source": "alerts CSV",
@@ -1031,6 +1256,11 @@ def main(argv=None):
         help="informe Markdown; lo genera el paso de informe, no este",
     )
     parser.add_argument(
+        "--check-repro",
+        action="store_true",
+        help="agrega dos veces y compara el JSON canónico sin escribir salidas",
+    )
+    parser.add_argument(
         "--print-summary", action="store_true", help="imprime una línea de resumen"
     )
     parser.add_argument(
@@ -1042,6 +1272,11 @@ def main(argv=None):
         "--force", action="store_true", help="sobrescribe las salidas existentes"
     )
     args = parser.parse_args(argv)
+
+    if args.check_repro:
+        result = check_repro(args.export)
+        print(canonical_json(result).strip())
+        return 0 if result["reproducible"] else 1
 
     _refuse_overwrite((args.out_json, args.out_md, args.ndjson), args.force)
     alerts = load_alerts_csv(args.alerts_csv) if args.alerts_csv else None
