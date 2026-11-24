@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from collections import Counter
 from datetime import date, datetime
 from pathlib import Path
@@ -24,16 +25,284 @@ SCHEMA_VERSION = 1
 BOT_SENDERS = frozenset({"NAS Monitor"})
 PUBLISHED_SOURCE_FIELDS = ("path_hint", "sha256", "bytes", "exported_mtime_note")
 
-SIGNATURES = ()
-EMITTERS = ()
+WUD_PATTERN = re.compile(
+    r"^New tag found for container (?P<container>\S+)\s*\n+\s*"
+    r"Container (?P=container) running with tag (?P<from_tag>\S+) "
+    r"can be updated to tag (?P<target_tag>\S+)"
+)
+SECURITY_UPDATE_LINE = re.compile(
+    r"^(?P<container>\S+) → (?P<target_tag>[^:]+): (?P<detail>.+)$"
+)
+RELEASE_STOP_PATTERN = re.compile(r"actualización automática detenida:\s*(?P<reason>.+)")
+RELEASE_APPLIED_PATTERN = re.compile(
+    r"—\s*(?P<release>\S+)\s+aplicada y verificada;\s*servicios:\s*(?P<services>.+)"
+)
+RELEASE_FAILED_SUFFIX = " falló"
+RELEASE_UPGRADE_PATTERN = re.compile(
+    r"—\s*actualizado de\s+(?P<from>\S+)\s+a\s+(?P<to>\S+)\s+y verificado"
+)
+BACKUP_PATTERN = re.compile(r"^Backup of\s+(?P<host>\S+)\s+FAILED:")
+
+
+def _first_line(text):
+    return text.split("\n", 1)[0].strip()
+
+
+def _match_wud(text):
+    match = WUD_PATTERN.match(text)
+    if not match:
+        return None
+    container = match.group("container")
+    return {
+        "key": f"wud:{container}",
+        "container": container,
+        "from_tag": match.group("from_tag"),
+        "target_tag": match.group("target_tag"),
+    }
+
+
+def _match_security_digest(text):
+    if "actualizaciones de seguridad verificadas" not in _first_line(text):
+        return None
+    return {"key": "security:digest"}
+
+
+def _match_security_update(text):
+    if "autoactualización de seguridad" not in _first_line(text):
+        return None
+    updates = []
+    for line in text.split("\n")[1:]:
+        match = SECURITY_UPDATE_LINE.match(line.strip())
+        if not match:
+            continue
+        detail = match.group("detail").strip()
+        updates.append(
+            {
+                "container": match.group("container"),
+                "target_tag": match.group("target_tag").strip(),
+                "outcome": "updated" if detail.startswith("actualizada") else "manual",
+            }
+        )
+    return {"key": "security:update", "updates": updates}
+
+
+def _match_release_stop(text):
+    match = RELEASE_STOP_PATTERN.search(_first_line(text))
+    if not match:
+        return None
+    return {"key": "release:stop", "reason": match.group("reason").strip()}
+
+
+def _match_release_apply(text):
+    match = RELEASE_APPLIED_PATTERN.search(text)
+    if match:
+        services = [
+            service.strip() for service in match.group("services").split(",") if service.strip()
+        ]
+        return {
+            "key": "release:apply",
+            "release": match.group("release"),
+            "services": services,
+            "outcome": "applied",
+        }
+    if text.rstrip().endswith(RELEASE_FAILED_SUFFIX):
+        return {"key": "release:apply", "outcome": "failed"}
+    return None
+
+
+def _match_release_upgrade(text):
+    match = RELEASE_UPGRADE_PATTERN.search(text)
+    if not match:
+        return None
+    return {
+        "key": "release:upgrade",
+        "from": match.group("from"),
+        "to": match.group("to"),
+    }
+
+
+def _match_backup(text):
+    match = BACKUP_PATTERN.match(text)
+    if not match:
+        return None
+    host = match.group("host")
+    return {"key": f"backup:{host}", "host": host}
+
+
+def _match_issue_incident(text):
+    if not text.startswith("🚨 Incidencia reportada en Seerr"):
+        return None
+    return {"key": "issue:seerr"}
+
+
+def _match_issue_test(text):
+    if not text.startswith("🧪"):
+        return None
+    return {"key": "issue:test"}
+
+
+def _match_smart(text):
+    if not text.startswith("🚨 Alerta SMART"):
+        return None
+    return {"key": "smart:unknown", "emitter": "unknown"}
+
+
+SIGNATURES = (
+    ("wud", _match_wud),
+    ("security-digest", _match_security_digest),
+    ("security-update", _match_security_update),
+    ("release-stop", _match_release_stop),
+    ("release-apply", _match_release_apply),
+    ("release-upgrade", _match_release_upgrade),
+    ("backup", _match_backup),
+    ("issue-incident", _match_issue_incident),
+    ("issue-test", _match_issue_test),
+    ("smart", _match_smart),
+)
+
+# Evidence is read-only: file:line in the media-stack checkout or in this repo.
+EMITTERS = (
+    {
+        "id": "wud",
+        "job": "vigila etiquetas nuevas de contenedores",
+        "evidence": "stacks/monitoring/compose.yaml:78-96",
+        "families": ["wud"],
+        "channel": "telegram",
+        "can_emit_recovery": False,
+        "in_cutover": True,
+    },
+    {
+        "id": "security-monitor",
+        "job": "resume las actualizaciones de seguridad verificadas",
+        "evidence": "stacks/monitoring/security-monitor/main.py:168-206",
+        "families": ["security-digest"],
+        "channel": "telegram",
+        "can_emit_recovery": True,
+        "in_cutover": True,
+    },
+    {
+        "id": "security-updater",
+        "job": "aplica actualizaciones de seguridad y publica el desenlace",
+        "evidence": "stacks/monitoring/security-monitor/updater.py:297-300,315,329,376",
+        "families": ["security-update"],
+        "channel": "telegram",
+        "can_emit_recovery": True,
+        "in_cutover": True,
+    },
+    {
+        "id": "upgrade-script",
+        "job": "detiene o completa una actualización de release",
+        "evidence": "scripts/upgrade.sh:30,39-51",
+        "families": ["release-stop", "release-upgrade"],
+        "channel": "telegram",
+        "can_emit_recovery": True,
+        "in_cutover": True,
+    },
+    {
+        "id": "merged-updates",
+        "job": "aplica releases agrupados y publica el resultado por servicio",
+        "evidence": "scripts/merged_updates.py:148-163,343,347",
+        "families": ["release-apply"],
+        "channel": "telegram",
+        "can_emit_recovery": True,
+        "in_cutover": True,
+    },
+    {
+        "id": "backup",
+        "job": "avisa de una copia fallida",
+        "evidence": "stacks/backup/media-backup.sh:137-157",
+        "families": ["backup"],
+        "channel": "telegram",
+        "can_emit_recovery": False,
+        "in_cutover": True,
+    },
+    {
+        "id": "issue-automator",
+        "job": "reporta incidencias de Seerr y responde a sus pruebas",
+        "evidence": "stacks/extras/issue-automator/main.py:134-150,405-411",
+        "families": ["issue-incident", "issue-test"],
+        "channel": "telegram",
+        "can_emit_recovery": True,
+        "in_cutover": True,
+    },
+    {
+        "id": "unknown-smart",
+        "job": "alerta SMART del host sin código en ninguno de los dos repos",
+        "evidence": "sin código en ninguno de los dos repos",
+        "families": ["smart"],
+        "channel": "telegram",
+        "can_emit_recovery": False,
+        "in_cutover": True,
+    },
+    {
+        "id": "hub",
+        "job": "notifica por Web Push, no por Telegram",
+        "evidence": "src/lib/push.ts:5-33",
+        "families": [],
+        "channel": "push",
+        "can_emit_recovery": True,
+        "in_cutover": True,
+    },
+)
+
+EMITTER_BY_FAMILY = {
+    family: emitter["id"]
+    for emitter in EMITTERS
+    for family in emitter["families"]
+}
 
 
 def classify(text):
-    raise NotImplementedError
+    """Return the first matching family plus its join keys; never raise per message."""
+    value = text if isinstance(text, str) else ""
+    for family, matcher in SIGNATURES:
+        fields = matcher(value)
+        if fields is not None:
+            return {"family": family, **fields}
+    return {"family": "unknown", "key": "unknown"}
 
 
 def build_inventory(rows):
-    raise NotImplementedError
+    """Count the bot messages per family and per emitter, keeping ids and dates only."""
+    families = Counter()
+    per_emitter = Counter()
+    unknown = []
+    operator = 0
+    for row in rows:
+        if sender_kind(row.get("sender")) != "bot":
+            operator += 1
+            continue
+        result = classify(row.get("text"))
+        families[result["family"]] += 1
+        if result["family"] == "unknown":
+            unknown.append({"id": row.get("id"), "sent_at": row.get("sent_at")})
+            continue
+        per_emitter[(EMITTER_BY_FAMILY[result["family"]], result["family"])] += 1
+
+    emitters = []
+    for emitter in EMITTERS:
+        by_family = {
+            family: per_emitter[(emitter["id"], family)]
+            for family in emitter["families"]
+            if per_emitter[(emitter["id"], family)]
+        }
+        emitters.append(
+            {
+                **emitter,
+                "messages": sum(by_family.values()),
+                "by_family": by_family,
+            }
+        )
+
+    hub = next(entry for entry in emitters if entry["id"] == "hub")
+    return {
+        "emitters": emitters,
+        "families": dict(families),
+        "operator": operator,
+        "unknown": unknown,
+        "hub_telegram_messages": hub["messages"],
+        "hub_channel": hub["channel"],
+    }
 
 
 def sender_kind(sender):
@@ -78,6 +347,7 @@ def aggregate(rows, source, alerts=None):
         "source": {field: source.get(field) for field in PUBLISHED_SOURCE_FIELDS},
         "dataset": build_dataset_summary(rows, source),
         "sender_split": build_sender_split(rows),
+        "inventory": build_inventory(rows),
     }
 
 

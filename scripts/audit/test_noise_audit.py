@@ -39,7 +39,7 @@ def family(inventory, name):
 SIGNATURE_CASES = [
     (
         "wud",
-        "New tag found for container demo-arr<br><br>"
+        "New tag found for container demo-arr\n\n"
         "Container demo-arr running with tag 1.0.0 can be updated to tag 1.1.0",
         {
             "key": "wud:demo-arr",
@@ -50,14 +50,14 @@ SIGNATURE_CASES = [
     ),
     (
         "security-digest",
-        "Demo Monitor — 3 actualizaciones de seguridad verificadas<br><br>"
+        "Demo Monitor — 3 actualizaciones de seguridad verificadas\n\n"
         "demo-arr: 1.0.0 → 1.0.1",
         {"key": "security:digest"},
     ),
     (
         "security-update",
-        "Demo Monitor — autoactualización de seguridad<br><br>"
-        "demo-arr → 1.0.1: actualizada; comprobación de salud correcta<br>"
+        "Demo Monitor — autoactualización de seguridad\n\n"
+        "demo-arr → 1.0.1: actualizada; comprobación de salud correcta\n"
         "demo-db → 2.0.0: manual: missing healthcheck",
         {
             "key": "security:update",
@@ -97,18 +97,18 @@ SIGNATURE_CASES = [
     ),
     (
         "backup",
-        "Backup of demo-host FAILED:<br>- cannot open the repository",
+        "Backup of demo-host FAILED:\n- cannot open the repository",
         {"key": "backup:demo-host", "host": "demo-host"},
     ),
     (
         "issue-incident",
-        "🚨 Incidencia reportada en Seerr<br><br>🎬 Título: Demo",
+        "🚨 Incidencia reportada en Seerr\n\n🎬 Título: Demo",
         {"key": "issue:seerr"},
     ),
     ("issue-test", "🧪 Test manual de Issue Automator", {"key": "issue:test"}),
     (
         "smart",
-        "🚨 Alerta SMART - NAS<br><br>🟠 /dev/demo: 2 sectores pendientes",
+        "🚨 Alerta SMART - NAS\n\n🟠 /dev/demo: 2 sectores pendientes",
         {"key": "smart:unknown", "emitter": "unknown"},
     ),
 ]

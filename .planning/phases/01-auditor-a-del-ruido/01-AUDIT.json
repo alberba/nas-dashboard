@@ -11,6 +11,161 @@
     "operator_messages": 2,
     "span_days": 213
   },
+  "inventory": {
+    "emitters": [
+      {
+        "by_family": {
+          "wud": 95
+        },
+        "can_emit_recovery": false,
+        "channel": "telegram",
+        "evidence": "stacks/monitoring/compose.yaml:78-96",
+        "families": [
+          "wud"
+        ],
+        "id": "wud",
+        "in_cutover": true,
+        "job": "vigila etiquetas nuevas de contenedores",
+        "messages": 95
+      },
+      {
+        "by_family": {
+          "security-digest": 1
+        },
+        "can_emit_recovery": true,
+        "channel": "telegram",
+        "evidence": "stacks/monitoring/security-monitor/main.py:168-206",
+        "families": [
+          "security-digest"
+        ],
+        "id": "security-monitor",
+        "in_cutover": true,
+        "job": "resume las actualizaciones de seguridad verificadas",
+        "messages": 1
+      },
+      {
+        "by_family": {
+          "security-update": 31
+        },
+        "can_emit_recovery": true,
+        "channel": "telegram",
+        "evidence": "stacks/monitoring/security-monitor/updater.py:297-300,315,329,376",
+        "families": [
+          "security-update"
+        ],
+        "id": "security-updater",
+        "in_cutover": true,
+        "job": "aplica actualizaciones de seguridad y publica el desenlace",
+        "messages": 31
+      },
+      {
+        "by_family": {
+          "release-stop": 5,
+          "release-upgrade": 1
+        },
+        "can_emit_recovery": true,
+        "channel": "telegram",
+        "evidence": "scripts/upgrade.sh:30,39-51",
+        "families": [
+          "release-stop",
+          "release-upgrade"
+        ],
+        "id": "upgrade-script",
+        "in_cutover": true,
+        "job": "detiene o completa una actualización de release",
+        "messages": 6
+      },
+      {
+        "by_family": {
+          "release-apply": 4
+        },
+        "can_emit_recovery": true,
+        "channel": "telegram",
+        "evidence": "scripts/merged_updates.py:148-163,343,347",
+        "families": [
+          "release-apply"
+        ],
+        "id": "merged-updates",
+        "in_cutover": true,
+        "job": "aplica releases agrupados y publica el resultado por servicio",
+        "messages": 4
+      },
+      {
+        "by_family": {
+          "backup": 2
+        },
+        "can_emit_recovery": false,
+        "channel": "telegram",
+        "evidence": "stacks/backup/media-backup.sh:137-157",
+        "families": [
+          "backup"
+        ],
+        "id": "backup",
+        "in_cutover": true,
+        "job": "avisa de una copia fallida",
+        "messages": 2
+      },
+      {
+        "by_family": {
+          "issue-incident": 3,
+          "issue-test": 2
+        },
+        "can_emit_recovery": true,
+        "channel": "telegram",
+        "evidence": "stacks/extras/issue-automator/main.py:134-150,405-411",
+        "families": [
+          "issue-incident",
+          "issue-test"
+        ],
+        "id": "issue-automator",
+        "in_cutover": true,
+        "job": "reporta incidencias de Seerr y responde a sus pruebas",
+        "messages": 5
+      },
+      {
+        "by_family": {
+          "smart": 2
+        },
+        "can_emit_recovery": false,
+        "channel": "telegram",
+        "evidence": "sin código en ninguno de los dos repos",
+        "families": [
+          "smart"
+        ],
+        "id": "unknown-smart",
+        "in_cutover": true,
+        "job": "alerta SMART del host sin código en ninguno de los dos repos",
+        "messages": 2
+      },
+      {
+        "by_family": {},
+        "can_emit_recovery": true,
+        "channel": "push",
+        "evidence": "src/lib/push.ts:5-33",
+        "families": [],
+        "id": "hub",
+        "in_cutover": true,
+        "job": "notifica por Web Push, no por Telegram",
+        "messages": 0
+      }
+    ],
+    "families": {
+      "backup": 2,
+      "issue-incident": 3,
+      "issue-test": 2,
+      "release-apply": 4,
+      "release-stop": 5,
+      "release-upgrade": 1,
+      "security-digest": 1,
+      "security-update": 31,
+      "smart": 2,
+      "wud": 95
+    },
+    "hub_channel": "push",
+    "hub_telegram_messages": 0,
+    "operator": 2,
+    "unknown": []
+  },
   "schema_version": 1,
   "sender_split": {
     "bot": 146,
