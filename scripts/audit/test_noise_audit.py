@@ -575,6 +575,275 @@ class DuplicateTest(unittest.TestCase):
         self.assertEqual(inter_system["manual_only"], 13)
 
 
+class HistogramTest(unittest.TestCase):
+    def test_the_histogram_has_24_buckets_and_skips_rows_without_time(self):
+        rows = [
+            row(id="message1", sent_at="2026-11-20T23:30:00", hour=23),
+            row(id="message2", sent_at="2026-11-20", hour=None, time=None),
+        ]
+
+        histogram = noise_audit.build_histogram(rows)
+
+        self.assertEqual(
+            list(histogram["buckets"]), [str(hour) for hour in range(24)]
+        )
+        self.assertEqual(histogram["buckets"]["23"], 1)
+        self.assertEqual(histogram["missing_time"], 1)
+        self.assertEqual(sum(histogram["buckets"].values()), 1)
+        for era_buckets in histogram["by_era"].values():
+            self.assertEqual(
+                list(era_buckets), [str(hour) for hour in range(24)]
+            )
+
+    def test_a_message_at_2330_stays_in_bucket_23(self):
+        histogram = noise_audit.build_histogram(
+            [row(sent_at="2026-11-20T23:30:00", hour=23)]
+        )
+
+        self.assertEqual(histogram["buckets"]["23"], 1)
+        self.assertEqual(histogram["buckets"]["22"], 0)
+
+    def test_each_era_has_its_own_hourly_buckets(self):
+        rows = [
+            row(id="message1", sent_at="2026-05-01T10:00:00", hour=10),
+            row(id="message2", sent_at="2026-11-20T06:00:00", hour=6),
+        ]
+
+        histogram = noise_audit.build_histogram(rows)
+
+        self.assertEqual(histogram["by_era"]["E1"]["10"], 1)
+        self.assertEqual(histogram["by_era"]["E4"]["6"], 1)
+        self.assertEqual(sum(histogram["by_era"]["E1"].values()), 1)
+
+    @unittest.skipUnless(real_export_path().exists(), "export real no disponible")
+    def test_the_real_export_keeps_eight_messages_at_0600_in_e4(self):
+        rows = telegram_export.parse_export(real_export_path())
+
+        histogram = noise_audit.build_histogram(rows)
+
+        self.assertEqual(
+            histogram["by_era"]["E4"]["6"],
+            max(histogram["by_era"]["E4"].values()),
+        )
+        self.assertEqual(histogram["by_era"]["E4"]["6"], 8)
+        self.assertEqual(
+            sum(histogram["buckets"].values()),
+            len(rows) - histogram["missing_time"],
+        )
+
+
+class TopKeysTest(unittest.TestCase):
+    def test_top_keys_order_by_count_and_break_ties_alphabetically(self):
+        rows = [
+            row(id=f"security{index}",
+                text=security_update_text(
+                    "demo → 1.0.0: actualizada; comprobación de salud correcta"
+                ))
+            for index in range(3)
+        ]
+        rows.extend(
+            row(id=f"aaa{index}", text=wud_text("aaa", "2.0.0"))
+            for index in range(2)
+        )
+        rows.extend(
+            row(id=f"bbb{index}", text=wud_text("bbb", "3.0.0"))
+            for index in range(2)
+        )
+
+        top_keys = noise_audit.build_top_keys(rows, limit=3)
+
+        self.assertEqual(
+            [entry["key"] for entry in top_keys],
+            ["security:update", "wud:aaa", "wud:bbb"],
+        )
+        self.assertTrue(all(0 < entry["share"] <= 1 for entry in top_keys))
+
+    @unittest.skipUnless(real_export_path().exists(), "export real no disponible")
+    def test_the_real_export_has_the_expected_top_three(self):
+        top_keys = noise_audit.build_top_keys(
+            telegram_export.parse_export(real_export_path())
+        )
+
+        self.assertEqual(
+            [entry["key"] for entry in top_keys],
+            ["security:update", "wud:tdarr", "wud:radarr"],
+        )
+        self.assertEqual(
+            [entry["messages"] for entry in top_keys], [31, 15, 10]
+        )
+
+
+class WudEventTest(unittest.TestCase):
+    def test_a_gap_of_five_minutes_stays_in_the_same_scan_pass(self):
+        rows = [
+            row(id="message1", sent_at="2026-05-01T10:00:00",
+                text=wud_text("demo", "1.0.0")),
+            row(id="message2", sent_at="2026-05-01T10:05:00",
+                text=wud_text("other", "1.0.0")),
+            row(id="message3", sent_at="2026-05-01T10:11:00",
+                text=wud_text("third", "1.0.0")),
+        ]
+
+        events = noise_audit.build_wud_events(rows)
+
+        self.assertEqual(events["messages"], 3)
+        self.assertEqual(events["scan_passes"], 2)
+        self.assertEqual(events["messages_per_event"], 1.5)
+        self.assertEqual(events["passes"][0]["containers"], ["demo", "other"])
+
+    def test_repetitions_group_by_container_and_target_tag(self):
+        rows = [
+            row(id="message1", text=wud_text("demo", "1.0.0")),
+            row(id="message2", text=wud_text("demo", "1.0.0")),
+            row(id="message3", text=wud_text("demo", "2.0.0")),
+            row(id="message4", text=wud_text("other", "1.0.0")),
+            row(id="message5", text=wud_text("other", "1.0.0")),
+        ]
+
+        repetitions = noise_audit.build_repetitions(rows)
+
+        self.assertEqual(repetitions["repeated_groups"], 2)
+        self.assertEqual(len(repetitions["groups"]), 2)
+        self.assertEqual(repetitions["extra_messages"], 2)
+        self.assertEqual(
+            repetitions["groups"][0],
+            {
+                "container": "demo",
+                "target_tag": "1.0.0",
+                "messages": 2,
+                "extra_messages": 1,
+            },
+        )
+
+    @unittest.skipUnless(real_export_path().exists(), "export real no disponible")
+    def test_the_real_export_has_51_scan_passes_and_11_repeated_groups(self):
+        rows = telegram_export.parse_export(real_export_path())
+
+        events = noise_audit.build_wud_events(rows)
+        repetitions = noise_audit.build_repetitions(rows)
+
+        self.assertEqual(events["messages"], 95)
+        self.assertEqual(events["scan_passes"], 51)
+        self.assertEqual(events["messages_per_event"], 1.86)
+        self.assertEqual(repetitions["repeated_groups"], 11)
+        self.assertEqual(repetitions["extra_messages"], 14)
+
+
+class WindowTest(unittest.TestCase):
+    def test_windows_anchor_at_the_last_day_and_publish_every_emitter(self):
+        rows = [
+            row(id=f"message{index}", sent_at="2026-11-20T12:00:00",
+                hour=12, text=text)
+            for index, (_family, text, _expected) in enumerate(SIGNATURE_CASES, 1)
+        ]
+        rows.append(row(id="operator1", sender=OPERATOR, text="hola"))
+
+        windows = noise_audit.build_windows(rows)
+
+        self.assertEqual(
+            {name: window["from"] for name, window in windows.items()},
+            {"30d": "2026-10-22", "60d": "2026-09-22", "90d": "2026-08-23"},
+        )
+        emitter_ids = {
+            emitter["id"] for emitter in noise_audit.EMITTERS
+        }
+        for name, window in windows.items():
+            self.assertEqual(window["inclusive_days"], int(name[:-1]))
+            self.assertLessEqual(
+                emitter_ids, set(window["by_emitter"])
+            )
+            self.assertEqual(
+                sum(
+                    entry["messages"]
+                    for entry in window["by_emitter"].values()
+                ),
+                window["messages"],
+            )
+            for entry in window["by_emitter"].values():
+                self.assertEqual(
+                    entry["rate"],
+                    round(entry["messages"] / window["inclusive_days"], 2),
+                )
+
+    def test_era_events_count_scan_passes_plus_non_wud_bot_messages(self):
+        rows = era_shape_rows()
+        rows.extend(
+            row(id=f"wud{index}", sent_at="2026-10-01T10:0{index}:00",
+                text=wud_text("demo", f"1.0.{index}"))
+            for index in range(3)
+        )
+
+        wud_events = noise_audit.build_wud_events(rows)
+        eras = noise_audit.build_eras(rows)
+        noise_audit.apply_wud_events(eras, wud_events, rows)
+
+        self.assertEqual(wud_events["scan_passes"], 1)
+        self.assertEqual(eras["E2"]["events"], 106)
+        self.assertEqual(eras["E2"]["messages"], 108)
+        self.assertLess(eras["E2"]["events"], eras["E2"]["messages"])
+        self.assertEqual(
+            sum(eras[name]["events"] for name in ("E1", "E2", "E3", "E4")),
+            wud_events["scan_passes"] + (len(rows) - wud_events["messages"]),
+        )
+
+    @unittest.skipUnless(real_export_path().exists(), "export real no disponible")
+    def test_the_real_export_reproduces_the_windows_and_era_events(self):
+        rows = telegram_export.parse_export(real_export_path())
+
+        windows = noise_audit.build_windows(rows)
+        wud_events = noise_audit.build_wud_events(rows)
+        eras = noise_audit.build_eras(rows)
+        noise_audit.apply_wud_events(eras, wud_events, rows)
+
+        self.assertEqual(
+            [windows[name]["messages"] for name in ("30d", "60d", "90d")],
+            [44, 140, 144],
+        )
+        self.assertEqual(
+            [eras[name]["events"] for name in ("E1", "E2", "E3", "E4")],
+            [6, 62, 19, 15],
+        )
+        self.assertTrue(
+            all(
+                eras[name]["events"] <= eras[name]["messages"]
+                for name in ("E1", "E2", "E3", "E4")
+            )
+        )
+        self.assertEqual(
+            sum(
+                eras[name]["events"] for name in ("E1", "E2", "E3", "E4")
+            ),
+            wud_events["scan_passes"] + (146 - wud_events["messages"]),
+        )
+
+
+class ReproducibilityTest(unittest.TestCase):
+    def test_canonical_json_sorts_keys_and_ends_with_one_newline(self):
+        first = noise_audit.canonical_json({"b": 1, "a": 2})
+        second = noise_audit.canonical_json({"a": 2, "b": 1})
+
+        self.assertEqual(first, second)
+        self.assertTrue(first.endswith("\n"))
+        self.assertFalse(first.endswith("\n\n"))
+        self.assertLess(first.index('"a"'), first.index('"b"'))
+
+    def test_the_aggregate_never_carries_message_bodies_or_the_text_substring(self):
+        aggregate = noise_audit.aggregate(
+            [row(text=wud_text("demo", "2.0.0"))], source_metadata()
+        )
+
+        serialised = json.dumps(aggregate, ensure_ascii=False)
+        self.assertNotIn('"text"', serialised)
+        self.assertNotIn("text", serialised)
+        self.assertNotIn(str(Path.home()), serialised)
+
+    @unittest.skipUnless(real_export_path().exists(), "export real no disponible")
+    def test_the_real_export_is_reproducible_byte_for_byte(self):
+        self.assertEqual(
+            noise_audit.check_repro(real_export_path()), {"reproducible": True}
+        )
+
+
 class EraTest(unittest.TestCase):
     def test_each_era_declares_its_inclusive_calendar_days(self):
         eras = noise_audit.build_eras(era_shape_rows())
