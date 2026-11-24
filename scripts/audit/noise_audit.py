@@ -509,6 +509,24 @@ TELEGRAM_FAMILIES = (
 
 POLICY_BUCKETS = ("immediate", "digest", "silent")
 
+REPORT_SECTION_IDS = (
+    "resumen",
+    "ventana",
+    "inventario",
+    "eras",
+    "eventos",
+    "recuperaciones",
+    "duplicados",
+    "horario",
+    "top_claves",
+    "push",
+    "politica",
+    "apagado",
+    "objetivo",
+    "supuestos",
+    "reproducibilidad",
+)
+
 # Read-only evidence: `path` is relative to the appdata root passed as --state-root.
 EVIDENCE_SOURCES = (
     {
@@ -1530,10 +1548,99 @@ def _split_label(split):
     return "; ".join(f"{outcome}→{bucket}" for outcome, bucket in split.items())
 
 
+ASSUMPTIONS = (
+    {
+        "id": "A1",
+        "claim": "La hora del export es hora de pared de Madrid.",
+        "risk": "El histograma se desplaza 1 o 2 horas y los picos de las 06:00 se leen mal.",
+    },
+    {
+        "id": "A2",
+        "claim": "Las firmas de los mensajes son estables y únicas en toda la ventana.",
+        "risk": "Un cambio de plantilla manda mensajes a unknown y subestima una familia.",
+    },
+    {
+        "id": "A3",
+        "claim": (
+            "Los 14 mensajes WUD con coincidencia son el mismo pendiente avisado "
+            "por dos sistemas."
+        ),
+        "risk": "Si son hechos distintos, se sobrecuenta el duplicado.",
+    },
+    {
+        "id": "A4",
+        "claim": "issue-automator y SMART quedan fuera del cutover.",
+        "risk": "El mapa quedaría incompleto si el operador quiere apagar también Seerr.",
+    },
+    {
+        "id": "A5",
+        "claim": (
+            "El export contiene todo el tráfico de Telegram relevante: un solo "
+            "chat y un solo bot."
+        ),
+        "risk": "Si hubiera otro chat o bot, faltarían mensajes.",
+    },
+    {
+        "id": "A6",
+        "claim": "El acceso a alerts sigue sin estar disponible durante la fase.",
+        "risk": "Si aparece, hay que rellenar la columna de push.",
+    },
+    {
+        "id": "A7",
+        "claim": "E4, con 12 días, es una línea base suficiente para el objetivo.",
+        "risk": "Un objetivo calculado sobre 12 días puede ser demasiado estricto o laxo.",
+    },
+    {
+        "id": "A8",
+        "claim": (
+            "Los dos mensajes SMART del 25 abr son el mismo hecho con dos "
+            "codificaciones."
+        ),
+        "risk": "Contarlos como dos eventos sobrecuenta E1 en un evento.",
+    },
+)
+
+
+def _counts_sentence(counts):
+    return (
+        f"{counts['immediate']} immediate, {counts['digest']} digest y "
+        f"{counts['silent']} silent"
+    )
+
+
+def _peak_hour(buckets):
+    ranked = sorted(
+        ((count, int(hour)) for hour, count in buckets.items() if count),
+        key=lambda pair: (-pair[0], pair[1]),
+    )
+    return ranked[0] if ranked else (0, 0)
+
+
 def build_report_model(aggregate):
     """Render model built only from aggregates; it never sees a message body."""
+    dataset = aggregate["dataset"]
+    source = aggregate["source"]
+    inventory = aggregate["inventory"]
+    eras = aggregate["eras"]
+    trend = aggregate["trend"]
+    wud_events = aggregate["wud_events"]
+    repetitions = aggregate["repetitions"]
+    histogram = aggregate["histogram"]
+    top_keys = aggregate["top_keys"]
+    recoveries = aggregate["recoveries"]
+    duplicates = aggregate["duplicates"]
+    push = aggregate["push"]
     policy = aggregate["policy"]
+    shutdown = aggregate["shutdown_order"]
     target = aggregate["success_target"]
+    footnotes = {note["id"]: note for note in aggregate["footnotes"]}
+
+    telegram = recoveries["telegram"]
+    hub_push = recoveries["hub_push"]
+    inter_system = duplicates["inter_system"]
+    inter_channel = duplicates["inter_channel"]
+    ack = target["ack"]
+    peak_messages, peak_hour = _peak_hour(histogram["by_era"]["E4"])
     policy_rows = [
         [
             entry["key"],
@@ -1544,8 +1651,335 @@ def build_report_model(aggregate):
         for bucket in POLICY_BUCKETS
         for entry in policy["buckets"][bucket]
     ]
-    ack = target["ack"]
+    eras_order = ("E1", "E2", "E3a", "E3b", "E4")
     sections = [
+        _section(
+            "resumen",
+            "Resumen",
+            "export",
+            paragraphs=[
+                (
+                    f"El export contiene {dataset['messages']} mensajes "
+                    f"({dataset['bot_messages']} del bot y {dataset['operator_messages']} "
+                    f"del operador) entre {dataset['first_at'][:10]} y "
+                    f"{dataset['last_at'][:10]}, en {dataset['inclusive_days']} días inclusivos."
+                ),
+                (
+                    "El bot usa 10 familias y 9 emisores; el hub no envía Telegram y "
+                    "sus 12 claves se mapean por separado."
+                ),
+                (
+                    f"El mapa de política fija {_counts_sentence(policy['counts'])}; "
+                    f"el orden de apagado tiene {len(shutdown['order'])} pasos y la "
+                    "copia se estrecha en vez de apagarse."
+                ),
+                (
+                    f"El objetivo propuesto es {target['proactive_messages_per_day']} "
+                    f"mensajes proactivos/día frente a "
+                    f"{target['baseline_messages_per_day']} de E4, con el ack "
+                    "publicado como —."
+                ),
+            ],
+            tables=[
+                _table(
+                    "Cifras de cabecera",
+                    ["Cifra", "Valor", "Origen"],
+                    [
+                        ["Mensajes totales", dataset["messages"], "export"],
+                        ["Mensajes del bot", dataset["bot_messages"], "export"],
+                        ["Mensajes del operador", dataset["operator_messages"], "export"],
+                        ["Claves con disposición", policy["total_keys"], "codigo"],
+                        ["Pasos de apagado", len(shutdown["order"]), "codigo"],
+                        ["Objetivo proactivo/día", target["proactive_messages_per_day"], "export"],
+                    ],
+                )
+            ],
+        ),
+        _section(
+            "ventana",
+            "Ventana medida",
+            "export",
+            paragraphs=[
+                (
+                    "La ventana se cierra en el último mensaje, no en la fecha del "
+                    "export; el denominador es inclusivo y se declara por era."
+                )
+            ],
+            tables=[
+                _table(
+                    "Ventana y fuente",
+                    ["Campo", "Valor"],
+                    [
+                        ["Primer mensaje", dataset["first_at"]],
+                        ["Último mensaje", dataset["last_at"]],
+                        ["Días inclusivos", dataset["inclusive_days"]],
+                        ["Días con mensajes", dataset["days_with_messages"]],
+                        ["Mensajes sin hora", dataset["missing_time"]],
+                        ["Separadores de fecha", dataset["date_separators"]],
+                        ["sha256 del export", source["sha256"]],
+                        ["Bytes del export", source["bytes"]],
+                    ],
+                )
+            ],
+        ),
+        _section(
+            "inventario",
+            "Inventario de emisores",
+            "export",
+            paragraphs=[
+                (
+                    f"Se identifican {len(inventory['emitters'])} emisores. El hub "
+                    f"declara {inventory['hub_telegram_messages']} mensajes de Telegram "
+                    f"porque su canal es {inventory['hub_channel']}."
+                )
+            ],
+            tables=[
+                _table(
+                    "Emisores",
+                    ["Emisor", "Canal", "Mensajes"],
+                    [
+                        [entry["id"], entry["channel"], entry["messages"]]
+                        for entry in inventory["emitters"]
+                    ],
+                ),
+                _table(
+                    "Familias del bot",
+                    ["Familia", "Mensajes"],
+                    [
+                        [family, messages]
+                        for family, messages in sorted(inventory["families"].items())
+                    ],
+                ),
+            ],
+        ),
+        _section(
+            "eras",
+            "Eras y tendencia",
+            "export",
+            paragraphs=[
+                (
+                    "Cada era publica mensajes y eventos con su denominador inclusivo. "
+                    "E3 se parte en E3a (3–7 nov) y E3b (8–12 nov) para no confundir "
+                    "el efecto del tag.transform con el de WUD 9.8.0."
+                )
+            ],
+            tables=[
+                _table(
+                    "Eras",
+                    ["Era", "Desde", "Hasta", "Días", "Mensajes", "Eventos", "Mensajes/día"],
+                    [
+                        [
+                            name,
+                            eras[name]["from"],
+                            eras[name]["to"],
+                            eras[name]["inclusive_days"],
+                            eras[name]["messages"],
+                            eras[name]["events"],
+                            eras[name]["rate"],
+                        ]
+                        for name in ("E1", "E2", "E3", "E4")
+                    ],
+                ),
+                _table(
+                    "Tendencia con E3 partida",
+                    [
+                        "Ventana",
+                        "Desde",
+                        "Hasta",
+                        "Días",
+                        "Mensajes",
+                        "Marcadores previos",
+                        "Marcadores posteriores",
+                    ],
+                    [
+                        [
+                            name,
+                            trend["eras"][name]["from"],
+                            trend["eras"][name]["to"],
+                            trend["eras"][name]["inclusive_days"],
+                            trend["eras"][name]["messages"],
+                            ", ".join(trend["eras"][name]["markers_before"]) or "—",
+                            ", ".join(trend["eras"][name]["markers_after"]) or "—",
+                        ]
+                        for name in eras_order
+                    ],
+                ),
+            ],
+        ),
+        _section(
+            "eventos",
+            "Eventos y repeticiones",
+            "export",
+            paragraphs=[
+                (
+                    f"WUD agrupa {wud_events['messages']} mensajes en "
+                    f"{wud_events['scan_passes']} pasadas de escaneo "
+                    f"({wud_events['messages_per_event']} mensajes por pasada)."
+                ),
+                (
+                    f"Las repeticiones suman {repetitions['repeated_groups']} grupos y "
+                    f"{repetitions['extra_messages']} mensajes extra."
+                ),
+            ],
+            tables=[
+                _table(
+                    "Grupos repetidos",
+                    ["Contenedor", "Tag destino", "Mensajes", "Extras"],
+                    [
+                        [
+                            group["container"],
+                            group["target_tag"],
+                            group["messages"],
+                            group["extra_messages"],
+                        ]
+                        for group in repetitions["groups"]
+                    ],
+                )
+            ],
+        ),
+        _section(
+            "recuperaciones",
+            "Recuperaciones por canal",
+            "state",
+            paragraphs=[
+                (
+                    f"Telegram publica {telegram['openings']} aperturas, "
+                    f"{telegram['informational']} informativos y "
+                    f"{telegram['recovery_messages']} recuperaciones "
+                    f"(ratio {telegram['recovery_ratio']})."
+                ),
+                (
+                    f"El hub queda {hub_push['status']}: sin CSV de alerts no hay "
+                    "cifra de push y se publica —, nunca 0."
+                ),
+            ],
+            tables=[
+                _table(
+                    "Recuperaciones por canal",
+                    ["Canal", "Aperturas", "Informativos", "Recuperaciones", "Ratio", "Estado"],
+                    [
+                        [
+                            "telegram",
+                            telegram["openings"],
+                            telegram["informational"],
+                            telegram["recovery_messages"],
+                            telegram["recovery_ratio"],
+                            "measured",
+                        ],
+                        [
+                            "hub_push",
+                            None,
+                            None,
+                            None,
+                            None,
+                            hub_push["status"],
+                        ],
+                    ],
+                )
+            ],
+        ),
+        _section(
+            "duplicados",
+            "Duplicados",
+            "export",
+            paragraphs=[
+                (
+                    "El duplicado entre sistemas y el duplicado entre canales se "
+                    "publican en bloques separados y nunca se suman en una cifra."
+                )
+            ],
+            tables=[
+                _table(
+                    "Duplicado entre sistemas",
+                    ["Mensajes", "Mismo tag", "Actualización real", "Solo manual", "Latencia mínima (min)"],
+                    [
+                        [
+                            inter_system["messages"],
+                            inter_system["same_target"],
+                            inter_system["real_update"],
+                            inter_system["manual_only"],
+                            inter_system["latency_min"],
+                        ]
+                    ],
+                ),
+                _table(
+                    "Duplicado entre canales",
+                    ["Estado", "Duplicados", "Latencia (s)"],
+                    [[inter_channel["status"], inter_channel["duplicates"], inter_channel["latency_s"]]],
+                ),
+            ],
+        ),
+        _section(
+            "horario",
+            "Distribución horaria",
+            "export",
+            paragraphs=[
+                "El histograma usa la hora de pared del export, sin convertirla.",
+                (
+                    f"El pico de E4 es de {peak_messages} mensajes a las "
+                    f"{peak_hour:02d}:00."
+                ),
+            ],
+            tables=[
+                _table(
+                    "Mensajes por hora",
+                    ["Hora", "Mensajes"],
+                    [
+                        [f"{hour:02d}:00", histogram["buckets"][str(hour)]]
+                        for hour in range(24)
+                    ],
+                )
+            ],
+        ),
+        _section(
+            "top_claves",
+            "Top de claves",
+            "export",
+            paragraphs=[
+                "El top se ordena por volumen y desempata alfabéticamente."
+            ],
+            tables=[
+                _table(
+                    "Top de claves",
+                    ["Clave", "Mensajes", "Cuota", "E1", "E2", "E3", "E4"],
+                    [
+                        [
+                            entry["key"],
+                            entry["messages"],
+                            entry["share"],
+                            entry["by_era"]["E1"],
+                            entry["by_era"]["E2"],
+                            entry["by_era"]["E3"],
+                            entry["by_era"]["E4"],
+                        ]
+                        for entry in top_keys
+                    ],
+                )
+            ],
+        ),
+        _section(
+            "push",
+            "Columna de push",
+            "no medido",
+            paragraphs=[
+                (
+                    f"La tabla alerts no está disponible: push queda {push['status']}. "
+                    "La columna se publica como — y no se infiere del volumen de Telegram."
+                )
+            ],
+            tables=[
+                _table(
+                    "Cobertura de push",
+                    ["Campo", "Valor"],
+                    [
+                        ["Estado", push["status"]],
+                        ["Origen", push["source"]],
+                        ["Filas", push["rows"]],
+                        ["Filas omitidas", push["skipped_rows"]],
+                    ],
+                )
+            ],
+        ),
         _section(
             "politica",
             "Política de avisos",
@@ -1553,9 +1987,7 @@ def build_report_model(aggregate):
             paragraphs=[
                 (
                     "El mapa cubre las 22 claves del catálogo: "
-                    f"{policy['counts']['immediate']} immediate, "
-                    f"{policy['counts']['digest']} digest y "
-                    f"{policy['counts']['silent']} silent."
+                    f"{_counts_sentence(policy['counts'])}."
                 ),
                 (
                     "WUD queda en silent y la copia en immediate. El éxito de "
@@ -1569,6 +2001,56 @@ def build_report_model(aggregate):
                     ["Clave", "Origen", "Bucket", "Split por resultado"],
                     policy_rows,
                 )
+            ],
+        ),
+        _section(
+            "apagado",
+            "Orden de apagado",
+            "codigo",
+            paragraphs=[
+                (
+                    "La copia no se apaga: se estrecha a backup-failed con origen "
+                    "propio (SEC-06, PITFALLS #24). issue-automator y SMART quedan "
+                    "fuera del cutover y se revisan en la fase 8."
+                )
+            ],
+            tables=[
+                _table(
+                    "Orden de apagado",
+                    ["Paso", "Emisor", "Familias", "Sustituto", "Reversibilidad"],
+                    [
+                        [
+                            index,
+                            step["emitter"],
+                            ", ".join(step["families"]),
+                            step["replacement"],
+                            step["reversibility"],
+                        ]
+                        for index, step in enumerate(shutdown["order"], 1)
+                    ],
+                ),
+                _table(
+                    "Copia estrechada",
+                    ["Emisor", "Destino", "Origen", "Requisito", "Motivo"],
+                    [
+                        [
+                            step["emitter"],
+                            step["to"],
+                            step["origin"],
+                            step["requirement"],
+                            step["reason"],
+                        ]
+                        for step in shutdown["narrowed"]
+                    ],
+                ),
+                _table(
+                    "Fuera de alcance",
+                    ["Emisor", "Familias", "Revisión"],
+                    [
+                        [step["emitter"], ", ".join(step["families"]), step["revisit"]]
+                        for step in shutdown["out_of_scope"]
+                    ],
+                ),
             ],
         ),
         _section(
@@ -1616,8 +2098,53 @@ def build_report_model(aggregate):
                 ),
             ],
         ),
+        _section(
+            "supuestos",
+            "Supuestos",
+            "codigo",
+            paragraphs=[
+                "Los ocho supuestos siguientes sostienen las cifras del informe."
+            ],
+            tables=[
+                _table(
+                    "Supuestos",
+                    ["Id", "Supuesto", "Riesgo"],
+                    [
+                        [assumption["id"], assumption["claim"], assumption["risk"]]
+                        for assumption in ASSUMPTIONS
+                    ],
+                )
+            ],
+        ),
+        _section(
+            "reproducibilidad",
+            "Reproducibilidad",
+            "export",
+            paragraphs=[
+                f"El sha256 del export es {source['sha256']}.",
+                (
+                    "Regenerar el informe: `python3 scripts/audit/noise_audit.py "
+                    "--export <export> --out-json <json> --out-md <md> --force`."
+                ),
+                (
+                    "Comprobar el informe: `python3 scripts/audit/noise_audit.py "
+                    "--check-report --out-json <json> --out-md <md>`."
+                ),
+                (
+                    "Comprobar la reproducibilidad: `python3 scripts/audit/noise_audit.py "
+                    "--export <export> --check-repro`."
+                ),
+                (
+                    "Notas de cobertura: "
+                    + " ".join(
+                        footnotes[note_id]["body"]
+                        for note_id in ("denominator", "push_coverage", "ack_unavailable")
+                    )
+                ),
+            ],
+        ),
     ]
-    return {"source_hash": aggregate["source"]["sha256"], "sections": sections}
+    return {"source_hash": source["sha256"], "sections": sections}
 
 
 def _render_cell(value):
@@ -1659,6 +2186,14 @@ def render_report(model):
                 )
             lines.append("")
     return "\n".join(lines).rstrip("\n") + "\n"
+
+
+def check_report(json_path, md_path):
+    """True when the Markdown on disk is exactly what the stored model renders."""
+    data = json.loads(Path(json_path).read_text(encoding="utf-8"))
+    expected = render_report(data["report"])
+    actual = Path(md_path).read_text(encoding="utf-8")
+    return expected == actual
 
 
 def check_repro(export_path):
@@ -1817,7 +2352,11 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Audita el ruido de Telegram a partir del export HTML del chat."
     )
-    parser.add_argument("--export", required=True, help="ruta al messages.html exportado")
+    parser.add_argument(
+        "--export",
+        default=None,
+        help="ruta al messages.html exportado (obligatoria salvo con --check-report)",
+    )
     parser.add_argument(
         "--ndjson",
         default=str(DEFAULT_NDJSON),
@@ -1842,6 +2381,11 @@ def main(argv=None):
         help="agrega dos veces y compara el JSON canónico sin escribir salidas",
     )
     parser.add_argument(
+        "--check-report",
+        action="store_true",
+        help="compara el Markdown con el modelo guardado en el JSON y sale 1 si difiere",
+    )
+    parser.add_argument(
         "--print-summary", action="store_true", help="imprime una línea de resumen"
     )
     parser.add_argument(
@@ -1853,6 +2397,16 @@ def main(argv=None):
         "--force", action="store_true", help="sobrescribe las salidas existentes"
     )
     args = parser.parse_args(argv)
+
+    if args.check_report:
+        if not args.out_md:
+            parser.error("--check-report necesita --out-md")
+        result = {"report_matches": check_report(args.out_json, args.out_md)}
+        print(canonical_json(result).strip())
+        return 0 if result["report_matches"] else 1
+
+    if not args.export:
+        parser.error("--export es obligatorio salvo con --check-report")
 
     if args.check_repro:
         result = check_repro(args.export)

@@ -952,6 +952,717 @@
   "report": {
     "sections": [
       {
+        "id": "resumen",
+        "paragraphs": [
+          "El export contiene 148 mensajes (146 del bot y 2 del operador) entre 2026-04-25 y 2026-11-24, en 214 días inclusivos.",
+          "El bot usa 10 familias y 9 emisores; el hub no envía Telegram y sus 12 claves se mapean por separado.",
+          "El mapa de política fija 9 immediate, 9 digest y 4 silent; el orden de apagado tiene 5 pasos y la copia se estrecha en vez de apagarse.",
+          "El objetivo propuesto es 1.0 mensajes proactivos/día frente a 1.25 de E4, con el ack publicado como —."
+        ],
+        "source": "export",
+        "tables": [
+          {
+            "columns": [
+              "Cifra",
+              "Valor",
+              "Origen"
+            ],
+            "rows": [
+              [
+                "Mensajes totales",
+                148,
+                "export"
+              ],
+              [
+                "Mensajes del bot",
+                146,
+                "export"
+              ],
+              [
+                "Mensajes del operador",
+                2,
+                "export"
+              ],
+              [
+                "Claves con disposición",
+                22,
+                "codigo"
+              ],
+              [
+                "Pasos de apagado",
+                5,
+                "codigo"
+              ],
+              [
+                "Objetivo proactivo/día",
+                1.0,
+                "export"
+              ]
+            ],
+            "title": "Cifras de cabecera"
+          }
+        ],
+        "title": "Resumen"
+      },
+      {
+        "id": "ventana",
+        "paragraphs": [
+          "La ventana se cierra en el último mensaje, no en la fecha del export; el denominador es inclusivo y se declara por era."
+        ],
+        "source": "export",
+        "tables": [
+          {
+            "columns": [
+              "Campo",
+              "Valor"
+            ],
+            "rows": [
+              [
+                "Primer mensaje",
+                "2026-04-25T18:13:42"
+              ],
+              [
+                "Último mensaje",
+                "2026-11-24T06:08:00"
+              ],
+              [
+                "Días inclusivos",
+                214
+              ],
+              [
+                "Días con mensajes",
+                45
+              ],
+              [
+                "Mensajes sin hora",
+                0
+              ],
+              [
+                "Separadores de fecha",
+                45
+              ],
+              [
+                "sha256 del export",
+                "fe32cd3a63464261527d74ee77f53696b1b5837f58206230e15fa93291fdbe74"
+              ],
+              [
+                "Bytes del export",
+                76936
+              ]
+            ],
+            "title": "Ventana y fuente"
+          }
+        ],
+        "title": "Ventana medida"
+      },
+      {
+        "id": "inventario",
+        "paragraphs": [
+          "Se identifican 9 emisores. El hub declara 0 mensajes de Telegram porque su canal es push."
+        ],
+        "source": "export",
+        "tables": [
+          {
+            "columns": [
+              "Emisor",
+              "Canal",
+              "Mensajes"
+            ],
+            "rows": [
+              [
+                "wud",
+                "telegram",
+                95
+              ],
+              [
+                "security-monitor",
+                "telegram",
+                1
+              ],
+              [
+                "security-updater",
+                "telegram",
+                31
+              ],
+              [
+                "upgrade-script",
+                "telegram",
+                6
+              ],
+              [
+                "merged-updates",
+                "telegram",
+                4
+              ],
+              [
+                "backup",
+                "telegram",
+                2
+              ],
+              [
+                "issue-automator",
+                "telegram",
+                5
+              ],
+              [
+                "unknown-smart",
+                "telegram",
+                2
+              ],
+              [
+                "hub",
+                "push",
+                0
+              ]
+            ],
+            "title": "Emisores"
+          },
+          {
+            "columns": [
+              "Familia",
+              "Mensajes"
+            ],
+            "rows": [
+              [
+                "backup",
+                2
+              ],
+              [
+                "issue-incident",
+                3
+              ],
+              [
+                "issue-test",
+                2
+              ],
+              [
+                "release-apply",
+                4
+              ],
+              [
+                "release-stop",
+                5
+              ],
+              [
+                "release-upgrade",
+                1
+              ],
+              [
+                "security-digest",
+                1
+              ],
+              [
+                "security-update",
+                31
+              ],
+              [
+                "smart",
+                2
+              ],
+              [
+                "wud",
+                95
+              ]
+            ],
+            "title": "Familias del bot"
+          }
+        ],
+        "title": "Inventario de emisores"
+      },
+      {
+        "id": "eras",
+        "paragraphs": [
+          "Cada era publica mensajes y eventos con su denominador inclusivo. E3 se parte en E3a (3–7 nov) y E3b (8–12 nov) para no confundir el efecto del tag.transform con el de WUD 9.8.0."
+        ],
+        "source": "export",
+        "tables": [
+          {
+            "columns": [
+              "Era",
+              "Desde",
+              "Hasta",
+              "Días",
+              "Mensajes",
+              "Eventos",
+              "Mensajes/día"
+            ],
+            "rows": [
+              [
+                "E1",
+                "2026-04-25",
+                "2026-09-27",
+                156,
+                8,
+                6,
+                0.05
+              ],
+              [
+                "E2",
+                "2026-09-28",
+                "2026-11-02",
+                36,
+                105,
+                62,
+                2.92
+              ],
+              [
+                "E3",
+                "2026-11-03",
+                "2026-11-12",
+                10,
+                20,
+                19,
+                2.0
+              ],
+              [
+                "E4",
+                "2026-11-13",
+                "2026-11-24",
+                12,
+                15,
+                15,
+                1.25
+              ]
+            ],
+            "title": "Eras"
+          },
+          {
+            "columns": [
+              "Ventana",
+              "Desde",
+              "Hasta",
+              "Días",
+              "Mensajes",
+              "Marcadores previos",
+              "Marcadores posteriores"
+            ],
+            "rows": [
+              [
+                "E1",
+                "2026-04-25",
+                "2026-09-27",
+                156,
+                8,
+                "—",
+                "16d824e, d6831af, 38061f0, cc8d8a3"
+              ],
+              [
+                "E2",
+                "2026-09-28",
+                "2026-11-02",
+                36,
+                105,
+                "—",
+                "16d824e, d6831af, 38061f0, cc8d8a3"
+              ],
+              [
+                "E3a",
+                "2026-11-03",
+                "2026-11-07",
+                5,
+                11,
+                "16d824e",
+                "d6831af, 38061f0, cc8d8a3"
+              ],
+              [
+                "E3b",
+                "2026-11-08",
+                "2026-11-12",
+                5,
+                9,
+                "16d824e, d6831af, 38061f0",
+                "cc8d8a3"
+              ],
+              [
+                "E4",
+                "2026-11-13",
+                "2026-11-24",
+                12,
+                15,
+                "16d824e, d6831af, 38061f0, cc8d8a3",
+                "—"
+              ]
+            ],
+            "title": "Tendencia con E3 partida"
+          }
+        ],
+        "title": "Eras y tendencia"
+      },
+      {
+        "id": "eventos",
+        "paragraphs": [
+          "WUD agrupa 95 mensajes en 51 pasadas de escaneo (1.86 mensajes por pasada).",
+          "Las repeticiones suman 11 grupos y 14 mensajes extra."
+        ],
+        "source": "export",
+        "tables": [
+          {
+            "columns": [
+              "Contenedor",
+              "Tag destino",
+              "Mensajes",
+              "Extras"
+            ],
+            "rows": [
+              [
+                "qbittorrent",
+                "5.2.3_v2.0.15-ls478",
+                4,
+                3
+              ],
+              [
+                "qbittorrent",
+                "5.2.4_v2.0.15-ls480",
+                3,
+                2
+              ],
+              [
+                "radarr",
+                "6.4.4.10685-ls319",
+                2,
+                1
+              ],
+              [
+                "radarr-vo",
+                "6.4.4.10685-ls319",
+                2,
+                1
+              ],
+              [
+                "sonarr",
+                "4.0.20.3014-ls328",
+                2,
+                1
+              ],
+              [
+                "sonarr",
+                "4.0.20.3014-ls329",
+                2,
+                1
+              ],
+              [
+                "sonarr-vo",
+                "4.0.20.3014-ls328",
+                2,
+                1
+              ],
+              [
+                "sonarr-vo",
+                "4.0.20.3014-ls329",
+                2,
+                1
+              ],
+              [
+                "tdarr",
+                "2.93.01",
+                2,
+                1
+              ],
+              [
+                "tdarr",
+                "3.00.00",
+                2,
+                1
+              ],
+              [
+                "tdarr",
+                "3.01.00",
+                2,
+                1
+              ]
+            ],
+            "title": "Grupos repetidos"
+          }
+        ],
+        "title": "Eventos y repeticiones"
+      },
+      {
+        "id": "recuperaciones",
+        "paragraphs": [
+          "Telegram publica 120 aperturas, 26 informativos y 0 recuperaciones (ratio 0.0).",
+          "El hub queda unavailable: sin CSV de alerts no hay cifra de push y se publica —, nunca 0."
+        ],
+        "source": "state",
+        "tables": [
+          {
+            "columns": [
+              "Canal",
+              "Aperturas",
+              "Informativos",
+              "Recuperaciones",
+              "Ratio",
+              "Estado"
+            ],
+            "rows": [
+              [
+                "telegram",
+                120,
+                26,
+                0,
+                0.0,
+                "measured"
+              ],
+              [
+                "hub_push",
+                null,
+                null,
+                null,
+                null,
+                "unavailable"
+              ]
+            ],
+            "title": "Recuperaciones por canal"
+          }
+        ],
+        "title": "Recuperaciones por canal"
+      },
+      {
+        "id": "duplicados",
+        "paragraphs": [
+          "El duplicado entre sistemas y el duplicado entre canales se publican en bloques separados y nunca se suman en una cifra."
+        ],
+        "source": "export",
+        "tables": [
+          {
+            "columns": [
+              "Mensajes",
+              "Mismo tag",
+              "Actualización real",
+              "Solo manual",
+              "Latencia mínima (min)"
+            ],
+            "rows": [
+              [
+                14,
+                12,
+                1,
+                13,
+                -2876
+              ]
+            ],
+            "title": "Duplicado entre sistemas"
+          },
+          {
+            "columns": [
+              "Estado",
+              "Duplicados",
+              "Latencia (s)"
+            ],
+            "rows": [
+              [
+                "unavailable",
+                null,
+                null
+              ]
+            ],
+            "title": "Duplicado entre canales"
+          }
+        ],
+        "title": "Duplicados"
+      },
+      {
+        "id": "horario",
+        "paragraphs": [
+          "El histograma usa la hora de pared del export, sin convertirla.",
+          "El pico de E4 es de 8 mensajes a las 06:00."
+        ],
+        "source": "export",
+        "tables": [
+          {
+            "columns": [
+              "Hora",
+              "Mensajes"
+            ],
+            "rows": [
+              [
+                "00:00",
+                17
+              ],
+              [
+                "01:00",
+                0
+              ],
+              [
+                "02:00",
+                0
+              ],
+              [
+                "03:00",
+                0
+              ],
+              [
+                "04:00",
+                7
+              ],
+              [
+                "05:00",
+                1
+              ],
+              [
+                "06:00",
+                38
+              ],
+              [
+                "07:00",
+                0
+              ],
+              [
+                "08:00",
+                0
+              ],
+              [
+                "09:00",
+                0
+              ],
+              [
+                "10:00",
+                1
+              ],
+              [
+                "11:00",
+                1
+              ],
+              [
+                "12:00",
+                8
+              ],
+              [
+                "13:00",
+                2
+              ],
+              [
+                "14:00",
+                0
+              ],
+              [
+                "15:00",
+                5
+              ],
+              [
+                "16:00",
+                3
+              ],
+              [
+                "17:00",
+                2
+              ],
+              [
+                "18:00",
+                29
+              ],
+              [
+                "19:00",
+                4
+              ],
+              [
+                "20:00",
+                1
+              ],
+              [
+                "21:00",
+                8
+              ],
+              [
+                "22:00",
+                19
+              ],
+              [
+                "23:00",
+                2
+              ]
+            ],
+            "title": "Mensajes por hora"
+          }
+        ],
+        "title": "Distribución horaria"
+      },
+      {
+        "id": "top_claves",
+        "paragraphs": [
+          "El top se ordena por volumen y desempata alfabéticamente."
+        ],
+        "source": "export",
+        "tables": [
+          {
+            "columns": [
+              "Clave",
+              "Mensajes",
+              "Cuota",
+              "E1",
+              "E2",
+              "E3",
+              "E4"
+            ],
+            "rows": [
+              [
+                "security:update",
+                31,
+                0.212,
+                0,
+                15,
+                9,
+                7
+              ],
+              [
+                "wud:tdarr",
+                15,
+                0.103,
+                0,
+                13,
+                2,
+                0
+              ],
+              [
+                "wud:radarr",
+                10,
+                0.068,
+                0,
+                8,
+                1,
+                1
+              ]
+            ],
+            "title": "Top de claves"
+          }
+        ],
+        "title": "Top de claves"
+      },
+      {
+        "id": "push",
+        "paragraphs": [
+          "La tabla alerts no está disponible: push queda unavailable. La columna se publica como — y no se infiere del volumen de Telegram."
+        ],
+        "source": "no medido",
+        "tables": [
+          {
+            "columns": [
+              "Campo",
+              "Valor"
+            ],
+            "rows": [
+              [
+                "Estado",
+                "unavailable"
+              ],
+              [
+                "Origen",
+                "alerts CSV"
+              ],
+              [
+                "Filas",
+                null
+              ],
+              [
+                "Filas omitidas",
+                0
+              ]
+            ],
+            "title": "Cobertura de push"
+          }
+        ],
+        "title": "Columna de push"
+      },
+      {
         "id": "politica",
         "paragraphs": [
           "El mapa cubre las 22 claves del catálogo: 9 immediate, 9 digest y 4 silent.",
@@ -1106,6 +1817,102 @@
         "title": "Política de avisos"
       },
       {
+        "id": "apagado",
+        "paragraphs": [
+          "La copia no se apaga: se estrecha a backup-failed con origen propio (SEC-06, PITFALLS #24). issue-automator y SMART quedan fuera del cutover y se revisan en la fase 8."
+        ],
+        "source": "codigo",
+        "tables": [
+          {
+            "columns": [
+              "Paso",
+              "Emisor",
+              "Familias",
+              "Sustituto",
+              "Reversibilidad"
+            ],
+            "rows": [
+              [
+                1,
+                "upgrade-script",
+                "release-stop, release-upgrade",
+                "deploy-failed en el hub y digest",
+                "media"
+              ],
+              [
+                2,
+                "merged-updates",
+                "release-apply",
+                "deploy-failed y digest",
+                "media"
+              ],
+              [
+                3,
+                "security-updater",
+                "security-update",
+                "ingesta y digest (fases 4 y 8)",
+                "media"
+              ],
+              [
+                4,
+                "security-monitor",
+                "security-digest",
+                "digest del hub disponible antes del apagado",
+                "media"
+              ],
+              [
+                5,
+                "wud",
+                "wud",
+                "UI de WUD y recuento en el digest",
+                "alta"
+              ]
+            ],
+            "title": "Orden de apagado"
+          },
+          {
+            "columns": [
+              "Emisor",
+              "Destino",
+              "Origen",
+              "Requisito",
+              "Motivo"
+            ],
+            "rows": [
+              [
+                "backup",
+                "backup-failed",
+                "media-stack backup",
+                "SEC-06",
+                "PITFALLS #24"
+              ]
+            ],
+            "title": "Copia estrechada"
+          },
+          {
+            "columns": [
+              "Emisor",
+              "Familias",
+              "Revisión"
+            ],
+            "rows": [
+              [
+                "issue-automator",
+                "issue-incident, issue-test",
+                "phase 8"
+              ],
+              [
+                "unknown-smart",
+                "smart",
+                "phase 8"
+              ]
+            ],
+            "title": "Fuera de alcance"
+          }
+        ],
+        "title": "Orden de apagado"
+      },
+      {
         "id": "objetivo",
         "paragraphs": [
           "El objetivo se apoya en E4: 1.25 mensajes/día sobre 12 días inclusivos. Se propone 1.0 mensajes proactivos/día fuera del digest, menor o igual que la línea base.",
@@ -1185,6 +1992,78 @@
           }
         ],
         "title": "Objetivo de éxito"
+      },
+      {
+        "id": "supuestos",
+        "paragraphs": [
+          "Los ocho supuestos siguientes sostienen las cifras del informe."
+        ],
+        "source": "codigo",
+        "tables": [
+          {
+            "columns": [
+              "Id",
+              "Supuesto",
+              "Riesgo"
+            ],
+            "rows": [
+              [
+                "A1",
+                "La hora del export es hora de pared de Madrid.",
+                "El histograma se desplaza 1 o 2 horas y los picos de las 06:00 se leen mal."
+              ],
+              [
+                "A2",
+                "Las firmas de los mensajes son estables y únicas en toda la ventana.",
+                "Un cambio de plantilla manda mensajes a unknown y subestima una familia."
+              ],
+              [
+                "A3",
+                "Los 14 mensajes WUD con coincidencia son el mismo pendiente avisado por dos sistemas.",
+                "Si son hechos distintos, se sobrecuenta el duplicado."
+              ],
+              [
+                "A4",
+                "issue-automator y SMART quedan fuera del cutover.",
+                "El mapa quedaría incompleto si el operador quiere apagar también Seerr."
+              ],
+              [
+                "A5",
+                "El export contiene todo el tráfico de Telegram relevante: un solo chat y un solo bot.",
+                "Si hubiera otro chat o bot, faltarían mensajes."
+              ],
+              [
+                "A6",
+                "El acceso a alerts sigue sin estar disponible durante la fase.",
+                "Si aparece, hay que rellenar la columna de push."
+              ],
+              [
+                "A7",
+                "E4, con 12 días, es una línea base suficiente para el objetivo.",
+                "Un objetivo calculado sobre 12 días puede ser demasiado estricto o laxo."
+              ],
+              [
+                "A8",
+                "Los dos mensajes SMART del 25 abr son el mismo hecho con dos codificaciones.",
+                "Contarlos como dos eventos sobrecuenta E1 en un evento."
+              ]
+            ],
+            "title": "Supuestos"
+          }
+        ],
+        "title": "Supuestos"
+      },
+      {
+        "id": "reproducibilidad",
+        "paragraphs": [
+          "El sha256 del export es fe32cd3a63464261527d74ee77f53696b1b5837f58206230e15fa93291fdbe74.",
+          "Regenerar el informe: `python3 scripts/audit/noise_audit.py --export <export> --out-json <json> --out-md <md> --force`.",
+          "Comprobar el informe: `python3 scripts/audit/noise_audit.py --check-report --out-json <json> --out-md <md>`.",
+          "Comprobar la reproducibilidad: `python3 scripts/audit/noise_audit.py --export <export> --check-repro`.",
+          "Notas de cobertura: La discusión usó un denominador no declarado (0,04/día en E1 y 1,15/día en E4). Este informe usa días inclusivos: E1 8/156 = 0,05 y E4 15/12 = 1,25; los conteos no cambian. La columna de push se publica como —: no hay CSV de la tabla alerts, así que no se rellena con 0 ni se infiere del volumen de Telegram. El tiempo hasta reconocer se publica como —: no existe ackAt hasta la fase 6, así que no se inventa un 0."
+        ],
+        "source": "export",
+        "title": "Reproducibilidad"
       }
     ],
     "source_hash": "fe32cd3a63464261527d74ee77f53696b1b5837f58206230e15fa93291fdbe74"
