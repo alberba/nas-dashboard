@@ -14,7 +14,7 @@ Solo la fase 8 toca `media-stack` con commits; la fase 1 lo lee sin modificar y 
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Auditoría del ruido** - Medir mensajes, recuperaciones, duplicados y horas antes de fijar la política.
+- [x] **Phase 1: Auditoría del ruido** - Medir mensajes, recuperaciones, duplicados y horas antes de fijar la política. (completed 2026-11-24)
 - [ ] **Phase 2: Incidencias y entrega única** - Una incidencia con identidad y exactamente un mensaje, con outbox y estado de entrega.
 - [ ] **Phase 3: Agrupación, inventario y ayudantes** - Una caída de host es una incidencia, sin fantasmas ni ayudantes huérfanos.
 - [ ] **Phase 4: Resumen diario** - Lo no urgente llega una vez al día, sin duplicarse ni perderse en los cambios de hora.
@@ -36,7 +36,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Incluye la distribución horaria y el top 3 de claves por volumen.
   4. Fija el mapa definitivo de alerta inmediata, digest o silenciosa y el orden de apagado de emisores de `media-stack`.
   5. Fija el objetivo de éxito medido: mensajes proactivos/día y tiempo hasta reconocer.
-**Plans**: 3/3 plans executed
+**Plans**: 3/3 plans complete
 
 Plans:
 **Wave 1**
@@ -201,7 +201,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Auditoría del ruido | 3/3 | In Progress | - |
+| 1. Auditoría del ruido | 3/3 | Complete    | 2026-11-24 |
 | 2. Incidencias y entrega única | 0/3 | Not started | - |
 | 3. Agrupación, inventario y ayudantes | 0/3 | Not started | - |
 | 4. Resumen diario | 0/3 | Not started | - |

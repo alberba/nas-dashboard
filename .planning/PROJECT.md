@@ -24,6 +24,7 @@ Saber en segundos qué está pasando en los dos servidores y poder actuar sobre 
 - ✓ Avisos internos y Web Push para umbrales, copia, discos, unidades, releases y despliegues — existente
 - ✓ Renovate: lectura de PR y merge verificado; progreso de despliegue en seis pasos — existente
 - ✓ PWA instalable con notificaciones en móvil y CI completo (tipos, lint, Vitest, agente Python, build, Playwright) — existente
+- ✓ Auditoría del volumen de avisos, mapa de política y objetivo de ruido — fase 01 (AUDT-01 a AUDT-05)
 
 ### Active
 
@@ -68,11 +69,11 @@ Saber en segundos qué está pasando en los dos servidores y poder actuar sobre 
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Auditar el ruido antes de decidir el alcance de notificaciones | El usuario percibe exceso de avisos pero no hay medida de origen ni volumen | — Pending |
+| Auditar el ruido antes de decidir el alcance de notificaciones | El export de Telegram aporta una línea base de 1,25 mensajes/día en E4 | Fase 01 aprobada con 9 claves de aviso inmediato, 9 para el resumen, 4 silenciosas y un objetivo de mediana diaria de hasta 1 aviso proactivo fuera del resumen en 14 días |
 | Un mensaje por incidencia, sin aviso de recuperación | El volumen por evento es la queja principal | — Pending |
 | Resumen diario para lo no urgente | Evita interrumpir por informativo sin perderlo | — Pending |
 | Telegram con acciones inline | El usuario quiere resolver desde el móvil, no solo enterarse | — Pending |
-| Auditar con datos reales del NAS y de media-stack | Sin una cifra de partida no hay criterio de éxito | — Pending |
+| Auditar con datos reales del NAS y de media-stack | Sin una cifra de partida no hay criterio de éxito | Telegram medido. El push histórico queda sin medir en ausencia del CSV de `alerts`. |
 
 ## Evolution
 

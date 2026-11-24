@@ -1,7 +1,7 @@
 ---
 phase: 01-auditor-a-del-ruido
 verified: 2026-11-24T19:38:26Z
-status: human_needed
+status: passed
 score: 23/23 must-haves verified
 covered_files:
   - .planning/phases/01-auditor-a-del-ruido/01-01-PLAN.md
@@ -33,12 +33,12 @@ human_verification:
 
 **Phase Goal:** Producir el informe de ruido que fija la política: qué mensajes llegan, desde qué emisor, con qué frecuencia y qué proporción son recuperaciones o duplicados.
 **Verified:** 2026-11-24T19:38:26Z
-**Status:** human_needed
+**Status:** passed
 **Re-verification:** No — verificación inicial
 
 ## Goal Achievement
 
-El objetivo se cumple en los artefactos: `01-AUDIT.json` y `01-AUDIT.md` publican los 148 mensajes del export (146 del bot y 2 del operador), la atribución por emisor y familia, la frecuencia por eras, los duplicados y las repeticiones, el histograma, las ventanas 30/60/90 y un mapa de política de 22 claves con orden de apagado y objetivo numérico. Las 23 verdades de los tres planes se reprodujeron contra el código y los artefactos, no contra los SUMMARY. No hay gaps de must-have. Queda una sola decisión de operador: la aceptación del mapa y del objetivo (D-12 / `01-VALIDATION.md`).
+El objetivo se cumple en los artefactos: `01-AUDIT.json` y `01-AUDIT.md` publican los 148 mensajes del export (146 del bot y 2 del operador), la atribución por emisor y familia, la frecuencia por eras, los duplicados y las repeticiones, el histograma, las ventanas 30/60/90 y un mapa de política de 22 claves con orden de apagado y objetivo numérico. Las 23 verdades de los tres planes se reprodujeron contra el código y los artefactos, no contra los SUMMARY. No hay gaps de must-have. El mapa y el objetivo quedaron aprobados en la prueba de aceptación del operador (D-12).
 
 ### Observable Truths
 
@@ -176,9 +176,12 @@ No hay probes de shell declarados (`scripts/*/tests/probe-*.sh`) ni mencionados 
 | Sin cuerpos ni nombres personales | Comparación de cada `text` (≥ 12 caracteres) y ventanas de 8 palabras contra JSON/MD; búsqueda de nombres | 0 fugas; el nombre del operador no aparece |
 | Sin la clave `text` | `'"text"' in 01-AUDIT.json` | `False` |
 
-### Human Verification Required
+### Human Verification
 
 #### 1. Aceptación del mapa de política y del objetivo de éxito
+
+**Resultado:** Aprobado. El registro de aceptación documenta el orden delegado
+y el tratamiento del push histórico. [01-UAT.md](01-UAT.md)
 
 **Test:** Leer `01-AUDIT.md` §Política de avisos y §Objetivo de éxito. Aceptar o pedir cambios sobre: (a) el mapa de 22 claves con 9 immediate / 9 digest / 4 silent, incluido WUD en silent y la copia en immediate; (b) el orden de apagado de cinco pasos con la copia estrechada a `backup-failed`; (c) el objetivo de 1,0 mensajes proactivos/día sobre una línea base E4 de 1,25/día; (d) que la columna de push siga publicada como — hasta disponer del CSV de `alerts`.
 **Expected:** El operador aprueba el conjunto o registra los cambios concretos. Si pide cambios, se abre una ronda de ajuste antes de dar la fase por cerrada.
