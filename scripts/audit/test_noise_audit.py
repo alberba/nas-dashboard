@@ -33,6 +33,16 @@ def row(**overrides):
     return base
 
 
+def source_metadata():
+    return {
+        "path_hint": "messages.html",
+        "sha256": "0" * 64,
+        "bytes": 1,
+        "exported_mtime_note": "nota",
+        "date_separators": 1,
+    }
+
+
 def family(inventory, name):
     return inventory["families"].get(name)
 
@@ -263,6 +273,139 @@ class InventoryTest(unittest.TestCase):
         self.assertEqual(inventory["operator"], 2)
         self.assertEqual(sum(inventory["families"].values()), 146)
         self.assertEqual(inventory["unknown"], [])
+
+
+class RecoveryTest(unittest.TestCase):
+    def signature_rows(self):
+        return [
+            row(id=f"message{index}", text=text)
+            for index, (_family, text, _expected) in enumerate(SIGNATURE_CASES, 1)
+        ]
+
+    def test_the_telegram_split_covers_every_bot_message_once(self):
+        rows = self.signature_rows() + [row(id="operator1", sender=OPERATOR)]
+
+        telegram = noise_audit.build_recoveries(rows)["telegram"]
+
+        self.assertEqual(telegram["messages"], len(SIGNATURE_CASES))
+        self.assertEqual(
+            telegram["openings"]
+            + telegram["informational"]
+            + telegram["recovery_messages"],
+            len(SIGNATURE_CASES),
+        )
+        self.assertEqual(telegram["openings"], 7)
+        self.assertEqual(telegram["informational"], 4)
+        self.assertEqual(telegram["recovery_messages"], 0)
+
+    def test_a_manual_and_updated_message_counts_once_as_an_opening(self):
+        text = (
+            "Demo Monitor — autoactualización de seguridad\n\n"
+            "demo-arr → 1.0.1: actualizada; comprobación de salud correcta\n"
+            "demo-db → 2.0.0: manual: missing healthcheck"
+        )
+
+        result = noise_audit.build_openings([row(text=text)])
+
+        self.assertEqual(result["openings"], 1)
+        self.assertEqual(result["informational"], 0)
+
+    def test_an_all_updated_security_update_is_informational(self):
+        text = (
+            "Demo Monitor — autoactualización de seguridad\n\n"
+            "demo-arr → 1.0.1: actualizada; comprobación de salud correcta"
+        )
+
+        result = noise_audit.build_openings([row(text=text)])
+
+        self.assertEqual(result["openings"], 0)
+        self.assertEqual(result["informational"], 1)
+
+    def test_a_failed_release_apply_is_an_opening(self):
+        result = noise_audit.build_openings(
+            [row(text="Demo Home — v1.2.3 falló")]
+        )
+
+        self.assertEqual(result["openings"], 1)
+        self.assertEqual(result["informational"], 0)
+
+    def test_a_recovery_line_is_not_counted_as_an_opening(self):
+        text = (
+            "Demo Monitor — autoactualización de seguridad\n\n"
+            "— recuperación completada: demo-arr"
+        )
+
+        result = noise_audit.build_recoveries([row(text=text)])["telegram"]
+
+        self.assertEqual(result["recovery_messages"], 1)
+        self.assertEqual(result["openings"], 0)
+        self.assertEqual(result["informational"], 0)
+
+    def test_the_ratio_is_zero_without_openings(self):
+        rows = [row(text="🧪 Test manual de Issue Automator")]
+
+        telegram = noise_audit.build_recoveries(rows)["telegram"]
+
+        self.assertEqual(telegram["openings"], 0)
+        self.assertEqual(telegram["recovery_ratio"], 0.0)
+
+    def test_the_hub_push_block_stays_unmeasured_without_a_csv(self):
+        recoveries = noise_audit.build_recoveries(self.signature_rows())
+        hub = recoveries["hub_push"]
+
+        self.assertNotIn("total", recoveries)
+        self.assertEqual(hub["status"], "unavailable")
+        self.assertEqual(hub["source"], "alerts.resolvedAt")
+        for field in (
+            "openings",
+            "recovery_messages",
+            "recovery_ratio",
+            "push_decision_at",
+            "push_resolved_at",
+            "push_latency_s",
+        ):
+            self.assertIsNone(hub[field], field)
+
+    def test_each_family_declares_its_recovery_capability(self):
+        capabilities = noise_audit.build_recoveries([])["telegram"][
+            "by_family_capability"
+        ]
+
+        self.assertTrue(capabilities["security-update"]["can_emit_recovery"])
+        self.assertTrue(capabilities["hub"]["can_emit_recovery"])
+        self.assertTrue(capabilities["security-update"]["recovery_template"])
+        self.assertTrue(capabilities["hub"]["recovery_template"])
+        for family_name in KNOWN_FAMILIES:
+            if family_name == "security-update":
+                continue
+            self.assertFalse(
+                capabilities[family_name]["can_emit_recovery"], family_name
+            )
+
+    def test_the_aggregate_publishes_recoveries(self):
+        aggregate = noise_audit.aggregate(self.signature_rows(), source_metadata())
+
+        self.assertIn("recoveries", aggregate)
+        self.assertEqual(
+            aggregate["recoveries"]["telegram"]["openings"]
+            + aggregate["recoveries"]["telegram"]["informational"],
+            len(SIGNATURE_CASES),
+        )
+
+    @unittest.skipUnless(real_export_path().exists(), "export real no disponible")
+    def test_the_real_export_has_146_messages_and_zero_recoveries(self):
+        rows = telegram_export.parse_export(real_export_path())
+
+        telegram = noise_audit.build_recoveries(rows)["telegram"]
+
+        self.assertEqual(telegram["messages"], 146)
+        self.assertEqual(
+            telegram["openings"]
+            + telegram["informational"]
+            + telegram["recovery_messages"],
+            146,
+        )
+        self.assertEqual(telegram["recovery_messages"], 0)
 
 
 class EraTest(unittest.TestCase):
