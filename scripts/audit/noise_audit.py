@@ -8,11 +8,13 @@ split is two buckets, ``bot`` and ``operator``.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import re
 from collections import Counter
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import telegram_export
 
@@ -258,6 +260,18 @@ ERA_WINDOWS = {
     "E2": {"from": "2026-09-28", "to": "2026-11-02"},
     "E3": {"from": "2026-11-03", "to": "2026-11-12"},
     "E4": {"from": "2026-11-13", "to": "2026-11-24"},
+}
+
+MADRID = ZoneInfo("Europe/Madrid")
+ALERTS_HEADER = ("hostId", "key", "severity", "at", "resolvedAt")
+BACKUP_PUSH_WINDOW = timedelta(minutes=10)
+RELEASE_PUSH_WINDOW = timedelta(hours=2)
+PUSH_KEYS_BY_REPORT = {
+    "backup": (("backup-failed",), BACKUP_PUSH_WINDOW),
+    "deploy": (
+        ("deploy-failed", "release-retained"),
+        RELEASE_PUSH_WINDOW,
+    ),
 }
 
 OPENING_FAMILIES = (
@@ -659,6 +673,214 @@ def build_recoveries(rows, alerts=None):
     }
 
 
+def to_instant(sent_at):
+    """Turn the export wall clock into a UTC instant, resolving the date's offset."""
+    moment = datetime.fromisoformat(str(sent_at))
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=MADRID)
+    return moment.astimezone(timezone.utc)
+
+
+def _parse_utc(value):
+    value = (value or "").strip()
+    if not value:
+        raise ValueError("instante vacío")
+    moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc)
+
+
+def load_alerts_csv(path):
+    """Read the optional alerts CSV; malformed rows are counted, never fatal."""
+    with Path(path).open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        if tuple(reader.fieldnames or ()) != ALERTS_HEADER:
+            raise ValueError(
+                "cabecera del CSV de alerts distinta de "
+                + ",".join(ALERTS_HEADER)
+            )
+        rows = []
+        skipped_rows = 0
+        for raw in reader:
+            try:
+                host_id = (raw.get("hostId") or "").strip()
+                key = (raw.get("key") or "").strip()
+                severity = (raw.get("severity") or "").strip()
+                if not host_id or not key or not severity:
+                    raise ValueError("fila incompleta")
+                at = _parse_utc(raw.get("at"))
+                resolved_raw = (raw.get("resolvedAt") or "").strip()
+                resolved_at = _parse_utc(resolved_raw) if resolved_raw else None
+            except (AttributeError, TypeError, ValueError):
+                skipped_rows += 1
+                continue
+            rows.append(
+                {
+                    "hostId": host_id,
+                    "key": key,
+                    "severity": severity,
+                    "at": at,
+                    "resolvedAt": resolved_at,
+                    "push_status": "measured",
+                }
+            )
+    return {"rows": rows, "skipped_rows": skipped_rows}
+
+
+def _push_match(classified):
+    key = classified.get("key") or ""
+    if key.startswith("backup:"):
+        return PUSH_KEYS_BY_REPORT["backup"]
+    if (
+        key.startswith("deploy:")
+        or key.startswith("release:apply")
+        or key.startswith("release:stop")
+    ):
+        return PUSH_KEYS_BY_REPORT["deploy"]
+    return None, None
+
+
+def join_push_windows(alerts, rows):
+    """One alerts row per Telegram message, inside the declared channel window."""
+    joined = []
+    for row in rows:
+        if sender_kind(row.get("sender")) != "bot":
+            continue
+        classified = classify(row.get("text"))
+        alert_keys, window = _push_match(classified)
+        if not alert_keys:
+            continue
+        moment = to_instant(row["sent_at"])
+        candidates = [
+            entry
+            for entry in alerts
+            if entry["key"] in alert_keys and abs(entry["at"] - moment) <= window
+        ]
+        if not candidates:
+            continue
+        entry = min(
+            candidates, key=lambda candidate: (abs(candidate["at"] - moment), candidate["at"])
+        )
+        joined.append(
+            {
+                "message_id": row.get("id"),
+                "alert_key": entry["key"],
+                "push_decision_at": _iso_utc(entry["at"]),
+                "push_resolved_at": _iso_utc(entry["resolvedAt"]),
+                "push_latency_s": round(
+                    (moment - entry["at"]).total_seconds(), 2
+                ),
+                "push_status": "measured",
+            }
+        )
+    return joined
+
+
+def _inter_system(rows):
+    wud = sorted(
+        (
+            (row, classify(row.get("text")))
+            for row in rows
+            if sender_kind(row.get("sender")) == "bot"
+            and classify(row.get("text"))["family"] == "wud"
+        ),
+        key=lambda pair: (pair[0]["sent_at"], pair[0].get("id") or ""),
+    )
+    security = [
+        (row, classify(row.get("text")))
+        for row in rows
+        if sender_kind(row.get("sender")) == "bot"
+        and classify(row.get("text"))["family"] == "security-update"
+    ]
+    window = timedelta(days=2)
+    items = []
+    for wud_row, wud_classified in wud:
+        wud_at = datetime.fromisoformat(wud_row["sent_at"])
+        hits = []
+        for security_row, security_classified in security:
+            security_at = datetime.fromisoformat(security_row["sent_at"])
+            if abs(security_at - wud_at) > window:
+                continue
+            for update in security_classified.get("updates", []):
+                if update["container"] == wud_classified["container"]:
+                    hits.append((update, security_at))
+        if not hits:
+            continue
+        hits.sort(key=lambda pair: pair[1])
+        best = next(
+            (update for update, _at in hits if update["outcome"] == "updated"),
+            hits[0][0],
+        )
+        items.append(
+            {
+                "container": wud_classified["container"],
+                "wud_target": wud_classified["target_tag"],
+                "same_target": any(
+                    update["target_tag"] == wud_classified["target_tag"]
+                    for update, _at in hits
+                ),
+                "outcome": best["outcome"],
+                "latency_min": min(
+                    round((at - wud_at).total_seconds() / 60)
+                    for _update, at in hits
+                ),
+            }
+        )
+    real_update = sum(1 for item in items if item["outcome"] == "updated")
+    return {
+        "status": "measured",
+        "pair": "wud-security-updater",
+        "window_days": 2,
+        "messages": len(items),
+        "same_target": sum(1 for item in items if item["same_target"]),
+        "real_update": real_update,
+        "manual_only": len(items) - real_update,
+        "latency_min": min((item["latency_min"] for item in items), default=None),
+        "items": items,
+    }
+
+
+def _inter_channel(rows, alerts):
+    if alerts is None:
+        return {
+            "status": "unavailable",
+            "pair": "push-telegram",
+            "candidates": ["backup-failed"],
+            "duplicates": None,
+            "latency_s": None,
+            "reason": "sin CSV de alerts",
+        }
+    joined = join_push_windows(_alert_rows(alerts), rows)
+    backup = [
+        entry for entry in joined if entry["alert_key"] == "backup-failed"
+    ]
+    latencies = [
+        entry["push_latency_s"]
+        for entry in backup
+        if entry["push_latency_s"] is not None
+    ]
+    return {
+        "status": "measured",
+        "pair": "push-telegram",
+        "candidates": ["backup-failed"],
+        "duplicates": len(backup),
+        "latency_s": (
+            round(sum(latencies) / len(latencies), 2) if latencies else None
+        ),
+        "reason": None,
+        "items": joined,
+    }
+
+
+def build_duplicates(rows, alerts=None):
+    """Publish the Telegram overlap and the push overlap as two separate blocks."""
+    return {
+        "inter_system": _inter_system(rows),
+        "inter_channel": _inter_channel(rows, alerts),
+    }
+
+
 def build_evidence_sources(state_root=None):
     """Describe the nine evidence sources; probe them only when a root is given."""
     sources = []
@@ -733,6 +955,15 @@ def aggregate(rows, source, alerts=None, state_root=None):
         "inventory": build_inventory(rows),
         "eras": build_eras(rows),
         "recoveries": build_recoveries(rows, alerts),
+        "duplicates": build_duplicates(rows, alerts),
+        "push": {
+            "status": "unavailable" if alerts is None else "measured",
+            "source": "alerts CSV",
+            "rows": len(_alert_rows(alerts)) if alerts is not None else None,
+            "skipped_rows": (
+                alerts.get("skipped_rows", 0) if isinstance(alerts, dict) else 0
+            ),
+        },
         "evidence_sources": build_evidence_sources(state_root),
     }
 
@@ -790,6 +1021,11 @@ def main(argv=None):
         "--out-json", default=str(DEFAULT_OUT_JSON), help="JSON de agregados"
     )
     parser.add_argument(
+        "--alerts-csv",
+        default=None,
+        help="CSV opcional de alerts con cabecera hostId,key,severity,at,resolvedAt",
+    )
+    parser.add_argument(
         "--out-md",
         default=None,
         help="informe Markdown; lo genera el paso de informe, no este",
@@ -808,9 +1044,13 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     _refuse_overwrite((args.out_json, args.out_md, args.ndjson), args.force)
+    alerts = load_alerts_csv(args.alerts_csv) if args.alerts_csv else None
     rows, stats = telegram_export.parse_export_document(args.export)
     result = aggregate(
-        rows, _source_metadata(args.export, stats), state_root=args.state_root
+        rows,
+        _source_metadata(args.export, stats),
+        alerts=alerts,
+        state_root=args.state_root,
     )
 
     telegram_export.write_ndjson(rows, args.ndjson)

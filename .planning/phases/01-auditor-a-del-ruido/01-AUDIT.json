@@ -12,6 +12,128 @@
     "operator_messages": 2,
     "span_days": 213
   },
+  "duplicates": {
+    "inter_channel": {
+      "candidates": [
+        "backup-failed"
+      ],
+      "duplicates": null,
+      "latency_s": null,
+      "pair": "push-telegram",
+      "reason": "sin CSV de alerts",
+      "status": "unavailable"
+    },
+    "inter_system": {
+      "items": [
+        {
+          "container": "homarr",
+          "latency_min": 727,
+          "outcome": "manual",
+          "same_target": true,
+          "wud_target": "v2.5.2"
+        },
+        {
+          "container": "tdarr",
+          "latency_min": 367,
+          "outcome": "manual",
+          "same_target": true,
+          "wud_target": "3.00.00"
+        },
+        {
+          "container": "qbittorrent",
+          "latency_min": 39,
+          "outcome": "manual",
+          "same_target": true,
+          "wud_target": "5.2.4_v2.0.15-ls480"
+        },
+        {
+          "container": "tdarr",
+          "latency_min": -2153,
+          "outcome": "manual",
+          "same_target": true,
+          "wud_target": "3.01.00"
+        },
+        {
+          "container": "tdarr",
+          "latency_min": -620,
+          "outcome": "manual",
+          "same_target": true,
+          "wud_target": "3.01.00"
+        },
+        {
+          "container": "qbittorrent",
+          "latency_min": -2735,
+          "outcome": "manual",
+          "same_target": true,
+          "wud_target": "5.2.4_v2.0.15-ls480"
+        },
+        {
+          "container": "tdarr",
+          "latency_min": 366,
+          "outcome": "manual",
+          "same_target": true,
+          "wud_target": "3.02.00"
+        },
+        {
+          "container": "tdarr",
+          "latency_min": -714,
+          "outcome": "manual",
+          "same_target": true,
+          "wud_target": "3.03.00"
+        },
+        {
+          "container": "tdarr",
+          "latency_min": -2514,
+          "outcome": "manual",
+          "same_target": true,
+          "wud_target": "3.04.00"
+        },
+        {
+          "container": "tdarr",
+          "latency_min": 366,
+          "outcome": "manual",
+          "same_target": true,
+          "wud_target": "3.05.00"
+        },
+        {
+          "container": "tdarr",
+          "latency_min": -354,
+          "outcome": "manual",
+          "same_target": false,
+          "wud_target": "3.06.00"
+        },
+        {
+          "container": "radarr",
+          "latency_min": 2170,
+          "outcome": "updated",
+          "same_target": true,
+          "wud_target": "6.4.4.10685-ls325"
+        },
+        {
+          "container": "radarr-vo",
+          "latency_min": -2876,
+          "outcome": "manual",
+          "same_target": false,
+          "wud_target": "7.0.3.10918-ls328"
+        },
+        {
+          "container": "radarr",
+          "latency_min": 360,
+          "outcome": "manual",
+          "same_target": true,
+          "wud_target": "7.0.3.10918-ls328"
+        }
+      ],
+      "latency_min": -2876,
+      "manual_only": 13,
+      "messages": 14,
+      "pair": "wud-security-updater",
+      "real_update": 1,
+      "same_target": 12,
+      "status": "measured",
+      "window_days": 2
+    }
+  },
   "eras": {
     "E1": {
       "by_family": {
@@ -298,6 +420,12 @@
     "hub_telegram_messages": 0,
     "operator": 2,
     "unknown": []
+  },
+  "push": {
+    "rows": null,
+    "skipped_rows": 0,
+    "source": "alerts CSV",
+    "status": "unavailable"
   },
   "recoveries": {
     "hub_push": {
