@@ -12,8 +12,8 @@ Alcance de este milestone: auditar el ruido, sustituir los emisores por una entr
 - [x] **AUDT-01**: El operador dispone de un informe con mensajes/día por emisor (WUD, security-monitor, copia, issue-automator, upgrade, hub) de los últimos 30–90 días
 - [x] **AUDT-02**: El informe separa aperturas de recuperaciones y cuantifica los duplicados push + Telegram del mismo evento
 - [x] **AUDT-03**: El informe incluye distribución horaria y el top 3 de claves por volumen
-- [ ] **AUDT-04**: El informe fija el mapa definitivo de alerta inmediata, digest o silenciosa, y el orden de apagado de emisores de `media-stack`
-- [ ] **AUDT-05**: El informe fija el objetivo de éxito medido (mensajes proactivos/día y tiempo hasta reconocer)
+- [x] **AUDT-04**: El informe fija el mapa definitivo de alerta inmediata, digest o silenciosa, y el orden de apagado de emisores de `media-stack`
+- [x] **AUDT-05**: El informe fija el objetivo de éxito medido (mensajes proactivos/día y tiempo hasta reconocer)
 
 ### Incidencias y entrega única
 
@@ -106,8 +106,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AUDT-01 | Phase 1 | Complete |
 | AUDT-02 | Phase 1 | Complete |
 | AUDT-03 | Phase 1 | Complete |
-| AUDT-04 | Phase 1 | Pending |
-| AUDT-05 | Phase 1 | Pending |
+| AUDT-04 | Phase 1 | Complete |
+| AUDT-05 | Phase 1 | Complete |
 | INCD-01 | Phase 2 | Pending |
 | INCD-02 | Phase 2 | Pending |
 | INCD-03 | Phase 2 | Pending |
