@@ -1,5 +1,6 @@
 import json
 import os
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -262,6 +263,189 @@ class InventoryTest(unittest.TestCase):
         self.assertEqual(inventory["operator"], 2)
         self.assertEqual(sum(inventory["families"].values()), 146)
         self.assertEqual(inventory["unknown"], [])
+
+
+class EraTest(unittest.TestCase):
+    def test_each_era_declares_its_inclusive_calendar_days(self):
+        eras = noise_audit.build_eras(era_shape_rows())
+
+        self.assertEqual(
+            {name: era["inclusive_days"] for name, era in eras.items()},
+            {"E1": 156, "E2": 36, "E3": 10, "E4": 12},
+        )
+        for era in eras.values():
+            self.assertEqual(era["span_days"], era["inclusive_days"] - 1)
+
+    def test_the_rate_is_messages_over_inclusive_days(self):
+        eras = noise_audit.build_eras(era_shape_rows())
+
+        self.assertEqual(
+            {name: era["rate"] for name, era in eras.items()},
+            {"E1": 0.05, "E2": 2.92, "E3": 2.0, "E4": 1.25},
+        )
+        for era in eras.values():
+            self.assertEqual(era["rate"], round(era["messages"] / era["inclusive_days"], 2))
+
+    def test_build_rates_is_the_only_source_of_the_rate_field(self):
+        eras = noise_audit.build_eras(era_shape_rows())
+        rates = noise_audit.build_rates(eras)
+
+        self.assertEqual(rates, {name: era["rate"] for name, era in eras.items()})
+
+    def test_era_messages_add_up_to_the_whole_dataset(self):
+        rows = era_shape_rows() + [row(id="operator1", sender=OPERATOR)]
+
+        eras = noise_audit.build_eras(rows)
+
+        self.assertEqual(sum(era["messages"] for era in eras.values()), len(rows))
+
+    def test_era_boundaries_are_inclusive_and_never_overlap(self):
+        eras = noise_audit.build_eras(era_boundary_rows())
+
+        self.assertEqual({name: era["messages"] for name, era in eras.items()},
+                         {"E1": 2, "E2": 2, "E3": 2, "E4": 2})
+
+    def test_the_rate_never_uses_the_number_of_days_with_messages(self):
+        rows = [
+            row(id="message1", sent_at="2026-11-05T08:00:00"),
+            row(id="message2", sent_at="2026-11-05T09:00:00"),
+        ]
+
+        era = noise_audit.build_eras(rows)["E3"]
+
+        self.assertEqual(era["messages"], 2)
+        self.assertEqual(era["inclusive_days"], 10)
+        self.assertEqual(era["rate"], 0.2)
+        self.assertNotEqual(era["rate"], round(era["messages"] / 1, 2))
+
+    def test_each_era_carries_its_own_family_counts(self):
+        eras = noise_audit.build_eras(
+            [
+                row(id="message1", sent_at="2026-05-01T10:00:00", text=SIGNATURE_CASES[0][1]),
+                row(id="message2", sent_at="2026-11-20T10:00:00", text=SIGNATURE_CASES[7][1]),
+            ]
+        )
+
+        self.assertEqual(eras["E1"]["by_family"], {"wud": 1})
+        self.assertEqual(eras["E4"]["by_family"], {"backup": 1})
+        self.assertEqual(eras["E2"]["by_family"], {})
+
+    def test_the_denominator_note_explains_the_two_published_rates(self):
+        rows = [row()]
+        source = {
+            "path_hint": "messages.html",
+            "sha256": "0" * 64,
+            "bytes": 1,
+            "exported_mtime_note": "nota",
+            "date_separators": 1,
+        }
+
+        dataset = noise_audit.build_dataset_summary(rows, source)
+
+        self.assertIn("0,04", dataset["denominator_note"])
+        self.assertIn("1,15", dataset["denominator_note"])
+        self.assertIn("inclusivos", dataset["denominator_note"])
+
+    @unittest.skipUnless(real_export_path().exists(), "export real no disponible")
+    def test_the_real_export_reproduces_the_era_counts(self):
+        eras = noise_audit.build_eras(telegram_export.parse_export(real_export_path()))
+
+        self.assertEqual(
+            [eras[name]["messages"] for name in ("E1", "E2", "E3", "E4")],
+            [8, 105, 20, 15],
+        )
+        self.assertEqual(
+            [eras[name]["inclusive_days"] for name in ("E1", "E2", "E3", "E4")],
+            [156, 36, 10, 12],
+        )
+        self.assertEqual(
+            [eras[name]["rate"] for name in ("E1", "E2", "E3", "E4")],
+            [0.05, 2.92, 2.0, 1.25],
+        )
+
+
+class EvidenceTest(unittest.TestCase):
+    def test_the_sources_declare_nine_entries_with_their_limits(self):
+        sources = noise_audit.build_evidence_sources()
+
+        self.assertEqual(len(sources), 9)
+        self.assertEqual(len({source["id"] for source in sources}), 9)
+        for source in sources:
+            for field in ("id", "label", "access", "proves", "status"):
+                self.assertTrue(source[field], (source["id"], field))
+        statuses = {source["id"]: source["status"] for source in sources}
+        self.assertEqual(statuses["alerts"], "unavailable")
+        self.assertEqual(statuses["docker-logs"], "partial")
+        self.assertEqual(statuses["export"], "available")
+
+    def test_a_state_root_refreshes_exists_and_readable_without_raising(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "backup").mkdir()
+            (root / "backup" / "last-status").write_text("ok", encoding="utf-8")
+            (root / "security-monitor").mkdir()
+            outbox = root / "security-monitor" / "update-notifications.json"
+            outbox.write_text("{}", encoding="utf-8")
+            outbox.chmod(0o000)
+
+            sources = {
+                source["id"]: source
+                for source in noise_audit.build_evidence_sources(root)
+            }
+
+        self.assertTrue(sources["backup-status"]["exists"])
+        self.assertTrue(sources["backup-status"]["readable"])
+        self.assertTrue(sources["update-outbox"]["exists"])
+        self.assertFalse(sources["update-outbox"]["readable"])
+        self.assertFalse(sources["failed-release"]["exists"])
+        self.assertFalse(sources["failed-release"]["readable"])
+
+    def test_without_a_state_root_the_probe_fields_stay_unset(self):
+        sources = noise_audit.build_evidence_sources()
+
+        for source in sources:
+            self.assertNotIn("exists", source)
+            self.assertNotIn("readable", source)
+
+    def test_the_aggregate_publishes_eras_and_evidence_sources(self):
+        rows = era_boundary_rows()
+        source = {
+            "path_hint": "messages.html",
+            "sha256": "0" * 64,
+            "bytes": 1,
+            "exported_mtime_note": "nota",
+            "date_separators": 1,
+        }
+
+        aggregate = noise_audit.aggregate(rows, source)
+
+        self.assertEqual(set(aggregate["eras"]), {"E1", "E2", "E3", "E4"})
+        self.assertEqual(len(aggregate["evidence_sources"]), 9)
+
+
+def era_shape_rows():
+    shape = {"E1": (8, "2026-05-01T12:00:00"), "E2": (105, "2026-10-01T12:00:00"),
+             "E3": (20, "2026-11-05T12:00:00"), "E4": (15, "2026-11-20T12:00:00")}
+    rows = []
+    for era, (count, stamp) in shape.items():
+        rows.extend(
+            row(id=f"{era}-{index}", sent_at=stamp) for index in range(count)
+        )
+    return rows
+
+
+def era_boundary_rows():
+    stamps = (
+        "2026-04-25T18:00:00",
+        "2026-09-27T23:59:59",
+        "2026-09-28T00:00:00",
+        "2026-11-02T23:59:59",
+        "2026-11-03T00:00:00",
+        "2026-11-12T23:59:59",
+        "2026-11-13T00:00:00",
+        "2026-11-24T06:08:00",
+    )
+    return [row(id=f"message{index}", sent_at=stamp) for index, stamp in enumerate(stamps, 1)]
 
 
 if __name__ == "__main__":
