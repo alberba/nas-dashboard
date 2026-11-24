@@ -36,14 +36,14 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Incluye la distribución horaria y el top 3 de claves por volumen.
   4. Fija el mapa definitivo de alerta inmediata, digest o silenciosa y el orden de apagado de emisores de `media-stack`.
   5. Fija el objetivo de éxito medido: mensajes proactivos/día y tiempo hasta reconocer.
-**Plans**: 1/3 plans executed
+**Plans**: 2/3 plans executed
 
 Plans:
 **Wave 1**
 - [x] 01-01: Reconstruir el inventario de emisores y recolectar 30–90 días desde logs, archivos de estado y export del chat
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 01-02: Cuantificar recuperaciones, duplicados push + Telegram, distribución horaria y top de claves
+- [x] 01-02: Cuantificar recuperaciones, duplicados push + Telegram, distribución horaria y top de claves
 
 **Wave 3** *(blocked on Wave 2 completion)*
 - [ ] 01-03: Fijar el mapa alerta/digest/silencio, el orden de apagado y el objetivo de éxito
@@ -201,7 +201,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Auditoría del ruido | 1/3 | In Progress | - |
+| 1. Auditoría del ruido | 2/3 | In Progress | - |
 | 2. Incidencias y entrega única | 0/3 | Not started | - |
 | 3. Agrupación, inventario y ayudantes | 0/3 | Not started | - |
 | 4. Resumen diario | 0/3 | Not started | - |

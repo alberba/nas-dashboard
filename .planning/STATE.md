@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 01
 current_phase_name: Auditoría del ruido
 status: executing
-stopped_at: Completed 01-01-PLAN.md; ready for 01-02
-last_updated: "2026-11-24T18:54:40.283Z"
+stopped_at: Completed 01-02-PLAN.md; ready for 01-03
+last_updated: "2026-11-24T19:06:26.183Z"
 last_activity: 2026-11-24
 last_activity_desc: Phase 01 execution started
-state_head: 1657bbd2e2e997733107af967c148bbb00465bb4
+state_head: 61a14314fb7ee13db88ef9b7ba25c87bd814a284
 progress:
   total_phases: 8
   completed_phases: 0
   total_plans: 3
-  completed_plans: 1
+  completed_plans: 2
   percent: 0
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-24)
 ## Current Position
 
 Phase: 01 (Auditoría del ruido) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-11-24 — Phase 01 execution started
 
@@ -57,6 +57,7 @@ Progress: [░░░░░░░░░░] 0%
 | Plan | Duration | Tasks | Files |
 |------|----------|-------|-------|
 | Phase 01 P01 | 9 | 3 tasks | 8 files |
+| Phase 01 P02 | 10 | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -71,6 +72,9 @@ Recent decisions affecting current work:
 - [Fases 6–7]: Las acciones de host desde Telegram van por handoff al hub con sesión y passkey; `TELEGRAM_DIRECT_ACTIONS=0`.
 - [Fase 2]: Renombrar `alerts` a `incidents` con `fingerprint`, timeline y `seq`, con backfill y migración inversa.
 - [Phase 01]: El rate se mide sobre días inclusivos declarados (E1 8/156, E4 15/12), no sobre días con mensajes — CONTEXT publicó 0,04 y 1,15 con denominador no declarado; el informe debe declarar el denominador
+- [Phase 01]: El duplicado entre sistemas cuenta una vez por mensaje WUD (14), con 12 tags idénticos, 1 actualización real y 13 revisiones manuales
+- [Phase 01]: Las recuperaciones no se suman entre canales: Telegram queda en 0 por construcción y el hub se publica como no medido hasta que exista alerts.resolvedAt
+- [Phase 01]: El histograma usa la hora de pared del export sin convertir y las ventanas 30/60/90 se anclan al último mensaje con días inclusivos
 
 ### Pending Todos
 
@@ -90,6 +94,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-24T18:54:40.261Z
-Stopped at: Completed 01-01-PLAN.md; ready for 01-02
+Last session: 2026-11-24T19:06:13.593Z
+Stopped at: Completed 01-02-PLAN.md; ready for 01-03
 Resume file: None
