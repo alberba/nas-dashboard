@@ -262,6 +262,13 @@ ERA_WINDOWS = {
     "E4": {"from": "2026-11-13", "to": "2026-11-24"},
 }
 
+# E3 is split so the effect of the 3 November commits is not confused with the
+# WUD image update of 8 November.
+E3_SPLIT = {
+    "E3a": {"from": "2026-11-03", "to": "2026-11-07"},
+    "E3b": {"from": "2026-11-08", "to": "2026-11-12"},
+}
+
 MADRID = ZoneInfo("Europe/Madrid")
 ALERTS_HEADER = ("hostId", "key", "severity", "at", "resolvedAt")
 BACKUP_PUSH_WINDOW = timedelta(minutes=10)
@@ -1239,6 +1246,206 @@ def build_windows(rows, days=(30, 60, 90)):
     return windows
 
 
+def build_shutdown_order():
+    """The five-step cutover: the copy is narrowed, never shut off, and two wait."""
+    return {
+        "order": [
+            {
+                "emitter": "upgrade-script",
+                "families": ["release-stop", "release-upgrade"],
+                "replacement": "deploy-failed en el hub y digest",
+                "reversibility": "media",
+                "reason": (
+                    "Su fallo ya está cubierto por deploy-failed; su éxito "
+                    "es el caso de D-11."
+                ),
+            },
+            {
+                "emitter": "merged-updates",
+                "families": ["release-apply"],
+                "replacement": "deploy-failed y digest",
+                "reversibility": "media",
+                "reason": (
+                    "Despliega releases; el fallo ya se refleja en deploy-failed."
+                ),
+            },
+            {
+                "emitter": "security-updater",
+                "families": ["security-update"],
+                "replacement": "ingesta y digest (fases 4 y 8)",
+                "reversibility": "media",
+                "reason": "Necesita el digest para que el éxito no interrumpa.",
+            },
+            {
+                "emitter": "security-monitor",
+                "families": ["security-digest"],
+                "replacement": "digest del hub disponible antes del apagado",
+                "reversibility": "media",
+                "reason": "Conserva el resumen de CVEs durante el traspaso.",
+            },
+            {
+                "emitter": "wud",
+                "families": ["wud"],
+                "replacement": "UI de WUD y recuento en el digest",
+                "reversibility": "alta",
+                "reason": (
+                    "Es el mayor volumen; su UI sigue siendo la fuente de "
+                    "verdad y su API alimenta al monitor."
+                ),
+            },
+        ],
+        "narrowed": [
+            {
+                "emitter": "backup",
+                "to": "backup-failed",
+                "origin": "media-stack backup",
+                "requirement": "SEC-06",
+                "reason": "PITFALLS #24",
+            }
+        ],
+        "out_of_scope": [
+            {
+                "emitter": "issue-automator",
+                "families": ["issue-incident", "issue-test"],
+                "revisit": "phase 8",
+                "reason": "Es una función de Seerr, no del hub.",
+            },
+            {
+                "emitter": "unknown-smart",
+                "families": ["smart"],
+                "revisit": "phase 8",
+                "reason": "Sustituido por disk-health y sin código localizable.",
+            },
+        ],
+        "never_shut_off": ["backup"],
+    }
+
+
+def build_temporal_markers():
+    """The four milestones of D-06, each with its cutoff and its effect."""
+    return [
+        {
+            "id": "16d824e",
+            "date": "2026-10-16",
+            "cutoff": "2026-10-16T16:35:20",
+            "date_only": False,
+            "effect": (
+                "Arreglo de avisos de security-updates: cambia el formato, "
+                "no el volumen."
+            ),
+        },
+        {
+            "id": "d6831af",
+            "date": "2026-11-03",
+            "cutoff": "2026-11-03T18:55:08",
+            "date_only": False,
+            "effect": (
+                "Silencia los rebuilds de linuxserver en WUD con tag.transform."
+            ),
+        },
+        {
+            "id": "38061f0",
+            "date": "2026-11-03",
+            "cutoff": "2026-11-03T19:11:43",
+            "date_only": False,
+            "effect": (
+                "Release y actualizaciones compatibles automáticas: nuevo "
+                "flujo de releases."
+            ),
+        },
+        {
+            "id": "cc8d8a3",
+            "date": "2026-11-08",
+            "cutoff": "2026-11-08T00:23:11",
+            "date_only": False,
+            "effect": (
+                "WUD 9.8.0: la actualización de imagen no reintroduce el "
+                "ruido de rebuilds."
+            ),
+        },
+    ]
+
+
+def _era_metrics(rows, window):
+    start = _as_day(window["from"])
+    end = _as_day(window["to"])
+    messages = sum(
+        1 for row in rows if start <= _as_day(row["sent_at"]) <= end
+    )
+    return {
+        "from": window["from"],
+        "to": window["to"],
+        "inclusive_days": (end - start).days + 1,
+        "messages": messages,
+        "by_family": build_family_counts(rows, start, end),
+    }
+
+
+def build_trend_table(rows):
+    """Publish E1, E2, E3a, E3b and E4 with the markers around each window."""
+    markers = build_temporal_markers()
+    windows = {
+        "E1": ERA_WINDOWS["E1"],
+        "E2": ERA_WINDOWS["E2"],
+        "E3a": E3_SPLIT["E3a"],
+        "E3b": E3_SPLIT["E3b"],
+        "E4": ERA_WINDOWS["E4"],
+    }
+    eras = {}
+    for name, window in windows.items():
+        entry = _era_metrics(rows, window)
+        entry["markers_before"] = [
+            marker["id"] for marker in markers if marker["date"] < window["from"]
+        ]
+        entry["markers_after"] = [
+            marker["id"] for marker in markers if marker["date"] >= window["from"]
+        ]
+        eras[name] = entry
+    return {"markers": markers, "eras": eras}
+
+
+def _decimal(value):
+    return f"{value:.2f}".replace(".", ",")
+
+
+def build_footnotes(eras):
+    """Three notes: the denominator, the missing push column and the missing ack."""
+    e1 = eras["E1"]
+    e4 = eras["E4"]
+    return [
+        {
+            "id": "denominator",
+            "title": "Denominador del ritmo",
+            "body": (
+                "La discusión usó un denominador no declarado (0,04/día en E1 "
+                "y 1,15/día en E4). Este informe usa días inclusivos: "
+                f"E1 {e1['messages']}/{e1['inclusive_days']} = "
+                f"{_decimal(e1['messages'] / e1['inclusive_days'])} y "
+                f"E4 {e4['messages']}/{e4['inclusive_days']} = "
+                f"{_decimal(e4['messages'] / e4['inclusive_days'])}; "
+                "los conteos no cambian."
+            ),
+        },
+        {
+            "id": "push_coverage",
+            "title": "Cobertura de push",
+            "body": (
+                "La columna de push se publica como —: no hay CSV de la tabla "
+                "alerts, así que no se rellena con 0 ni se infiere del volumen "
+                "de Telegram."
+            ),
+        },
+        {
+            "id": "ack_unavailable",
+            "title": "Ack no medido",
+            "body": (
+                "El tiempo hasta reconocer se publica como —: no existe ackAt "
+                "hasta la fase 6, así que no se inventa un 0."
+            ),
+        },
+    ]
+
+
 def _policy_entry(entry):
     item = {
         "key": entry.get("key") or entry.get("family"),
@@ -1559,7 +1766,10 @@ def aggregate(rows, source, alerts=None, state_root=None):
         "evidence_sources": build_evidence_sources(state_root),
     }
     document["policy"] = build_policy_map()
+    document["shutdown_order"] = build_shutdown_order()
     document["success_target"] = build_success_target(eras)
+    document["trend"] = build_trend_table(rows)
+    document["footnotes"] = build_footnotes(eras)
     document["report"] = build_report_model(document)
     return document
 

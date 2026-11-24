@@ -266,6 +266,23 @@
       "status": "unavailable"
     }
   ],
+  "footnotes": [
+    {
+      "body": "La discusión usó un denominador no declarado (0,04/día en E1 y 1,15/día en E4). Este informe usa días inclusivos: E1 8/156 = 0,05 y E4 15/12 = 1,25; los conteos no cambian.",
+      "id": "denominator",
+      "title": "Denominador del ritmo"
+    },
+    {
+      "body": "La columna de push se publica como —: no hay CSV de la tabla alerts, así que no se rellena con 0 ni se infiere del volumen de Telegram.",
+      "id": "push_coverage",
+      "title": "Cobertura de push"
+    },
+    {
+      "body": "El tiempo hasta reconocer se publica como —: no existe ackAt hasta la fase 6, así que no se inventa un 0.",
+      "id": "ack_unavailable",
+      "title": "Ack no medido"
+    }
+  ],
   "histogram": {
     "buckets": {
       "0": 17,
@@ -1177,6 +1194,87 @@
     "bot": 146,
     "operator": 2
   },
+  "shutdown_order": {
+    "narrowed": [
+      {
+        "emitter": "backup",
+        "origin": "media-stack backup",
+        "reason": "PITFALLS #24",
+        "requirement": "SEC-06",
+        "to": "backup-failed"
+      }
+    ],
+    "never_shut_off": [
+      "backup"
+    ],
+    "order": [
+      {
+        "emitter": "upgrade-script",
+        "families": [
+          "release-stop",
+          "release-upgrade"
+        ],
+        "reason": "Su fallo ya está cubierto por deploy-failed; su éxito es el caso de D-11.",
+        "replacement": "deploy-failed en el hub y digest",
+        "reversibility": "media"
+      },
+      {
+        "emitter": "merged-updates",
+        "families": [
+          "release-apply"
+        ],
+        "reason": "Despliega releases; el fallo ya se refleja en deploy-failed.",
+        "replacement": "deploy-failed y digest",
+        "reversibility": "media"
+      },
+      {
+        "emitter": "security-updater",
+        "families": [
+          "security-update"
+        ],
+        "reason": "Necesita el digest para que el éxito no interrumpa.",
+        "replacement": "ingesta y digest (fases 4 y 8)",
+        "reversibility": "media"
+      },
+      {
+        "emitter": "security-monitor",
+        "families": [
+          "security-digest"
+        ],
+        "reason": "Conserva el resumen de CVEs durante el traspaso.",
+        "replacement": "digest del hub disponible antes del apagado",
+        "reversibility": "media"
+      },
+      {
+        "emitter": "wud",
+        "families": [
+          "wud"
+        ],
+        "reason": "Es el mayor volumen; su UI sigue siendo la fuente de verdad y su API alimenta al monitor.",
+        "replacement": "UI de WUD y recuento en el digest",
+        "reversibility": "alta"
+      }
+    ],
+    "out_of_scope": [
+      {
+        "emitter": "issue-automator",
+        "families": [
+          "issue-incident",
+          "issue-test"
+        ],
+        "reason": "Es una función de Seerr, no del hub.",
+        "revisit": "phase 8"
+      },
+      {
+        "emitter": "unknown-smart",
+        "families": [
+          "smart"
+        ],
+        "reason": "Sustituido por disk-health y sin código localizable.",
+        "revisit": "phase 8"
+      }
+    ]
+  },
   "source": {
     "bytes": 76936,
     "exported_mtime_note": "exportado 2026-11-24T16:15:24; la ventana termina en el último mensaje",
@@ -1236,6 +1334,135 @@
       "share": 0.068
     }
   ],
+  "trend": {
+    "eras": {
+      "E1": {
+        "by_family": {
+          "issue-incident": 2,
+          "issue-test": 2,
+          "smart": 2
+        },
+        "from": "2026-04-25",
+        "inclusive_days": 156,
+        "markers_after": [
+          "16d824e",
+          "d6831af",
+          "38061f0",
+          "cc8d8a3"
+        ],
+        "markers_before": [],
+        "messages": 8,
+        "to": "2026-09-27"
+      },
+      "E2": {
+        "by_family": {
+          "backup": 2,
+          "issue-incident": 1,
+          "security-digest": 1,
+          "security-update": 15,
+          "wud": 86
+        },
+        "from": "2026-09-28",
+        "inclusive_days": 36,
+        "markers_after": [
+          "16d824e",
+          "d6831af",
+          "38061f0",
+          "cc8d8a3"
+        ],
+        "markers_before": [],
+        "messages": 105,
+        "to": "2026-11-02"
+      },
+      "E3a": {
+        "by_family": {
+          "release-stop": 1,
+          "release-upgrade": 1,
+          "security-update": 5,
+          "wud": 4
+        },
+        "from": "2026-11-03",
+        "inclusive_days": 5,
+        "markers_after": [
+          "d6831af",
+          "38061f0",
+          "cc8d8a3"
+        ],
+        "markers_before": [
+          "16d824e"
+        ],
+        "messages": 11,
+        "to": "2026-11-07"
+      },
+      "E3b": {
+        "by_family": {
+          "release-apply": 1,
+          "release-stop": 4,
+          "security-update": 4
+        },
+        "from": "2026-11-08",
+        "inclusive_days": 5,
+        "markers_after": [
+          "cc8d8a3"
+        ],
+        "markers_before": [
+          "16d824e",
+          "d6831af",
+          "38061f0"
+        ],
+        "messages": 9,
+        "to": "2026-11-12"
+      },
+      "E4": {
+        "by_family": {
+          "release-apply": 3,
+          "security-update": 7,
+          "wud": 5
+        },
+        "from": "2026-11-13",
+        "inclusive_days": 12,
+        "markers_after": [],
+        "markers_before": [
+          "16d824e",
+          "d6831af",
+          "38061f0",
+          "cc8d8a3"
+        ],
+        "messages": 15,
+        "to": "2026-11-24"
+      }
+    },
+    "markers": [
+      {
+        "cutoff": "2026-10-16T16:35:20",
+        "date": "2026-10-16",
+        "date_only": false,
+        "effect": "Arreglo de avisos de security-updates: cambia el formato, no el volumen.",
+        "id": "16d824e"
+      },
+      {
+        "cutoff": "2026-11-03T18:55:08",
+        "date": "2026-11-03",
+        "date_only": false,
+        "effect": "Silencia los rebuilds de linuxserver en WUD con tag.transform.",
+        "id": "d6831af"
+      },
+      {
+        "cutoff": "2026-11-03T19:11:43",
+        "date": "2026-11-03",
+        "date_only": false,
+        "effect": "Release y actualizaciones compatibles automáticas: nuevo flujo de releases.",
+        "id": "38061f0"
+      },
+      {
+        "cutoff": "2026-11-08T00:23:11",
+        "date": "2026-11-08",
+        "date_only": false,
+        "effect": "WUD 9.8.0: la actualización de imagen no reintroduce el ruido de rebuilds.",
+        "id": "cc8d8a3"
+      }
+    ]
+  },
   "windows": {
     "30d": {
       "by_emitter": {
