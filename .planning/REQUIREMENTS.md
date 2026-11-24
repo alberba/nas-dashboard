@@ -103,13 +103,57 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| — | — | Pending |
+| AUDT-01 | Phase 1 | Pending |
+| AUDT-02 | Phase 1 | Pending |
+| AUDT-03 | Phase 1 | Pending |
+| AUDT-04 | Phase 1 | Pending |
+| AUDT-05 | Phase 1 | Pending |
+| INCD-01 | Phase 2 | Pending |
+| INCD-02 | Phase 2 | Pending |
+| INCD-03 | Phase 2 | Pending |
+| INCD-04 | Phase 2 | Pending |
+| INCD-05 | Phase 2 | Pending |
+| INCD-06 | Phase 2 | Pending |
+| INCD-07 | Phase 2 | Pending |
+| INCD-08 | Phase 2 | Pending |
+| BOT-01 | Phase 2 | Pending |
+| BOT-03 | Phase 2 | Pending |
+| SEC-03 | Phase 2 | Pending |
+| CONT-01 | Phase 2 | Pending |
+| INCD-09 | Phase 3 | Pending |
+| INCD-10 | Phase 3 | Pending |
+| CONT-04 | Phase 3 | Pending |
+| DIG-01 | Phase 4 | Pending |
+| DIG-02 | Phase 4 | Pending |
+| DIG-03 | Phase 4 | Pending |
+| DIG-04 | Phase 4 | Pending |
+| DIG-05 | Phase 4 | Pending |
+| DIG-06 | Phase 4 | Pending |
+| CONT-03 | Phase 4 | Pending |
+| BOT-02 | Phase 5 | Pending |
+| BOT-04 | Phase 5 | Pending |
+| BOT-05 | Phase 5 | Pending |
+| BOT-06 | Phase 5 | Pending |
+| BOT-10 | Phase 5 | Pending |
+| SEC-01 | Phase 6 | Pending |
+| SEC-02 | Phase 6 | Pending |
+| SEC-04 | Phase 6 | Pending |
+| BOT-07 | Phase 7 | Pending |
+| BOT-08 | Phase 7 | Pending |
+| BOT-09 | Phase 7 | Pending |
+| SEC-05 | Phase 8 | Pending |
+| SEC-06 | Phase 8 | Pending |
+| CONT-02 | Phase 8 | Pending |
+| PERF-01 | Phase 8 | Pending |
+| PERF-02 | Phase 8 | Pending |
 
 **Coverage:**
-- v1 requirements: 48 total
-- Mapped to phases: 0
-- Unmapped: 48 ⚠️
+- v1 requirements: 43 total
+- Mapped to phases: 43
+- Unmapped: 0 ✅
+
+*Inventario real del documento: 43 IDs v1 en 7 categorías; los 43 están mapeados.*
 
 ---
 *Requirements defined: 2026-11-24*
-*Last updated: 2026-11-24 after initial definition*
+*Last updated: 2026-11-24 after roadmap creation*
