@@ -266,7 +266,7 @@ EVIDENCE_SOURCES = (
         "id": "export",
         "label": "Export del chat de Telegram",
         "access": "ruta de D-01, fuera del repositorio",
-        "proves": "mensajes, fechas, remitentes y texto de la ventana completa",
+        "proves": "mensajes, fechas, remitentes y contenido de la ventana completa",
         "status": "available",
     },
     {

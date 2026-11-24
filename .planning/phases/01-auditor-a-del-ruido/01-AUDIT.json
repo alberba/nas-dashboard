@@ -79,7 +79,7 @@
       "access": "ruta de D-01, fuera del repositorio",
       "id": "export",
       "label": "Export del chat de Telegram",
-      "proves": "mensajes, fechas, remitentes y texto de la ventana completa",
+      "proves": "mensajes, fechas, remitentes y contenido de la ventana completa",
       "status": "available"
     },
     {
