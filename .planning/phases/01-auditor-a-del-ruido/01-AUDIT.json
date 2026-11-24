@@ -1,0 +1,25 @@
+{
+  "dataset": {
+    "bot_messages": 146,
+    "date_separators": 45,
+    "days_with_messages": 45,
+    "first_at": "2026-04-25T18:13:42",
+    "inclusive_days": 214,
+    "last_at": "2026-11-24T06:08:00",
+    "messages": 148,
+    "missing_time": 0,
+    "operator_messages": 2,
+    "span_days": 213
+  },
+  "schema_version": 1,
+  "sender_split": {
+    "bot": 146,
+    "operator": 2
+  },
+  "source": {
+    "bytes": 76936,
+    "exported_mtime_note": "exportado 2026-11-24T16:15:24; la ventana termina en el último mensaje",
+    "path_hint": "messages.html",
+    "sha256": "fe32cd3a63464261527d74ee77f53696b1b5837f58206230e15fa93291fdbe74"
+  }
+}

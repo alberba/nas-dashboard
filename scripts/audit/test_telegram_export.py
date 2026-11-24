@@ -11,7 +11,7 @@ import telegram_export
 FIXTURES = Path(__file__).parent / "fixtures"
 SAMPLE = FIXTURES / "telegram_export_sample.html"
 OPERATOR_NAME = "Operador Demo"
-BOT_NAME = "Demo Monitor"
+BOT_NAME = "NAS Monitor"
 
 
 def real_export_path():

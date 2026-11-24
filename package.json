@@ -12,6 +12,8 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:agent": "python3 -m unittest discover -s agent -p 'test_*.py'",
+    "test:audit": "python3 -m unittest discover -s scripts/audit -p 'test_*.py'",
+    "audit:noise": "python3 scripts/audit/noise_audit.py",
     "db:migrate": "node --env-file-if-exists=.env.local --import tsx scripts/migrate.ts",
     "worker": "node --env-file-if-exists=.env.local --import tsx src/worker.ts"
   },
