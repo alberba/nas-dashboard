@@ -160,7 +160,7 @@ El duplicado entre sistemas y el duplicado entre canales se publican en bloques 
 
 | Mensajes | Mismo tag | Actualización real | Solo manual | Latencia mínima (min) |
 |---|---|---|---|---|
-| 14 | 12 | 1 | 13 | -2876 |
+| 14 | 12 | 1 | 13 | 39 |
 
 **Duplicado entre canales**
 

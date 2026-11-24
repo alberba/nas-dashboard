@@ -48,21 +48,21 @@
         },
         {
           "container": "tdarr",
-          "latency_min": -2153,
+          "latency_min": 727,
           "outcome": "manual",
           "same_target": true,
           "wud_target": "3.01.00"
         },
         {
           "container": "tdarr",
-          "latency_min": -620,
+          "latency_min": null,
           "outcome": "manual",
           "same_target": true,
           "wud_target": "3.01.00"
         },
         {
           "container": "qbittorrent",
-          "latency_min": -2735,
+          "latency_min": null,
           "outcome": "manual",
           "same_target": true,
           "wud_target": "5.2.4_v2.0.15-ls480"
@@ -76,14 +76,14 @@
         },
         {
           "container": "tdarr",
-          "latency_min": -714,
+          "latency_min": 722,
           "outcome": "manual",
           "same_target": true,
           "wud_target": "3.03.00"
         },
         {
           "container": "tdarr",
-          "latency_min": -2514,
+          "latency_min": 368,
           "outcome": "manual",
           "same_target": true,
           "wud_target": "3.04.00"
@@ -97,7 +97,7 @@
         },
         {
           "container": "tdarr",
-          "latency_min": -354,
+          "latency_min": null,
           "outcome": "manual",
           "same_target": false,
           "wud_target": "3.06.00"
@@ -111,7 +111,7 @@
         },
         {
           "container": "radarr-vo",
-          "latency_min": -2876,
+          "latency_min": null,
           "outcome": "manual",
           "same_target": false,
           "wud_target": "7.0.3.10918-ls328"
@@ -124,7 +124,7 @@
           "wud_target": "7.0.3.10918-ls328"
         }
       ],
-      "latency_min": -2876,
+      "latency_min": 39,
       "manual_only": 13,
       "messages": 14,
       "pair": "wud-security-updater",
@@ -1437,7 +1437,7 @@
                 12,
                 1,
                 13,
-                -2876
+                39
               ]
             ],
             "title": "Duplicado entre sistemas"

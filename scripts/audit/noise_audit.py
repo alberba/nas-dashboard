@@ -998,9 +998,14 @@ def _inter_system(rows):
                     for update, _at in hits
                 ),
                 "outcome": best["outcome"],
+                # A delay, not a lead: only updates at or after the notice count.
                 "latency_min": min(
-                    round((at - wud_at).total_seconds() / 60)
-                    for _update, at in hits
+                    (
+                        round((at - wud_at).total_seconds() / 60)
+                        for _update, at in hits
+                        if at >= wud_at
+                    ),
+                    default=None,
                 ),
             }
         )
@@ -1013,7 +1018,14 @@ def _inter_system(rows):
         "same_target": sum(1 for item in items if item["same_target"]),
         "real_update": real_update,
         "manual_only": len(items) - real_update,
-        "latency_min": min((item["latency_min"] for item in items), default=None),
+        "latency_min": min(
+            (
+                item["latency_min"]
+                for item in items
+                if item["latency_min"] is not None
+            ),
+            default=None,
+        ),
         "items": items,
     }
 

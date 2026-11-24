@@ -530,6 +530,38 @@ class DuplicateTest(unittest.TestCase):
         self.assertEqual(inter_system["same_target"], 0)
         self.assertFalse(inter_system["items"][0]["same_target"])
 
+    def test_the_latency_is_the_delay_after_the_wud_notice(self):
+        rows = [
+            row(id="wud1", sent_at="2026-05-01T10:00:00",
+                text=wud_text("demo", "2.0.0")),
+            row(id="security1", sent_at="2026-05-01T12:00:00",
+                text=security_update_text(
+                    "demo → 2.0.0: manual: missing healthcheck"
+                )),
+        ]
+
+        inter_system = noise_audit.build_duplicates(rows)["inter_system"]
+
+        self.assertEqual(inter_system["messages"], 1)
+        self.assertEqual(inter_system["items"][0]["latency_min"], 120)
+        self.assertEqual(inter_system["latency_min"], 120)
+
+    def test_an_update_before_the_wud_notice_is_not_a_latency(self):
+        rows = [
+            row(id="security1", sent_at="2026-05-01T08:00:00",
+                text=security_update_text(
+                    "demo → 2.0.0: manual: missing healthcheck"
+                )),
+            row(id="wud1", sent_at="2026-05-01T10:00:00",
+                text=wud_text("demo", "2.0.0")),
+        ]
+
+        inter_system = noise_audit.build_duplicates(rows)["inter_system"]
+
+        self.assertEqual(inter_system["messages"], 1)
+        self.assertIsNone(inter_system["items"][0]["latency_min"])
+        self.assertIsNone(inter_system["latency_min"])
+
     def test_without_a_csv_the_channel_duplicate_is_unavailable(self):
         rows = [
             row(id="backup1", sent_at="2026-11-20T04:10:00",
