@@ -556,6 +556,155 @@
     "operator": 2,
     "unknown": []
   },
+  "policy": {
+    "buckets": {
+      "digest": [
+        {
+          "key": "cpu",
+          "rationale": "Warning sostenido; se acumula en el resumen diario.",
+          "source": "hub"
+        },
+        {
+          "key": "memory",
+          "rationale": "Warning sostenido; se acumula en el resumen diario.",
+          "source": "hub"
+        },
+        {
+          "key": "disk",
+          "rationale": "Warning de espacio; se acumula en el resumen diario.",
+          "source": "hub"
+        },
+        {
+          "key": "reboot-pending",
+          "rationale": "Aviso informativo; se acumula en el resumen diario.",
+          "source": "hub"
+        },
+        {
+          "key": "release-retained",
+          "rationale": "Release retenida; se acumula en el resumen diario.",
+          "source": "hub"
+        },
+        {
+          "key": "security-digest",
+          "rationale": "Resumen de CVEs; se acumula en el resumen diario.",
+          "source": "telegram"
+        },
+        {
+          "key": "security-update",
+          "rationale": "D-11: el éxito va al digest; manual y failed exigen acción.",
+          "source": "telegram",
+          "split_by_outcome": {
+            "failed": "immediate",
+            "manual": "immediate",
+            "updated": "digest"
+          }
+        },
+        {
+          "key": "release-apply",
+          "rationale": "El éxito va al digest; el fallo exige acción.",
+          "source": "telegram",
+          "split_by_outcome": {
+            "applied": "digest",
+            "failed": "immediate"
+          }
+        },
+        {
+          "key": "release-upgrade",
+          "rationale": "Upgrade completado; se acumula en el resumen diario.",
+          "source": "telegram"
+        }
+      ],
+      "immediate": [
+        {
+          "key": "connection",
+          "rationale": "Fallo crítico: el host no responde y exige acción inmediata.",
+          "source": "hub"
+        },
+        {
+          "key": "temperature",
+          "rationale": "Fallo crítico de temperatura; puede dañar el hardware.",
+          "source": "hub"
+        },
+        {
+          "key": "backup-failed",
+          "rationale": "La copia falló y exige revisión del operador.",
+          "source": "hub"
+        },
+        {
+          "key": "disk-health",
+          "rationale": "El fallo de disco exige acción; watch se vigila en el resumen.",
+          "source": "hub"
+        },
+        {
+          "key": "stack-unit-failed",
+          "rationale": "Una unidad del stack cayó y exige acción.",
+          "source": "hub"
+        },
+        {
+          "key": "deploy-failed",
+          "rationale": "El despliegue falló y exige acción.",
+          "source": "hub"
+        },
+        {
+          "key": "release-stop",
+          "rationale": "Upgrade detenido; exige acción del operador.",
+          "source": "telegram"
+        },
+        {
+          "key": "backup",
+          "rationale": "Solo falla; el éxito no emite y no hay recuperación por Telegram.",
+          "source": "telegram"
+        },
+        {
+          "key": "issue-incident",
+          "rationale": "Incidencia de Seerr; fuera del cutover hasta la fase 8.",
+          "source": "telegram"
+        }
+      ],
+      "silent": [
+        {
+          "grouped_in": "phase 3",
+          "key": "container:<name>",
+          "rationale": "Ruido de servicios; se agrupa en services-down en la fase 3.",
+          "source": "hub"
+        },
+        {
+          "key": "wud",
+          "rationale": "D-10: deja de notificar por Telegram; su UI se mantiene.",
+          "source": "telegram"
+        },
+        {
+          "key": "issue-test",
+          "rationale": "Prueba manual; no genera mensaje propio.",
+          "source": "telegram"
+        },
+        {
+          "key": "smart",
+          "rationale": "SMART desconocido; sustituido por disk-health y fuera del cutover.",
+          "source": "telegram"
+        }
+      ]
+    },
+    "counts": {
+      "digest": 9,
+      "immediate": 9,
+      "silent": 4
+    },
+    "cutover": {
+      "narrowed": [
+        "backup"
+      ],
+      "out_of_scope": [
+        "issue-automator",
+        "unknown-smart"
+      ],
+      "revisit": "phase 8",
+      "silent": [
+        "wud"
+      ]
+    },
+    "total_keys": 22
+  },
   "push": {
     "rows": null,
     "skipped_rows": 0,
@@ -783,6 +932,246 @@
     ],
     "repeated_groups": 11
   },
+  "report": {
+    "sections": [
+      {
+        "id": "politica",
+        "paragraphs": [
+          "El mapa cubre las 22 claves del catálogo: 9 immediate, 9 digest y 4 silent.",
+          "WUD queda en silent y la copia en immediate. El éxito de security-update y de release-apply va al digest; manual y failed exigen acción inmediata."
+        ],
+        "source": "codigo",
+        "tables": [
+          {
+            "columns": [
+              "Clave",
+              "Origen",
+              "Bucket",
+              "Split por resultado"
+            ],
+            "rows": [
+              [
+                "connection",
+                "hub",
+                "immediate",
+                "—"
+              ],
+              [
+                "temperature",
+                "hub",
+                "immediate",
+                "—"
+              ],
+              [
+                "backup-failed",
+                "hub",
+                "immediate",
+                "—"
+              ],
+              [
+                "disk-health",
+                "hub",
+                "immediate",
+                "—"
+              ],
+              [
+                "stack-unit-failed",
+                "hub",
+                "immediate",
+                "—"
+              ],
+              [
+                "deploy-failed",
+                "hub",
+                "immediate",
+                "—"
+              ],
+              [
+                "release-stop",
+                "telegram",
+                "immediate",
+                "—"
+              ],
+              [
+                "backup",
+                "telegram",
+                "immediate",
+                "—"
+              ],
+              [
+                "issue-incident",
+                "telegram",
+                "immediate",
+                "—"
+              ],
+              [
+                "cpu",
+                "hub",
+                "digest",
+                "—"
+              ],
+              [
+                "memory",
+                "hub",
+                "digest",
+                "—"
+              ],
+              [
+                "disk",
+                "hub",
+                "digest",
+                "—"
+              ],
+              [
+                "reboot-pending",
+                "hub",
+                "digest",
+                "—"
+              ],
+              [
+                "release-retained",
+                "hub",
+                "digest",
+                "—"
+              ],
+              [
+                "security-digest",
+                "telegram",
+                "digest",
+                "—"
+              ],
+              [
+                "security-update",
+                "telegram",
+                "digest",
+                "updated→digest; manual→immediate; failed→immediate"
+              ],
+              [
+                "release-apply",
+                "telegram",
+                "digest",
+                "applied→digest; failed→immediate"
+              ],
+              [
+                "release-upgrade",
+                "telegram",
+                "digest",
+                "—"
+              ],
+              [
+                "container:<name>",
+                "hub",
+                "silent",
+                "—"
+              ],
+              [
+                "wud",
+                "telegram",
+                "silent",
+                "—"
+              ],
+              [
+                "issue-test",
+                "telegram",
+                "silent",
+                "—"
+              ],
+              [
+                "smart",
+                "telegram",
+                "silent",
+                "—"
+              ]
+            ],
+            "title": "Mapa por clave"
+          }
+        ],
+        "title": "Política de avisos"
+      },
+      {
+        "id": "objetivo",
+        "paragraphs": [
+          "El objetivo se apoya en E4: 1.25 mensajes/día sobre 12 días inclusivos. Se propone 1.0 mensajes proactivos/día fuera del digest, menor o igual que la línea base.",
+          "El ack se publica como — porque no existe ackAt: la métrica queda definida y se medirá en la fase 6."
+        ],
+        "source": "export",
+        "tables": [
+          {
+            "columns": [
+              "Campo",
+              "Valor"
+            ],
+            "rows": [
+              [
+                "Era de referencia",
+                "E4"
+              ],
+              [
+                "Días inclusivos",
+                12
+              ],
+              [
+                "Mensajes/día de referencia",
+                1.25
+              ],
+              [
+                "Objetivo proactivo/día",
+                1.0
+              ],
+              [
+                "Ventana de medida (días)",
+                14
+              ],
+              [
+                "Definición",
+                "Mediana diaria de mensajes proactivos fuera del digest, medida sobre una ventana de 14 días consecutivos."
+              ]
+            ],
+            "title": "Línea base y propuesta"
+          },
+          {
+            "columns": [
+              "Campo",
+              "Valor"
+            ],
+            "rows": [
+              [
+                "Métrica",
+                "median(sentAt -> ackAt)"
+              ],
+              [
+                "Guardia",
+                "p90"
+              ],
+              [
+                "Por severidad",
+                true
+              ],
+              [
+                "Objetivo de mediana inmediata (min)",
+                15
+              ],
+              [
+                "Guardia p90 (min)",
+                60
+              ],
+              [
+                "Valor actual",
+                null
+              ],
+              [
+                "Estado",
+                "not_measurable"
+              ]
+            ],
+            "title": "Contrato del ack"
+          }
+        ],
+        "title": "Objetivo de éxito"
+      }
+    ],
+    "source_hash": "fe32cd3a63464261527d74ee77f53696b1b5837f58206230e15fa93291fdbe74"
+  },
   "schema_version": 1,
   "sender_split": {
     "bot": 146,
@@ -793,6 +1182,24 @@
     "exported_mtime_note": "exportado 2026-11-24T16:15:24; la ventana termina en el último mensaje",
     "path_hint": "messages.html",
     "sha256": "fe32cd3a63464261527d74ee77f53696b1b5837f58206230e15fa93291fdbe74"
+  },
+  "success_target": {
+    "ack": {
+      "current": null,
+      "guard": "p90",
+      "immediate_median_target_minutes": 15,
+      "metric": "median(sentAt -> ackAt)",
+      "p90_guard_minutes": 60,
+      "per_severity": true,
+      "reason": "No existe ackAt: los botones y el ack llegan en la fase 6, así que el valor se publica como — y no como 0.",
+      "status": "not_measurable"
+    },
+    "baseline_era": "E4",
+    "baseline_inclusive_days": 12,
+    "baseline_messages_per_day": 1.25,
+    "definition": "Mediana diaria de mensajes proactivos fuera del digest, medida sobre una ventana de 14 días consecutivos.",
+    "proactive_messages_per_day": 1.0,
+    "window_days": 14
   },
   "top_keys": [
     {

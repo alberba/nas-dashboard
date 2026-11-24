@@ -350,6 +350,158 @@ RECOVERY_CAPABLE = {
     },
 }
 
+# The decision catalogue: every hub key and every Telegram family gets exactly
+# one disposition. D-10 (WUD silent) and D-11 (success to digest, manual and
+# failure immediate) are already fixed by the context and are only cited here.
+HUB_KEYS = (
+    {
+        "key": "connection",
+        "source": "hub",
+        "severity": "critical",
+        "bucket": "immediate",
+        "rationale": "Fallo crítico: el host no responde y exige acción inmediata.",
+    },
+    {
+        "key": "temperature",
+        "source": "hub",
+        "severity": "critical",
+        "bucket": "immediate",
+        "rationale": "Fallo crítico de temperatura; puede dañar el hardware.",
+    },
+    {
+        "key": "backup-failed",
+        "source": "hub",
+        "severity": "critical",
+        "bucket": "immediate",
+        "rationale": "La copia falló y exige revisión del operador.",
+    },
+    {
+        "key": "disk-health",
+        "source": "hub",
+        "severity": "critical en fail, warning en watch",
+        "bucket": "immediate",
+        "rationale": "El fallo de disco exige acción; watch se vigila en el resumen.",
+    },
+    {
+        "key": "stack-unit-failed",
+        "source": "hub",
+        "severity": "critical",
+        "bucket": "immediate",
+        "rationale": "Una unidad del stack cayó y exige acción.",
+    },
+    {
+        "key": "deploy-failed",
+        "source": "hub",
+        "severity": "critical",
+        "bucket": "immediate",
+        "rationale": "El despliegue falló y exige acción.",
+    },
+    {
+        "key": "cpu",
+        "source": "hub",
+        "severity": "warning",
+        "bucket": "digest",
+        "rationale": "Warning sostenido; se acumula en el resumen diario.",
+    },
+    {
+        "key": "memory",
+        "source": "hub",
+        "severity": "warning",
+        "bucket": "digest",
+        "rationale": "Warning sostenido; se acumula en el resumen diario.",
+    },
+    {
+        "key": "disk",
+        "source": "hub",
+        "severity": "warning",
+        "bucket": "digest",
+        "rationale": "Warning de espacio; se acumula en el resumen diario.",
+    },
+    {
+        "key": "reboot-pending",
+        "source": "hub",
+        "severity": "warning",
+        "bucket": "digest",
+        "rationale": "Aviso informativo; se acumula en el resumen diario.",
+    },
+    {
+        "key": "release-retained",
+        "source": "hub",
+        "severity": "warning",
+        "bucket": "digest",
+        "rationale": "Release retenida; se acumula en el resumen diario.",
+    },
+    {
+        "key": "container:<name>",
+        "source": "hub",
+        "severity": "warning",
+        "bucket": "silent",
+        "rationale": "Ruido de servicios; se agrupa en services-down en la fase 3.",
+        "grouped_in": "phase 3",
+    },
+)
+
+TELEGRAM_FAMILIES = (
+    {
+        "family": "wud",
+        "bucket": "silent",
+        "rationale": "D-10: deja de notificar por Telegram; su UI se mantiene.",
+    },
+    {
+        "family": "security-digest",
+        "bucket": "digest",
+        "rationale": "Resumen de CVEs; se acumula en el resumen diario.",
+    },
+    {
+        "family": "security-update",
+        "bucket": "digest",
+        "split_by_outcome": {
+            "updated": "digest",
+            "manual": "immediate",
+            "failed": "immediate",
+        },
+        "rationale": "D-11: el éxito va al digest; manual y failed exigen acción.",
+    },
+    {
+        "family": "release-stop",
+        "bucket": "immediate",
+        "rationale": "Upgrade detenido; exige acción del operador.",
+    },
+    {
+        "family": "release-apply",
+        "bucket": "digest",
+        "split_by_outcome": {"applied": "digest", "failed": "immediate"},
+        "rationale": "El éxito va al digest; el fallo exige acción.",
+    },
+    {
+        "family": "release-upgrade",
+        "bucket": "digest",
+        "rationale": "Upgrade completado; se acumula en el resumen diario.",
+    },
+    {
+        "family": "backup",
+        "bucket": "immediate",
+        "rationale": "Solo falla; el éxito no emite y no hay recuperación por Telegram.",
+    },
+    {
+        "family": "issue-incident",
+        "bucket": "immediate",
+        "rationale": "Incidencia de Seerr; fuera del cutover hasta la fase 8.",
+    },
+    {
+        "family": "issue-test",
+        "bucket": "silent",
+        "rationale": "Prueba manual; no genera mensaje propio.",
+    },
+    {
+        "family": "smart",
+        "bucket": "silent",
+        "rationale": "SMART desconocido; sustituido por disk-health y fuera del cutover.",
+    },
+)
+
+POLICY_BUCKETS = ("immediate", "digest", "silent")
+
 # Read-only evidence: `path` is relative to the appdata root passed as --state-root.
 EVIDENCE_SOURCES = (
     {
@@ -1087,6 +1239,221 @@ def build_windows(rows, days=(30, 60, 90)):
     return windows
 
 
+def _policy_entry(entry):
+    item = {
+        "key": entry.get("key") or entry.get("family"),
+        "source": entry.get("source", "telegram"),
+        "rationale": entry["rationale"],
+    }
+    if entry.get("split_by_outcome"):
+        item["split_by_outcome"] = dict(entry["split_by_outcome"])
+    if entry.get("grouped_in"):
+        item["grouped_in"] = entry["grouped_in"]
+    return item
+
+
+def build_policy_map():
+    """One disposition per key: the union is the 12 hub keys plus 10 families."""
+    buckets = {name: [] for name in POLICY_BUCKETS}
+    for entry in HUB_KEYS:
+        buckets[entry["bucket"]].append(_policy_entry(entry))
+    for entry in TELEGRAM_FAMILIES:
+        buckets[entry["bucket"]].append(_policy_entry(entry))
+    counts = {name: len(buckets[name]) for name in POLICY_BUCKETS}
+    return {
+        "buckets": buckets,
+        "counts": counts,
+        "total_keys": sum(counts.values()),
+        "cutover": {
+            "silent": ["wud"],
+            "narrowed": ["backup"],
+            "out_of_scope": ["issue-automator", "unknown-smart"],
+            "revisit": "phase 8",
+        },
+    }
+
+
+def build_success_target(eras):
+    """The target is numeric, rests on E4's inclusive days and never invents an ack."""
+    baseline = eras["E4"]
+    return {
+        "baseline_era": "E4",
+        "baseline_inclusive_days": baseline["inclusive_days"],
+        "baseline_messages_per_day": baseline["rate"],
+        "proactive_messages_per_day": 1.0,
+        "definition": (
+            "Mediana diaria de mensajes proactivos fuera del digest, medida "
+            "sobre una ventana de 14 días consecutivos."
+        ),
+        "window_days": 14,
+        "ack": {
+            "metric": "median(sentAt -> ackAt)",
+            "guard": "p90",
+            "per_severity": True,
+            "immediate_median_target_minutes": 15,
+            "p90_guard_minutes": 60,
+            "current": None,
+            "status": "not_measurable",
+            "reason": (
+                "No existe ackAt: los botones y el ack llegan en la fase 6, "
+                "así que el valor se publica como — y no como 0."
+            ),
+        },
+    }
+
+
+def _section(section_id, title, source, tables=None, paragraphs=None):
+    section = {"id": section_id, "title": title, "source": source}
+    if tables:
+        section["tables"] = tables
+    if paragraphs:
+        section["paragraphs"] = paragraphs
+    return section
+
+
+def _table(title, columns, rows):
+    return {
+        "title": title,
+        "columns": list(columns),
+        "rows": [list(values) for values in rows],
+    }
+
+
+def _split_label(split):
+    return "; ".join(f"{outcome}→{bucket}" for outcome, bucket in split.items())
+
+
+def build_report_model(aggregate):
+    """Render model built only from aggregates; it never sees a message body."""
+    policy = aggregate["policy"]
+    target = aggregate["success_target"]
+    policy_rows = [
+        [
+            entry["key"],
+            entry["source"],
+            bucket,
+            _split_label(entry["split_by_outcome"]) if entry.get("split_by_outcome") else "—",
+        ]
+        for bucket in POLICY_BUCKETS
+        for entry in policy["buckets"][bucket]
+    ]
+    ack = target["ack"]
+    sections = [
+        _section(
+            "politica",
+            "Política de avisos",
+            "codigo",
+            paragraphs=[
+                (
+                    "El mapa cubre las 22 claves del catálogo: "
+                    f"{policy['counts']['immediate']} immediate, "
+                    f"{policy['counts']['digest']} digest y "
+                    f"{policy['counts']['silent']} silent."
+                ),
+                (
+                    "WUD queda en silent y la copia en immediate. El éxito de "
+                    "security-update y de release-apply va al digest; manual y "
+                    "failed exigen acción inmediata."
+                ),
+            ],
+            tables=[
+                _table(
+                    "Mapa por clave",
+                    ["Clave", "Origen", "Bucket", "Split por resultado"],
+                    policy_rows,
+                )
+            ],
+        ),
+        _section(
+            "objetivo",
+            "Objetivo de éxito",
+            "export",
+            paragraphs=[
+                (
+                    "El objetivo se apoya en E4: "
+                    f"{target['baseline_messages_per_day']} mensajes/día sobre "
+                    f"{target['baseline_inclusive_days']} días inclusivos. Se "
+                    f"propone {target['proactive_messages_per_day']} mensajes "
+                    "proactivos/día fuera del digest, menor o igual que la línea base."
+                ),
+                (
+                    "El ack se publica como — porque no existe ackAt: la métrica "
+                    "queda definida y se medirá en la fase 6."
+                ),
+            ],
+            tables=[
+                _table(
+                    "Línea base y propuesta",
+                    ["Campo", "Valor"],
+                    [
+                        ["Era de referencia", target["baseline_era"]],
+                        ["Días inclusivos", target["baseline_inclusive_days"]],
+                        ["Mensajes/día de referencia", target["baseline_messages_per_day"]],
+                        ["Objetivo proactivo/día", target["proactive_messages_per_day"]],
+                        ["Ventana de medida (días)", target["window_days"]],
+                        ["Definición", target["definition"]],
+                    ],
+                ),
+                _table(
+                    "Contrato del ack",
+                    ["Campo", "Valor"],
+                    [
+                        ["Métrica", ack["metric"]],
+                        ["Guardia", ack["guard"]],
+                        ["Por severidad", ack["per_severity"]],
+                        ["Objetivo de mediana inmediata (min)", ack["immediate_median_target_minutes"]],
+                        ["Guardia p90 (min)", ack["p90_guard_minutes"]],
+                        ["Valor actual", ack["current"]],
+                        ["Estado", ack["status"]],
+                    ],
+                ),
+            ],
+        ),
+    ]
+    return {"source_hash": aggregate["source"]["sha256"], "sections": sections}
+
+
+def _render_cell(value):
+    if value is None:
+        return "—"
+    if isinstance(value, bool):
+        return "sí" if value else "no"
+    return str(value)
+
+
+def render_report(model):
+    """Render the Spanish Markdown report from the model, never from raw rows."""
+    lines = [
+        "# Auditoría del ruido de avisos — NAS Monitor",
+        "",
+        (
+            "Informe generado desde `01-AUDIT.json`. El sha256 del export es "
+            f"`{model['source_hash']}`."
+        ),
+        "",
+    ]
+    for section in model["sections"]:
+        lines.append(f"<!-- id: {section['id']} -->")
+        lines.append(f"## {section['title']}")
+        lines.append("")
+        lines.append(f"_Fuente: {section['source']}._")
+        lines.append("")
+        for paragraph in section.get("paragraphs", []):
+            lines.append(paragraph)
+            lines.append("")
+        for table in section.get("tables", []):
+            lines.append(f"**{table['title']}**")
+            lines.append("")
+            lines.append("| " + " | ".join(str(column) for column in table["columns"]) + " |")
+            lines.append("|" + "|".join("---" for _ in table["columns"]) + "|")
+            for table_row in table["rows"]:
+                lines.append(
+                    "| " + " | ".join(_render_cell(value) for value in table_row) + " |"
+                )
+            lines.append("")
+    return "\n".join(lines).rstrip("\n") + "\n"
+
+
 def check_repro(export_path):
     """Aggregate the same export twice and compare the canonical bytes."""
     serialised = []
@@ -1167,7 +1534,7 @@ def aggregate(rows, source, alerts=None, state_root=None):
     eras = build_eras(rows)
     wud_events = build_wud_events(rows)
     apply_wud_events(eras, wud_events, rows)
-    return {
+    document = {
         "schema_version": SCHEMA_VERSION,
         "source": {field: source.get(field) for field in PUBLISHED_SOURCE_FIELDS},
         "dataset": build_dataset_summary(rows, source),
@@ -1191,6 +1558,10 @@ def aggregate(rows, source, alerts=None, state_root=None):
         },
         "evidence_sources": build_evidence_sources(state_root),
     }
+    document["policy"] = build_policy_map()
+    document["success_target"] = build_success_target(eras)
+    document["report"] = build_report_model(document)
+    return document
 
 
 def canonical_json(data):
@@ -1253,7 +1624,7 @@ def main(argv=None):
     parser.add_argument(
         "--out-md",
         default=None,
-        help="informe Markdown; lo genera el paso de informe, no este",
+        help="informe Markdown renderizado desde el JSON; sin esta opción no se toca",
     )
     parser.add_argument(
         "--check-repro",
@@ -1292,6 +1663,10 @@ def main(argv=None):
     out_json = Path(args.out_json)
     out_json.parent.mkdir(parents=True, exist_ok=True)
     out_json.write_text(canonical_json(result), encoding="utf-8")
+    if args.out_md:
+        out_md = Path(args.out_md)
+        out_md.parent.mkdir(parents=True, exist_ok=True)
+        out_md.write_text(render_report(result["report"]), encoding="utf-8")
     if args.print_summary:
         print(_summary_line(result))
     return 0
