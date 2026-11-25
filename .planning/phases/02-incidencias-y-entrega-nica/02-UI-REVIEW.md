@@ -174,3 +174,14 @@ Aunque el dato está en el hub, la vista que abre el enlace no permite saber si 
 - `.planning/phases/02-incidencias-y-entrega-nica/02-05-PLAN.md`
 - `.planning/phases/02-incidencias-y-entrega-nica/02-*-SUMMARY.md`
 - `DESIGN.md`
+
+## Remediation (post-review)
+
+Aplicado después de la auditoría en `56230f8`:
+
+- **F6 — fixed.** `.alert-delivery` / `.alert-deliveries` tienen reglas propias: etiqueta `10.5px`/800 en mayúsculas, `StatusDot` de 7 px con tono semántico por estado (`sent` gain, `failed` loss, `uncertain` peach, `pending` accent, `suppressed`/`none` muted), valor `12.8px`/600 y un gap compacto de 5 px con separador `--row-line`.
+- **F7 — fixed.** Cada fila de Avisos expone `data-severity` y muestra un `StatusDot` con «Crítica» (`loss`) o «Advertencia» (`peach`), reutilizando el sistema de tonos de Resumen.
+- **F8 — fixed.** `[data-incident-selected="true"]` recibe una superficie persistente `--panel2` y la etiqueta «Incidencia enlazada»; el resaltado ya no depende de `:focus-visible`.
+- El resto (F1–F5, F9–F16) sigue siendo advisory.
+
+`tests/e2e/incidents.spec.ts` comprueba los atributos de estado `data-incident-selected` y `data-severity` del episodio enlazado.
