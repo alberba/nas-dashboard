@@ -1,9 +1,10 @@
 import type { PoolClient } from "pg";
-import { and, gt, lt } from "drizzle-orm";
+import { gt, lt } from "drizzle-orm";
 import { db, pool } from "./lib/db";
-import { alerts, operations, presence, samples } from "./lib/schema";
+import { operations, presence, samples } from "./lib/schema";
 import { readRuntimeConfig, RuntimeConfigError } from "./lib/runtime-config";
 import { collectAll } from "./lib/collector";
+import { cleanupExpiredIncidents } from "./lib/incident-store";
 import {
   acquireCollectionLock,
   CollectionLockLost,
@@ -97,9 +98,7 @@ async function main() {
         if (Date.now() - lastCleanup > 3600000) {
           const cutoff = new Date(Date.now() - 30 * 86400000);
           await db.delete(samples).where(lt(samples.at, cutoff));
-          await db
-            .delete(alerts)
-            .where(and(lt(alerts.at, cutoff), lt(alerts.resolvedAt, cutoff)));
+          await cleanupExpiredIncidents(cutoff);
           await db.delete(operations).where(lt(operations.at, cutoff));
           await db.delete(presence).where(lt(presence.expiresAt, new Date()));
           lastCleanup = Date.now();
@@ -115,7 +114,11 @@ async function main() {
     if (lockLost) throw new CollectionLockLost();
   } finally {
     if (!lockLost) await releaseCollectionLock(lock).catch(() => {});
-    lock.release();
+    try {
+      lock.release();
+    } catch {
+      // The dedicated session may already be closed after lock loss.
+    }
     await pool.end().catch(() => {});
   }
 }

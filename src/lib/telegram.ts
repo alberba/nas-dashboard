@@ -165,6 +165,7 @@ async function post(context: RequestContext): Promise<TelegramSendResult> {
       },
     );
   } catch {
+    clearTimeout(timer);
     // A connection that failed after the durable attempt mark may have reached
     // the provider: never treat it as a confirmed rejection (D-01).
     if (context.signal?.aborted) return { state: "uncertain", reason: "aborted" };
@@ -172,16 +173,20 @@ async function post(context: RequestContext): Promise<TelegramSendResult> {
       state: "uncertain",
       reason: controller.signal.aborted ? "timeout" : "network",
     };
-  } finally {
-    clearTimeout(timer);
   }
 
   let raw = "";
   try {
+    // The timer also covers a stalled response body, not only its headers.
     raw = await response.text();
   } catch {
-    return { state: "uncertain", reason: "invalid_response" };
+    clearTimeout(timer);
+    return {
+      state: "uncertain",
+      reason: controller.signal.aborted ? "timeout" : "invalid_response",
+    };
   }
+  clearTimeout(timer);
   const envelope = parseEnvelope(raw);
 
   if (response.status === 429) {

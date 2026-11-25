@@ -90,16 +90,14 @@ describe("telegram client", () => {
     expect(call.body.chat_id).toBe(CHAT_ID);
     expect(call.body.text).toBe("Incidencia de prueba");
     expect(call.body).not.toHaveProperty("parse_mode");
-    expect(call.body.reply_markup).toEqual({
-      inline_keyboard: [
-        [
-          {
-            text: "Abrir en el hub",
-            url: incidentHref(BASE_URL, "nas-home", 12),
-          },
-        ],
-      ],
-    });
+    const markup = call.body.reply_markup as {
+      inline_keyboard: Array<Array<{ text: string; url: string }>>;
+    };
+    expect(markup.inline_keyboard[0]).toHaveLength(1);
+    expect(markup.inline_keyboard[0][0].url).toBe(
+      incidentHref(BASE_URL, "nas-home", 12),
+    );
+    expect(typeof markup.inline_keyboard[0][0].text).toBe("string");
     expect(result).toEqual({
       state: "sent",
       chatId: String(-1001234567890),

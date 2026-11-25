@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { db } from "./db";
 import { incidentEvents, incidents, notificationOutbox } from "./schema";
 
@@ -406,4 +406,31 @@ export async function recordIncidentObservation(
     });
     return { action: "opened", incidentId: created.id, seq: 1, delivery: "none" };
   });
+}
+
+/**
+ * Removes episodes past retention, together with their terminal delivery
+ * state, but keeps any episode that still has live work (pending or claimed).
+ * Orphan push-test rows are removed by their own age. The incident cascade
+ * deletes its events and terminal outbox rows in the same statement.
+ */
+export async function cleanupExpiredIncidents(cutoff: Date): Promise<void> {
+  await db.execute(sql`
+    DELETE FROM "incidents" AS i
+    WHERE i."at" < ${cutoff}
+      AND i."resolvedAt" < ${cutoff}
+      AND NOT EXISTS (
+        SELECT 1 FROM "notification_outbox" AS o
+        WHERE o."incidentId" = i."id"
+          AND o."status" IN ('pending', 'claimed')
+      )
+  `);
+  await db
+    .delete(notificationOutbox)
+    .where(
+      and(
+        isNull(notificationOutbox.incidentId),
+        lt(notificationOutbox.createdAt, cutoff),
+      ),
+    );
 }
