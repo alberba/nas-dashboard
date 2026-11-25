@@ -58,8 +58,8 @@ export function emptyContainerWatch(): ContainerWatch {
     workerId: null,
     lastInventoryAt: null,
     chainAt: null,
-    entries: {},
-    identities: {},
+    entries: Object.create(null),
+    identities: Object.create(null),
   };
 }
 
@@ -71,8 +71,8 @@ export function watchOf(settings: Settings): ContainerWatch {
     workerId: watch.workerId ?? null,
     lastInventoryAt: watch.lastInventoryAt ?? null,
     chainAt: watch.chainAt ?? null,
-    entries: watch.entries ?? {},
-    identities: watch.identities ?? {},
+    entries: Object.assign(Object.create(null), watch.entries),
+    identities: Object.assign(Object.create(null), watch.identities),
   };
 }
 
@@ -81,17 +81,25 @@ export function watchRevision(settings: Settings): number {
   return settings.watch?.revision ?? 0;
 }
 
+function validAbsence(entry: ContainerWatchEntry): boolean {
+  return Number.isFinite(entry.absentSince) &&
+    entry.absentSince > 0 &&
+    Number.isFinite(new Date(entry.absentSince * 1000).getTime());
+}
+
 /** Public projection for the selected host only, sorted by first absence. */
 export function pendingWatch(settings: Settings): ContainerWatchPending[] {
   const watch = settings.watch;
   if (!watch?.entries) return [];
   return Object.entries(watch.entries)
-    .filter(([name]) => settings.expectedContainers.includes(name))
+    .filter(([name, entry]) =>
+      settings.expectedContainers.includes(name) && validAbsence(entry),
+    )
     .map(([name, entry]) => ({
       name,
       state: "pending" as const,
       absentSince: entry.absentSince,
-      accreditedMs: Math.max(0, entry.accreditedMs),
+      accreditedMs: Math.max(0, entry.accreditedMs || 0),
       thresholdMs: WATCH_THRESHOLD_MS,
     }))
     .sort(
@@ -285,14 +293,14 @@ export async function reconcileContainers(input: {
 
     const containers = input.metrics.containers;
     const present = new Map(containers.map((item) => [item.name, item]));
-    const previousIdentities = { ...watch.identities };
+    const previousIdentities = Object.assign(Object.create(null), watch.identities) as ContainerWatch["identities"];
     const expected = [...current.expectedContainers];
     let changed = false;
 
     for (const name of expected) {
       if (present.has(name)) continue;
       const entry = watch.entries[name];
-      if (entry) {
+      if (entry && validAbsence(entry)) {
         const gained =
           continuous && entry.observedAt === previous
             ? Math.min(gapMs!, MAX_WATCH_STEP_MS)
@@ -301,7 +309,7 @@ export async function reconcileContainers(input: {
           ...entry,
           identity: entry.identity ?? previousIdentities[name] ?? EMPTY_IDENTITY,
           observedAt: mark,
-          accreditedMs: Math.max(0, entry.accreditedMs) + gained,
+          accreditedMs: Math.max(0, entry.accreditedMs || 0) + gained,
         };
       } else {
         watch.entries[name] = {

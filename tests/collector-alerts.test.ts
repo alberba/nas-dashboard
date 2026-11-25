@@ -1209,6 +1209,27 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
     });
   }
 
+  it("records the first absence of a watched container named constructor", async () => {
+    const start = Date.UTC(2026, 9, 25, 14);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    await setWatchSettings(host.id, ["constructor"], {}, {}, start / 1000 - 10);
+    nas.metrics = metricsSnapshot({
+      timestamp: start / 1000,
+      containersObservedAt: start / 1000,
+      containers: [],
+    });
+    await collectHost(host, start);
+
+    const { getSettings } = await import("@/lib/settings");
+    const { pendingWatch } = await import("@/lib/container-watch");
+    const settings = await getSettings(host.id);
+    expect(pendingWatch(settings)).toMatchObject([
+      { name: "constructor", absentSince: start / 1000, accreditedMs: 0 },
+    ]);
+    settings.watch!.entries["constructor"].absentSince = 1e20;
+    expect(pendingWatch(settings)).toEqual([]);
+  });
+
   it("moves the watch and the episode to a new name with the same Docker ID", async () => {
     const start = Date.UTC(2026, 9, 25, 15);
     const host = getHosts().find((entry) => entry.id === "nas-home")!;
