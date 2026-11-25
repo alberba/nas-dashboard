@@ -237,6 +237,58 @@ const maintenanceDisk = z.looseObject({
   issues: z.array(z.string()),
 });
 
+const helperCleanupStatus = z.enum([
+  "clean",
+  "failing",
+  "persistent",
+  "indeterminate",
+]);
+
+const helperCleanup = z
+  .looseObject({
+    available: z.boolean(),
+    status: helperCleanupStatus,
+    checkedAt: nullableText,
+    pending: z.number().int().nonnegative(),
+    persistent: z.number().int().nonnegative(),
+  })
+  .superRefine((value, ctx) => {
+    // Counts are independent: two different helpers with one failure each do
+    // not make either of them persistent.
+    if (value.persistent > value.pending)
+      ctx.addIssue({
+        code: "custom",
+        message: "persistent cannot exceed pending",
+      });
+    if (value.status === "clean") {
+      if (value.pending !== 0 || value.persistent !== 0)
+        ctx.addIssue({
+          code: "custom",
+          message: "clean requires no pending helpers",
+        });
+      if (!value.checkedAt)
+        ctx.addIssue({
+          code: "custom",
+          message: "clean requires a positive check date",
+        });
+    }
+    if (value.status === "failing" && value.pending < 1)
+      ctx.addIssue({
+        code: "custom",
+        message: "failing requires a pending helper",
+      });
+    if (value.status === "persistent" && value.persistent < 1)
+      ctx.addIssue({
+        code: "custom",
+        message: "persistent requires a persistent helper",
+      });
+    if (value.status !== "indeterminate" && !value.checkedAt)
+      ctx.addIssue({
+        code: "custom",
+        message: "a proven state requires a check date",
+      });
+  });
+
 const maintenanceContainer = z.looseObject({
   id: z.string(),
   name: z.string(),
@@ -317,6 +369,8 @@ export const maintenanceSnapshotSchema = z.looseObject({
       items: z.array(maintenanceContainer),
     })
     .optional(),
+  /** Optional: agents before helper cleanup leave it undefined. */
+  helperCleanup: helperCleanup.optional(),
   units: z.array(maintenanceUnit),
   failedUnits: z.looseObject({
     stack: z.array(failedUnit),

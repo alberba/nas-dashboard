@@ -1,6 +1,9 @@
 "use client";
 import { bytes } from "@/lib/format";
-import type { MaintenanceFailedUnit } from "@/lib/maintenance";
+import type {
+  MaintenanceFailedUnit,
+  MaintenanceHelperCleanup,
+} from "@/lib/maintenance";
 import {
   failedUnitGroups,
   statusCells,
@@ -35,13 +38,66 @@ function relative(iso: string | null, nowMs: number): string | null {
 }
 
 type Segment = {
-  id: keyof StatusCells;
+  id: keyof StatusCells | "cleanup";
   label: string;
   state: string;
   tone: StatusTone;
   value: React.ReactNode;
   detail?: React.ReactNode;
 };
+
+/**
+ * Cleaning state is deliberately separate from the Docker usage cell: a
+ * failed DELETE is not a disk-space problem. Only a complete inventory makes
+ * the state clean; a first failure is already visible here, while Avisos waits
+ * for the second real attempt of the same helper.
+ */
+function cleanupSegment(
+  cleanup: MaintenanceHelperCleanup | undefined,
+  nowMs: number,
+): Segment | null {
+  if (!cleanup || cleanup.available !== true) return null;
+  const checked = relative(cleanup.checkedAt, nowMs);
+  const count =
+    cleanup.status === "persistent" || cleanup.status === "failing"
+      ? `${cleanup.pending} ${
+          cleanup.pending === 1 ? "pendiente" : "pendientes"
+        }`
+      : undefined;
+  const base = {
+    id: "cleanup" as const,
+    label: "Limpieza",
+    detail: checked ? `comprobado ${checked}` : undefined,
+  };
+  if (cleanup.status === "persistent")
+    return {
+      ...base,
+      state: "persistent",
+      tone: "loss",
+      value: count ?? "Pendiente",
+    };
+  if (cleanup.status === "failing")
+    return {
+      ...base,
+      state: "failing",
+      tone: "peach",
+      value: count ?? "Pendiente",
+    };
+  if (cleanup.status === "clean")
+    return {
+      ...base,
+      state: "clean",
+      tone: "gain",
+      value: "Sin pendientes",
+    };
+  return {
+    ...base,
+    state: "indeterminate",
+    tone: "muted",
+    value: "Sin confirmar",
+    detail: "sin inventario completo",
+  };
+}
 
 function segments(cells: StatusCells, nowMs: number): Segment[] {
   const { release, follower, security, backup, reboot, docker } = cells;
@@ -195,6 +251,13 @@ export function MaintenanceSnapshotStatus({
   const failedCount = failed
     ? failed.stack.length + failed.other.length
     : 0;
+  const cleanup = snapshot
+    ? cleanupSegment(snapshot.helperCleanup, nowMs)
+    : null;
+  const visibleSegments = cells ? segments(cells, nowMs) : placeholders(phase);
+  const allSegments = cleanup
+    ? [...visibleSegments, cleanup]
+    : visibleSegments;
 
   return (
     <div
@@ -209,7 +272,7 @@ export function MaintenanceSnapshotStatus({
         aria-label="Estado de mantenimiento"
         aria-busy={phase === "loading"}
       >
-        {(cells ? segments(cells, nowMs) : placeholders(phase)).map(
+        {allSegments.map(
           (segment) => {
             const linked =
               segment.id === "release" || segment.id === "security";

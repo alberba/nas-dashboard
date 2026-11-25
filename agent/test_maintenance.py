@@ -6,6 +6,7 @@ import tempfile
 import threading
 import unittest
 
+import helper_cleanup
 import maintenance
 import server
 
@@ -722,7 +723,7 @@ class AuxiliaryExecutorTest(unittest.TestCase):
             def call(self, method, path, body=None, *, timeout=None, raw=False):
                 self.calls.append((method, path, body, raw))
                 if path == "/containers/create":
-                    return {"Id": "helper"}
+                    return {"Id": "a" * 64}
                 if path.endswith("/logs?stdout=true&stderr=true"):
                     return b"\x01\x00\x00\x00\x00\x00\x00\x03ok\n"
                 return {}
@@ -741,7 +742,14 @@ class AuxiliaryExecutorTest(unittest.TestCase):
         self.assertEqual(create[2]["Cmd"][-1], "/bin/true")
         self.assertTrue(create[2]["HostConfig"]["Privileged"])
         self.assertEqual(create[2]["HostConfig"]["PidMode"], "host")
-        self.assertIn(("DELETE", "/containers/helper?force=1", None, False), socket.calls)
+        self.assertEqual(
+            create[2]["Labels"][helper_cleanup.HELPER_LABEL],
+            helper_cleanup.HELPER_LABEL_VALUE,
+        )
+        self.assertIn(
+            ("DELETE", "/containers/" + "a" * 64 + "?v=0", None, False),
+            socket.calls,
+        )
 
 
 class DiskExecutorTest(unittest.TestCase):
@@ -780,6 +788,281 @@ class DiskExecutorTest(unittest.TestCase):
             socket.calls,
         )
         self.assertIn(("DELETE", "/containers/helper?force=1", None, False), socket.calls)
+
+
+class FakeNotFound(OSError):
+    status = 404
+
+
+class HelperDocker:
+    """Records every Docker call and simulates helper containers."""
+
+    def __init__(self, clock=lambda: 1000.0, delete_failures=0):
+        self.clock = clock
+        self.calls = []
+        self.containers = {}
+        self.details = {}
+        self.delete_failures = delete_failures
+        self.fail_list = False
+        self.inspect_failures = {}
+        self.counter = 0
+
+    def new_id(self):
+        self.counter += 1
+        return "%064x" % self.counter
+
+    def add_helper(
+        self,
+        *,
+        owner,
+        instance,
+        family="host",
+        created=300.0,
+        state="exited",
+        marker=True,
+        labels_extra=None,
+    ):
+        ident = self.new_id()
+        labels = dict(labels_extra or {})
+        if marker:
+            labels[helper_cleanup.HELPER_LABEL] = helper_cleanup.HELPER_LABEL_VALUE
+        labels[helper_cleanup.OWNER_LABEL] = owner
+        if family is not None:
+            labels[helper_cleanup.FAMILY_LABEL] = family
+        if instance is not None:
+            labels[helper_cleanup.INSTANCE_LABEL] = instance
+        labels[helper_cleanup.CREATED_LABEL] = str(int(created))
+        self.containers[ident] = {
+            "Id": ident,
+            "Names": ["/helper-" + ident[:8]],
+            "Image": "hub-agent:1",
+            "Labels": labels,
+            "State": state,
+            "Created": created,
+        }
+        self.details[ident] = {
+            "Id": ident,
+            "Config": {"Labels": labels},
+            "State": {
+                "Status": state,
+                "Running": state == "running",
+            },
+        }
+        return ident
+
+    def deletes(self):
+        return [path for method, path, _, _ in self.calls if method == "DELETE"]
+
+    def call(self, method, path, body=None, *, timeout=None, raw=False):
+        self.calls.append((method, path, body, timeout))
+        if method == "POST" and path == "/containers/create":
+            ident = self.new_id()
+            labels = (body or {}).get("Labels") or {}
+            now = self.clock()
+            self.containers[ident] = {
+                "Id": ident,
+                "Names": ["/helper-" + ident[:8]],
+                "Image": (body or {}).get("Image"),
+                "Labels": labels,
+                "State": "created",
+                "Created": now,
+            }
+            self.details[ident] = {
+                "Id": ident,
+                "Config": {"Labels": labels},
+                "State": {"Status": "created", "Running": False},
+            }
+            return {"Id": ident}
+        if method == "POST" and path.endswith("/start"):
+            ident = path.split("/")[2]
+            self.containers[ident]["State"] = "running"
+            self.details[ident]["State"] = {
+                "Status": "running",
+                "Running": True,
+            }
+            return {}
+        if method == "POST" and path.endswith("/wait"):
+            return {"StatusCode": 0}
+        if method == "GET" and path.endswith("/logs?stdout=true&stderr=true"):
+            return b"\x01\x00\x00\x00\x00\x00\x00\x03ok\n"
+        if method == "GET" and path == "/containers/json?all=true":
+            if self.fail_list:
+                raise OSError("inventario no disponible")
+            return list(self.containers.values())
+        if (
+            method == "GET"
+            and path.startswith("/containers/")
+            and path.endswith("/json")
+        ):
+            ident = path.split("/")[2]
+            if self.inspect_failures.get(ident):
+                self.inspect_failures[ident] -= 1
+                raise OSError("inspección no disponible")
+            if ident not in self.details:
+                raise FakeNotFound("no existe")
+            return self.details[ident]
+        if method == "DELETE" and path.startswith("/containers/"):
+            ident = path.split("/")[2].split("?")[0]
+            if self.delete_failures:
+                self.delete_failures -= 1
+                raise OSError("eliminación fallida")
+            if ident not in self.containers:
+                raise FakeNotFound("no existe")
+            self.containers.pop(ident, None)
+            self.details.pop(ident, None)
+            return {}
+        raise AssertionError((method, path))
+
+
+class HelperCleanupTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.appdata = Path(self.temp.name)
+        self.ticks = [1000.0]
+        self.clock = lambda: self.ticks[0]
+        self.registry = helper_cleanup.HelperRegistry(
+            owner="hub-agent:test:instance",
+            instance="a" * 32,
+            clock=self.clock,
+        )
+        self.docker = HelperDocker(clock=self.clock)
+        self.snapshot = maintenance.Maintenance(
+            appdata=self.appdata,
+            host_reader=FakeHost(),
+            docker_reader=FakeDocker(),
+            helper_cleanup=self.registry,
+            clock=self.clock,
+            cache_seconds=60,
+        )
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_a_failed_delete_is_visible_then_persistent_after_the_background_retry(self):
+        self.docker.delete_failures = 3
+        executor = maintenance.HostExecutor(
+            docker=self.docker, registry=self.registry
+        )
+
+        self.assertEqual(executor.run(["/bin/true"]), "ok\n")
+        ident = next(iter(self.docker.containers))
+        self.docker.containers[ident]["Created"] = self.ticks[0] - 700
+        self.docker.containers[ident]["Labels"][
+            helper_cleanup.CREATED_LABEL
+        ] = str(int(self.ticks[0] - 700))
+        self.docker.containers[ident]["State"] = "exited"
+        self.docker.details[ident]["State"] = {
+            "Status": "exited",
+            "Running": False,
+        }
+
+        first = self.snapshot.snapshot()
+        self.assertEqual(first["helperCleanup"]["status"], "failing")
+        self.assertEqual(first["helperCleanup"]["pending"], 1)
+        self.assertEqual(first["helperCleanup"]["persistent"], 0)
+
+        # Reading the snapshot is not a cleanup attempt.
+        for _ in range(3):
+            repeated = self.snapshot.snapshot()
+        self.assertEqual(repeated["helperCleanup"]["persistent"], 0)
+        self.assertEqual(repeated["timestamp"], first["timestamp"])
+
+        reaper = helper_cleanup.HelperReaper(
+            docker=self.docker,
+            registry=self.registry,
+            clock=self.clock,
+        )
+        result = reaper.sweep()
+
+        self.assertEqual(result["deleted"], 0)
+        self.assertEqual(
+            self.registry.section(self.ticks[0]),
+            {
+                "available": True,
+                "status": "persistent",
+                "checkedAt": repeated["helperCleanup"]["checkedAt"],
+                "pending": 1,
+                "persistent": 1,
+            },
+        )
+        deletes = self.docker.deletes()
+        self.assertEqual(len(deletes), 2)
+        self.assertTrue(all(path.endswith("?v=0") for path in deletes))
+
+    def test_the_cleanup_failure_is_not_hidden_by_the_mantained_cache(self):
+        first = self.snapshot.snapshot()
+        self.assertEqual(first["helperCleanup"]["status"], "indeterminate")
+
+        ident = self.docker.add_helper(
+            owner=self.registry.owner,
+            instance="b" * 32,
+            created=self.ticks[0] - 700,
+        )
+        self.docker.delete_failures = 0
+        self.registry.discover(ident, "host", self.ticks[0] - 700)
+        self.registry.record_delete_failure(ident, "host", self.ticks[0])
+
+        second = self.snapshot.snapshot()
+
+        self.assertEqual(second["timestamp"], first["timestamp"])
+        self.assertEqual(second["helperCleanup"]["status"], "failing")
+        self.assertEqual(second["helperCleanup"]["pending"], 1)
+
+    def test_two_scattered_failures_do_not_reach_the_persistent_threshold(self):
+        first = self.docker.add_helper(
+            owner=self.registry.owner, instance="b" * 32
+        )
+        second = self.docker.add_helper(
+            owner=self.registry.owner, instance="b" * 32, family="disk"
+        )
+        self.registry.discover(first, "host", 300.0)
+        self.registry.discover(second, "disk", 300.0)
+        self.registry.record_delete_failure(first, "host", self.ticks[0])
+        self.registry.record_delete_failure(second, "disk", self.ticks[0])
+
+        section = self.registry.section(self.ticks[0])
+
+        self.assertEqual(section["status"], "failing")
+        self.assertEqual(section["pending"], 2)
+        self.assertEqual(section["persistent"], 0)
+
+    def test_a_partial_resolution_keeps_the_remaining_helper_pending(self):
+        first = self.docker.add_helper(
+            owner=self.registry.owner, instance="b" * 32
+        )
+        second = self.docker.add_helper(
+            owner=self.registry.owner, instance="b" * 32, family="disk"
+        )
+        self.registry.discover(first, "host", 300.0)
+        self.registry.record_delete_failure(first, "host", self.ticks[0])
+        self.registry.record_delete_failure(first, "host", self.ticks[0])
+        self.registry.discover(second, "disk", 300.0)
+        self.registry.record_delete_failure(second, "disk", self.ticks[0])
+
+        self.registry.confirm_removed(first, self.ticks[0])
+        section = self.registry.section(self.ticks[0])
+        self.assertEqual(section["status"], "failing")
+        self.assertEqual(section["pending"], 1)
+        self.assertEqual(section["persistent"], 0)
+
+        self.registry.confirm_absent(second, self.ticks[0])
+        self.assertEqual(
+            self.registry.section(self.ticks[0])["status"], "indeterminate"
+        )
+
+        reaper = helper_cleanup.HelperReaper(
+            docker=self.docker, registry=self.registry, clock=self.clock
+        )
+        reaper.sweep()
+        self.assertEqual(self.registry.section(self.ticks[0])["status"], "clean")
+
+    def test_an_older_check_date_never_replaces_a_newer_one(self):
+        self.registry.finish_sweep(2000.0, True)
+        self.registry.mark_indeterminate(1000.0)
+
+        section = self.registry.section(self.ticks[0])
+
+        self.assertEqual(helper_cleanup._iso(2000.0), section["checkedAt"])
 
 
 class MaintenanceRouteTest(unittest.TestCase):

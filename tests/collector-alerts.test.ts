@@ -2350,4 +2350,183 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
       state: "running",
     });
   });
+
+  function helperCleanup(
+    overrides: Partial<
+      NonNullable<
+        import("@/lib/maintenance").MaintenanceSnapshot["helperCleanup"]
+      >
+    > = {},
+  ) {
+    return maintenanceSnapshot({
+      helperCleanup: {
+        available: true,
+        status: "persistent",
+        checkedAt: "2026-11-14T10:00:00Z",
+        pending: 2,
+        persistent: 1,
+        ...overrides,
+      },
+    });
+  }
+
+  it("opens one digest episode for a persistent helper cleanup failure", async () => {
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    const start = Date.UTC(2027, 1, 10, 10);
+    nas.maintenance = { ...helperCleanup(), degraded: ["docker"] };
+    await collectHost(host, start);
+
+    const current = await state();
+    const cleanup = current.incidents.filter(
+      (row) => row.key === "helper-cleanup",
+    );
+    expect(cleanup).toHaveLength(1);
+    expect(cleanup[0]).toMatchObject({
+      hostId: "nas-home",
+      severity: "warning",
+      resolvedAt: null,
+    });
+    expect(current.events).toHaveLength(1);
+    expect(current.outbox).toHaveLength(1);
+    expect(current.outbox[0]).toMatchObject({
+      channel: "digest",
+      status: "suppressed",
+    });
+    expect(current.outbox[0].result).toMatchObject({
+      reason: "digest_pending",
+    });
+  });
+
+  it("keeps two scattered cleanup failures out of Avisos", async () => {
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    const start = Date.UTC(2027, 1, 11, 10);
+    nas.maintenance = helperCleanup({
+      status: "failing",
+      pending: 2,
+      persistent: 0,
+      checkedAt: "2026-11-14T11:00:00Z",
+    });
+
+    await collectHost(host, start);
+
+    const current = await state();
+    expect(
+      current.incidents.filter((row) => row.key === "helper-cleanup"),
+    ).toHaveLength(0);
+  });
+
+  it("keeps the episode while one helper remains pending and closes on the complete check", async () => {
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    const start = Date.UTC(2027, 1, 12, 10);
+    nas.maintenance = helperCleanup({
+      checkedAt: "2026-11-14T12:00:00Z",
+    });
+
+    await collectHost(host, start);
+    let current = await state();
+    const [episode] = current.incidents;
+    expect(episode.resolvedAt).toBeNull();
+
+    // The persistent helper was removed but another one still failed once.
+    nas.maintenance = helperCleanup({
+      status: "failing",
+      pending: 1,
+      persistent: 0,
+      checkedAt: "2026-11-14T12:01:00Z",
+    });
+    await collectHost(host, start + 61_000);
+    current = await state();
+    expect(current.incidents[0].resolvedAt).toBeNull();
+    expect(current.events).toHaveLength(1);
+
+    nas.maintenance = helperCleanup({
+      status: "clean",
+      pending: 0,
+      persistent: 0,
+      checkedAt: "2026-11-14T12:02:00Z",
+    });
+    await collectHost(host, start + 122_000);
+    current = await state();
+    expect(current.incidents[0].resolvedAt).not.toBeNull();
+    expect(current.incidents[0].closedBy).toBe("collector");
+    expect(current.events.filter((event) => event.kind === "closed")).toHaveLength(
+      1,
+    );
+    // D-11: the closure does not queue a recovery notification.
+    expect(current.outbox).toHaveLength(1);
+    expect(current.outbox[0]).toMatchObject({
+      channel: "digest",
+      status: "suppressed",
+    });
+    expect(
+      current.outbox.filter((notice) => notice.status === "pending"),
+    ).toHaveLength(0);
+  });
+
+  it("does not let an older cleanup check close the episode", async () => {
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    const start = Date.UTC(2027, 1, 13, 10);
+    nas.maintenance = helperCleanup({
+      checkedAt: "2026-11-14T13:02:00Z",
+    });
+
+    await collectHost(host, start);
+    nas.maintenance = helperCleanup({
+      status: "clean",
+      pending: 0,
+      persistent: 0,
+      checkedAt: "2026-11-14T13:01:00Z",
+    });
+    await collectHost(host, start + 61_000);
+    let current = await state();
+    expect(current.incidents[0].resolvedAt).toBeNull();
+
+    nas.maintenance = helperCleanup({
+      status: "clean",
+      pending: 0,
+      persistent: 0,
+      checkedAt: "2026-11-14T13:03:00Z",
+    });
+    await collectHost(host, start + 122_000);
+    current = await state();
+    expect(current.incidents[0].resolvedAt).not.toBeNull();
+  });
+
+  it("does not duplicate the episode on a repeated reading", async () => {
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    const start = Date.UTC(2027, 1, 14, 10);
+    nas.maintenance = helperCleanup({
+      checkedAt: "2026-11-14T14:00:00Z",
+    });
+
+    await collectHost(host, start);
+    await collectHost(host, start + 61_000);
+
+    const current = await state();
+    expect(
+      current.incidents.filter((row) => row.key === "helper-cleanup"),
+    ).toHaveLength(1);
+    expect(current.events).toHaveLength(1);
+    expect(current.outbox).toHaveLength(1);
+    expect(current.outbox[0]).toMatchObject({
+      channel: "digest",
+      status: "suppressed",
+    });
+  });
+
+  it("keeps the episode when the agent has no cleanup section", async () => {
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    const start = Date.UTC(2027, 1, 15, 10);
+    nas.maintenance = helperCleanup({
+      checkedAt: "2026-11-14T15:00:00Z",
+    });
+
+    await collectHost(host, start);
+    nas.maintenance = maintenanceSnapshot();
+    await collectHost(host, start + 61_000);
+
+    const current = await state();
+    expect(current.incidents[0].resolvedAt).toBeNull();
+    expect(current.events).toHaveLength(1);
+  });
 });

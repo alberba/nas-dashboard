@@ -38,6 +38,8 @@ const started = new Map<string, number>();
 /** Snapshot-backed alerts are refreshed at most once a minute per host. */
 const ALERT_SNAPSHOT_INTERVAL_MS = 60_000;
 const alertSnapshotAt = new Map<string, number>();
+/** Last accredited cleanup check per host: an older answer cannot replace it. */
+const helperCleanupAt = new Map<string, number>();
 /** Docker list cadence in the agent; used for agents without a list mark. */
 const CONTAINER_CACHE_INTERVAL_MS = 10_000;
 const CONTAINER_PREFIX = "container:";
@@ -160,14 +162,26 @@ async function collectSnapshotAlerts(host: HostConfig, now: number) {
     nasForHost<MaintenanceSnapshot>(host, "/maintenance"),
     nasForHost<DeploymentsSnapshot>(host, "/deployments?lines=1"),
   ]);
+  const previousCleanupAt = helperCleanupAt.get(host.id);
   const signals = [
     ...(maintenance.status === "fulfilled"
-      ? maintenanceAlertSignals(maintenance.value, host.name)
+      ? maintenanceAlertSignals(maintenance.value, host.name, {
+          helperCleanupAfter: previousCleanupAt,
+        })
       : []),
     ...(deployments.status === "fulfilled"
       ? deploymentAlertSignals(deployments.value, host.name)
       : []),
   ];
+  if (maintenance.status === "fulfilled") {
+    const checkedAt = maintenance.value.helperCleanup?.checkedAt;
+    const checked = checkedAt ? Date.parse(checkedAt) : NaN;
+    if (
+      Number.isFinite(checked) &&
+      (previousCleanupAt === undefined || checked > previousCleanupAt)
+    )
+      helperCleanupAt.set(host.id, checked);
+  }
   for (const signal of signals) {
     await condition(
       host,

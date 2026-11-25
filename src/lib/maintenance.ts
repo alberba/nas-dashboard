@@ -136,6 +136,24 @@ export type MaintenanceContainers = {
   items: MaintenanceContainer[];
 };
 
+export type MaintenanceHelperCleanupStatus =
+  | "clean"
+  | "failing"
+  | "persistent"
+  | "indeterminate";
+
+/** Optional section: agents before helper cleanup leave it undefined. */
+export type MaintenanceHelperCleanup = {
+  available: boolean;
+  status: MaintenanceHelperCleanupStatus;
+  /** ISO date of the last real check, never of a hub read. */
+  checkedAt: string | null;
+  /** Helpers that failed at least one real DELETE attempt. */
+  pending: number;
+  /** Pending helpers with two or more failed attempts. */
+  persistent: number;
+};
+
 export type MaintenanceSnapshot = {
   /** Snapshot generation time, in seconds since the Unix epoch. */
   timestamp: number;
@@ -159,6 +177,8 @@ export type MaintenanceSnapshot = {
   disks: MaintenanceDisks;
   /** Optional: agents before this section leave it undefined. */
   containers?: MaintenanceContainers;
+  /** Optional: agents before helper cleanup leave it undefined. */
+  helperCleanup?: MaintenanceHelperCleanup;
   units: MaintenanceUnit[];
   failedUnits: {
     stack: MaintenanceFailedUnit[];

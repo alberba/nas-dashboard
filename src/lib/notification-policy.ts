@@ -80,6 +80,15 @@ export function notificationPolicy(
       digest: false,
       immediate: false,
     };
+  if (key === "helper-cleanup")
+    // D-11: phase 4 wants this condition in the daily digest. It must not turn
+    // into a push when PUSH_WARNINGS is enabled, so the branch is explicit.
+    return {
+      channel: "digest",
+      reason: "digest_pending",
+      digest: true,
+      immediate: false,
+    };
   if (key === "disk-health") {
     if (severity === "critical")
       return {

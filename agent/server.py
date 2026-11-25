@@ -18,6 +18,7 @@ from urllib.parse import urlparse, parse_qs, urlencode
 
 import deployments
 import env_settings
+import helper_cleanup
 import host_commands
 import host_metrics
 import lifecycle
@@ -84,6 +85,11 @@ LOCK = threading.RLock()
 UPDATE_LOCK = threading.Lock()
 UPDATE_DOCKER = maintenance.DockerSocket(timeout=15)
 UPDATE_EXECUTOR = maintenance.HostExecutor()
+HELPERS = helper_cleanup.shared_registry()
+HELPER_REAPER = helper_cleanup.HelperReaper(
+    docker=maintenance.DockerSocket(timeout=8),
+    registry=HELPERS,
+)
 
 
 class UnixHTTP(http.client.HTTPConnection):
@@ -344,6 +350,11 @@ def metrics():
     now = sample["timestamp"]
     if now - container_cache[0] > 10:
         items = docker("GET", "/containers/json?all=true")
+        # The watch inventory never enrols the agent's own transient helpers;
+        # the reaper reads the unfiltered Docker list separately.
+        items = [
+            item for item in items if not helper_cleanup.is_agent_helper(item)
+        ]
         active = lifecycle.active_projects(items, PROTECTED)
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
             container_cache = (
@@ -425,8 +436,18 @@ def execute(body):
         helper = docker("POST", "/containers/create", {
             "Image": "hub-agent:1", "Entrypoint": ["nsenter"],
             "Cmd": ["-t", "1", "-m", "-u", "-i", "-n", "-p", "--", "/sbin/reboot"],
+            "Labels": HELPERS.labels("reboot"),
             "HostConfig": {"Privileged": True, "PidMode": "host", "AutoRemove": True}})
-        docker("POST", "/containers/" + helper["Id"] + "/start")
+        ident = helper["Id"]
+        HELPERS.enrol(ident, "reboot")
+        try:
+            docker("POST", "/containers/" + ident + "/start")
+        except Exception:
+            # The start failed; the sweep may collect it once the grace expires.
+            HELPERS.release(ident)
+            raise
+        # The command is running. Keep it out of the reaper: AutoRemove owns it.
+        HELPERS.protect(ident)
         return {"state": "requested"}
     if action == "move":
         move_file(body["root"], body["path"], body["destination"])
@@ -553,8 +574,20 @@ def cleanup_loop():
         time.sleep(3600)
 
 
+def helper_cleanup_loop():
+    """Reaps stopped owned helpers without holding the HTTP request lock."""
+    while True:
+        try:
+            HELPER_REAPER.sweep()
+        except Exception:
+            HELPERS.mark_indeterminate()
+            print("No se pudo completar la recogida de ayudantes", flush=True)
+        time.sleep(helper_cleanup.SWEEP_SECONDS)
+
+
 if __name__ == "__main__":
     if len(TOKEN) < 32:
         raise SystemExit("AGENT_TOKEN debe tener al menos 32 caracteres")
     threading.Thread(target=cleanup_loop, daemon=True).start()
+    threading.Thread(target=helper_cleanup_loop, daemon=True).start()
     ThreadingHTTPServer((os.getenv("BIND_IP", "127.0.0.1"), 9450), Handler).serve_forever()

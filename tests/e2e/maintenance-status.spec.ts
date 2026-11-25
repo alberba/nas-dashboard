@@ -43,6 +43,13 @@ function snapshot(role: Role, overrides: Record<string, unknown> = {}) {
     security: { pins: [], pending: null, review: [] },
     backup: { status: "ok", at: new Date().toISOString() },
     disks: { available: false, devices: [] },
+    helperCleanup: {
+      available: true,
+      status: "clean",
+      checkedAt: new Date().toISOString(),
+      pending: 0,
+      persistent: 0,
+    },
     units:
       role === "instance"
         ? [
@@ -269,6 +276,39 @@ test("a failed refresh keeps the last data marked as stale and recovers", async 
 
   await page.clock.fastForward(61_000);
   await expect(root).not.toHaveAttribute("data-stale", /.+/);
+});
+
+test("the cleaning cell distinguishes a persistent failure from a confirmed host", async ({
+  page,
+}) => {
+  await open(page, (id) =>
+    snapshot(nasRole(id) as Role, {
+      helperCleanup:
+        id === "apps"
+          ? {
+              available: true,
+              status: "clean",
+              checkedAt: new Date().toISOString(),
+              pending: 0,
+              persistent: 0,
+            }
+          : {
+              available: true,
+              status: "persistent",
+              checkedAt: new Date(Date.now() - 60_000).toISOString(),
+              pending: 2,
+              persistent: 1,
+            },
+    }),
+  );
+  await expect(cell(page, "cleanup")).toHaveAttribute(
+    "data-state",
+    "persistent",
+  );
+  await expect(cell(page, "cleanup")).toContainText("2");
+  await page.locator('[data-host-option="apps"]').click();
+  await expect(cell(page, "cleanup")).toHaveAttribute("data-state", "clean");
+  await expect(cell(page, "cleanup")).toContainText("Sin pendientes");
 });
 
 test("on a phone the strip is two columns and the page does not scroll sideways", async ({

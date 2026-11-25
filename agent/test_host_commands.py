@@ -32,7 +32,7 @@ class PrivilegedExitCodeTest(unittest.TestCase):
             def call(self, method, path, body=None, *, timeout=None, raw=False):
                 self.calls.append((method, path, body, raw))
                 if path == "/containers/create":
-                    return {"Id": "helper"}
+                    return {"Id": "b" * 64}
                 if path.endswith("/wait"):
                     return {"StatusCode": 7}
                 if path.endswith("/logs?stdout=true&stderr=true"):
@@ -46,7 +46,10 @@ class PrivilegedExitCodeTest(unittest.TestCase):
 
         self.assertEqual(status, 7)
         self.assertEqual(output, "failed")
-        self.assertIn(("DELETE", "/containers/helper?force=1", None, False), socket.calls)
+        self.assertIn(
+            ("DELETE", "/containers/" + "b" * 64 + "?v=0", None, False),
+            socket.calls,
+        )
 
 
 class HostCommandTest(unittest.TestCase):

@@ -49,6 +49,7 @@ function newerRelease(left: string | null, right: string | null): boolean {
 export function maintenanceAlertSignals(
   snapshot: MaintenanceSnapshot | null | undefined,
   hostName: string,
+  options: { helperCleanupAfter?: number } = {},
 ): AlertSignal[] {
   if (!record(snapshot)) return [];
   const degraded = new Set(
@@ -152,6 +153,51 @@ export function maintenanceAlertSignals(
       detail: failing ? names(stack) : "",
       severity: "critical",
     });
+  }
+
+  const cleanup = snapshot.helperCleanup;
+  if (
+    !degraded.has("helperCleanup") &&
+    record(cleanup) &&
+    cleanup.available === true
+  ) {
+    const checkedAt = text(cleanup.checkedAt);
+    const checked = checkedAt ? Date.parse(checkedAt) : NaN;
+    const fresh =
+      Number.isFinite(checked) &&
+      (options.helperCleanupAfter === undefined ||
+        checked >= options.helperCleanupAfter);
+    const pending =
+      typeof cleanup.pending === "number" && Number.isFinite(cleanup.pending)
+        ? cleanup.pending
+        : null;
+    if (fresh && pending !== null) {
+      if (
+        cleanup.status === "persistent" &&
+        pending > 0 &&
+        typeof cleanup.persistent === "number" &&
+        cleanup.persistent > 0
+      ) {
+        signals.push({
+          key: "helper-cleanup",
+          failing: true,
+          title: `Ayudantes sin retirar en ${hostName}`,
+          detail: `${pending} ${pending === 1 ? "ayudante pendiente" : "ayudantes pendientes"}; ${cleanup.persistent} con varios intentos fallidos.`,
+          severity: "warning",
+        });
+      } else if (cleanup.status === "clean" && pending === 0) {
+        signals.push({
+          key: "helper-cleanup",
+          failing: false,
+          title: "Limpieza de ayudantes recuperada",
+          detail: "",
+          severity: "warning",
+        });
+      }
+      // `failing` means one failed deletion: visible in Mantenimiento, but it
+      // neither opens an episode nor closes an existing one (D-10, D-12).
+      // `indeterminate` carries no evidence and leaves the episode untouched.
+    }
   }
 
   return signals;

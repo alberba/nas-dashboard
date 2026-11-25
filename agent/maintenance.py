@@ -13,6 +13,7 @@ import socket
 import threading
 import time
 
+import helper_cleanup as helper_cleanup_module
 import smart
 import updates
 
@@ -389,6 +390,14 @@ class UnixHTTP(http.client.HTTPConnection):
         self.sock.connect(self.path)
 
 
+class DockerError(OSError):
+    """Structured Docker failure; keeps the HTTP status for absence checks."""
+
+    def __init__(self, message, status=None):
+        super().__init__(message)
+        self.status = status
+
+
 class DockerSocket:
     def __init__(self, path=None, timeout=8):
         self.path = path or os.getenv("DOCKER_SOCKET", "/var/run/docker.sock")
@@ -409,7 +418,10 @@ class DockerSocket:
             response = connection.getresponse()
             data = response.read()
         if response.status >= 400:
-            raise OSError("Docker no pudo completar la lectura (%s)" % response.status)
+            raise DockerError(
+                "Docker no pudo completar la lectura (%s)" % response.status,
+                status=response.status,
+            )
         if raw:
             return data
         if not data:
@@ -417,7 +429,7 @@ class DockerSocket:
         try:
             return json.loads(data)
         except ValueError as error:
-            raise OSError("Docker devolvió una respuesta no válida") from error
+            raise DockerError("Docker devolvió una respuesta no válida") from error
 
 
 def demultiplex_logs(data):
@@ -438,9 +450,10 @@ def demultiplex_logs(data):
 class HostExecutor:
     """Runs one fixed command in a privileged nsenter helper container."""
 
-    def __init__(self, docker=None, image=None):
+    def __init__(self, docker=None, image=None, registry=None):
         self.docker = docker or DockerSocket(timeout=8)
         self.image = image or os.getenv("HOST_HELPER_IMAGE", "hub-agent:1")
+        self.registry = registry or helper_cleanup_module.shared_registry()
 
     def run(self, argv, timeout=8):
         return self.run_status(argv, timeout=timeout)[1]
@@ -455,6 +468,7 @@ class HostExecutor:
                 "Image": self.image,
                 "Entrypoint": ["nsenter"],
                 "Cmd": ["-t", "1", "-m", "-u", "-i", "-n", "-p", "--", *argv],
+                "Labels": self.registry.labels("host"),
                 "HostConfig": {
                     "Privileged": True,
                     "PidMode": "host",
@@ -464,6 +478,7 @@ class HostExecutor:
             timeout=timeout,
         )
         ident = created["Id"]
+        self.registry.enrol(ident, "host")
         try:
             self.docker.call(
                 "POST", "/containers/" + ident + "/start", timeout=timeout
@@ -483,12 +498,12 @@ class HostExecutor:
                 demultiplex_logs(logs),
             )
         finally:
-            try:
-                self.docker.call(
-                    "DELETE", "/containers/" + ident + "?force=1", timeout=timeout
-                )
-            except (OSError, ValueError):
-                pass
+            # The execution ended before the deletion: the retry budget only
+            # counts real DELETE failures, never snapshot reads.
+            self.registry.release(ident)
+            helper_cleanup_module.delete_helper(
+                self.docker, self.registry, ident, timeout
+            )
 
 
 class DiskExecutor:
@@ -734,6 +749,7 @@ class Maintenance:
         docker_reader,
         smart_reader=None,
         container_reader=None,
+        helper_cleanup=None,
         clock=time.time,
         cache_seconds=60,
         stack_prefix="media-stack",
@@ -746,6 +762,9 @@ class Maintenance:
         self.docker_reader = docker_reader
         self.smart_reader = smart_reader
         self.container_reader = container_reader
+        self.helper_cleanup = (
+            helper_cleanup or helper_cleanup_module.shared_registry()
+        )
         self.clock = clock
         try:
             self.cache_seconds = max(0.0, float(cache_seconds))
@@ -780,11 +799,29 @@ class Maintenance:
         now = self.clock()
         with self._lock:
             if self._cached is not None and now < self._expires:
-                return self._cached
-            value = self._build(now)
-            self._cached = value
-            self._expires = now + self.cache_seconds
-            return value
+                value = self._cached
+            else:
+                value = self._build(now)
+                self._cached = value
+                self._expires = now + self.cache_seconds
+        # The cleanup projection lives outside the snapshot cache: a deletion
+        # failure known a second ago must be visible on the next read, while
+        # reading the snapshot never counts as a cleanup attempt.
+        result = dict(value)
+        try:
+            section = self.helper_cleanup.section(now)
+        except Exception:
+            section = {
+                "available": False,
+                "status": "indeterminate",
+                "checkedAt": None,
+                "pending": 0,
+                "persistent": 0,
+            }
+        result["helperCleanup"] = section
+        if section["available"] is False:
+            result["degraded"] = [*value.get("degraded", []), "helperCleanup"]
+        return result
 
     def invalidate(self):
         """Forces the next read to observe a just-executed host action."""

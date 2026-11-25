@@ -24,6 +24,7 @@ type FakeAgent = {
   url: string;
   token: string;
   requests: RecordedRequest[];
+  maintenance: unknown;
   fail: boolean;
   close(): Promise<void>;
 };
@@ -127,6 +128,13 @@ function snapshot() {
       total: 46_000,
       reclaimable: 31_000,
     },
+    helperCleanup: {
+      available: true,
+      status: "clean",
+      checkedAt: "2026-11-13T10:02:00Z",
+      pending: 0,
+      persistent: 0,
+    },
     degraded: [],
   };
 }
@@ -136,6 +144,7 @@ async function fakeAgent(token: string): Promise<FakeAgent> {
     token,
     url: "",
     requests: [],
+    maintenance: snapshot(),
     fail: false,
     async close() {
       await new Promise<void>((resolve, reject) =>
@@ -156,7 +165,7 @@ async function fakeAgent(token: string): Promise<FakeAgent> {
       return send(401, { error: "No autorizado" });
     if (agent.fail) return send(503, { error: "El host no responde" });
     if (new URL(request.url ?? "/", "http://agent").pathname === "/maintenance")
-      return send(200, snapshot());
+      return send(200, agent.maintenance);
     return send(404, { error: "No encontrado" });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -211,6 +220,8 @@ describe("maintenance snapshot API", () => {
   beforeEach(() => {
     nas.requests = [];
     apps.requests = [];
+    nas.maintenance = snapshot();
+    apps.maintenance = snapshot();
     nas.fail = false;
     apps.fail = false;
   });
@@ -275,5 +286,114 @@ describe("maintenance snapshot API", () => {
 
     expect(response.status).toBe(503);
     expect(apps.requests).toHaveLength(1);
+  });
+
+  function withCleanup(
+    cleanup: unknown,
+    extra: Record<string, unknown> = {},
+  ) {
+    return { ...snapshot(), helperCleanup: cleanup, ...extra };
+  }
+
+  it("publishes a coherent helper cleanup section", async () => {
+    nas.maintenance = withCleanup({
+      available: true,
+      status: "persistent",
+      checkedAt: "2026-11-13T10:05:00Z",
+      pending: 2,
+      persistent: 1,
+    });
+
+    const response = await api("/api/maintenance?host=nas-home");
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.snapshot.helperCleanup).toEqual({
+      available: true,
+      status: "persistent",
+      checkedAt: "2026-11-13T10:05:00Z",
+      pending: 2,
+      persistent: 1,
+    });
+  });
+
+  it("keeps a proven cleanup failure visible when the Docker section degrades", async () => {
+    nas.maintenance = withCleanup(
+      {
+        available: true,
+        status: "persistent",
+        checkedAt: "2026-11-13T10:05:00Z",
+        pending: 1,
+        persistent: 1,
+      },
+      { degraded: ["docker"] },
+    );
+
+    const response = await api("/api/maintenance?host=nas-home");
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.snapshot.degraded).toContain("docker");
+    expect(body.snapshot.helperCleanup).toMatchObject({
+      status: "persistent",
+      pending: 1,
+      persistent: 1,
+    });
+  });
+
+  it("rejects incoherent helper counts and states", async () => {
+    const cases = [
+      {
+        available: true,
+        status: "persistent",
+        checkedAt: "2026-11-13T10:05:00Z",
+        pending: 1,
+        persistent: 2,
+      },
+      {
+        available: true,
+        status: "clean",
+        checkedAt: "2026-11-13T10:05:00Z",
+        pending: 1,
+        persistent: 0,
+      },
+      {
+        available: true,
+        status: "clean",
+        checkedAt: null,
+        pending: 0,
+        persistent: 0,
+      },
+      {
+        available: true,
+        status: "failing",
+        checkedAt: "2026-11-13T10:05:00Z",
+        pending: 0,
+        persistent: 0,
+      },
+    ];
+    for (const cleanup of cases) {
+      nas.maintenance = withCleanup(cleanup);
+      const response = await api("/api/maintenance?host=nas-home");
+      expect(response.status).toBe(503);
+    }
+  });
+
+  it("returns the same cleanup section on a repeated read", async () => {
+    nas.maintenance = withCleanup({
+      available: true,
+      status: "failing",
+      checkedAt: "2026-11-13T10:05:00Z",
+      pending: 1,
+      persistent: 0,
+    });
+
+    const first = await (await api("/api/maintenance?host=nas-home")).json();
+    const second = await (await api("/api/maintenance?host=nas-home")).json();
+
+    expect(second.snapshot.helperCleanup).toEqual(
+      first.snapshot.helperCleanup,
+    );
+    expect(nas.requests).toHaveLength(2);
   });
 });

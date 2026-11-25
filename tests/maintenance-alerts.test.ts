@@ -590,3 +590,135 @@ describe("notification policy", () => {
     }
   });
 });
+
+describe("helper cleanup alerts", () => {
+  function cleanup(
+    overrides: Partial<
+      NonNullable<MaintenanceSnapshot["helperCleanup"]>
+    > = {},
+  ) {
+    return maintenance({
+      helperCleanup: {
+        available: true,
+        status: "persistent",
+        checkedAt: "2026-11-13T10:05:00Z",
+        pending: 2,
+        persistent: 1,
+        ...overrides,
+      },
+    });
+  }
+
+  it("opens a single digest episode only for a persistent failure", () => {
+    const persistent = signal(
+      maintenanceAlertSignals(cleanup(), "NAS-HOME"),
+      "helper-cleanup",
+    );
+    expect(persistent).toMatchObject({
+      key: "helper-cleanup",
+      failing: true,
+      severity: "warning",
+    });
+    expect(persistent?.detail).toContain("2 ayudantes pendientes");
+    expect(persistent?.detail).toContain("1 con varios intentos");
+
+    const first = signal(
+      maintenanceAlertSignals(
+        cleanup({ status: "failing", persistent: 0, pending: 1 }),
+        "NAS-HOME",
+      ),
+      "helper-cleanup",
+    );
+    expect(first).toBeUndefined();
+
+    const indeterminate = signal(
+      maintenanceAlertSignals(
+        cleanup({
+          status: "indeterminate",
+          checkedAt: null,
+          persistent: 0,
+          pending: 0,
+        }),
+        "NAS-HOME",
+      ),
+      "helper-cleanup",
+    );
+    expect(indeterminate).toBeUndefined();
+  });
+
+  it("keeps a first failure and an incomplete inventory out of the incident", () => {
+    const scattered = signal(
+      maintenanceAlertSignals(
+        cleanup({ status: "failing", persistent: 0, pending: 2 }),
+        "NAS-HOME",
+      ),
+      "helper-cleanup",
+    );
+    expect(scattered).toBeUndefined();
+
+    const degraded = signal(
+      maintenanceAlertSignals(
+        maintenance({
+          helperCleanup: {
+            available: true,
+            status: "persistent",
+            checkedAt: "2026-11-13T10:05:00Z",
+            pending: 1,
+            persistent: 1,
+          },
+          degraded: ["helperCleanup"],
+        }),
+        "NAS-HOME",
+      ),
+      "helper-cleanup",
+    );
+    expect(degraded).toBeUndefined();
+
+    expect(
+      signal(
+        maintenanceAlertSignals(maintenance(), "NAS-HOME"),
+        "helper-cleanup",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("only closes on a clean state backed by a complete inventory", () => {
+    const recovered = signal(
+      maintenanceAlertSignals(
+        cleanup({ status: "clean", pending: 0, persistent: 0 }),
+        "NAS-HOME",
+      ),
+      "helper-cleanup",
+    );
+    expect(recovered).toMatchObject({ failing: false });
+  });
+
+  it("ignores a cleanup check older than the last accredited one", () => {
+    const stale = maintenanceAlertSignals(
+      cleanup(),
+      "NAS-HOME",
+      { helperCleanupAfter: Date.parse("2026-11-13T10:06:00Z") },
+    );
+    expect(signal(stale, "helper-cleanup")).toBeUndefined();
+
+    const fresh = maintenanceAlertSignals(
+      cleanup({ checkedAt: "2026-11-13T10:07:00Z" }),
+      "NAS-HOME",
+      { helperCleanupAfter: Date.parse("2026-11-13T10:06:00Z") },
+    );
+    expect(signal(fresh, "helper-cleanup")).toMatchObject({ failing: true });
+  });
+
+  it("keeps helper cleanup in the digest even with PUSH_WARNINGS", () => {
+    expect(
+      notificationPolicy("helper-cleanup", "warning", {
+        pushWarnings: true,
+      }),
+    ).toEqual({
+      channel: "digest",
+      reason: "digest_pending",
+      digest: true,
+      immediate: false,
+    });
+  });
+});
