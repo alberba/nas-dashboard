@@ -1,5 +1,6 @@
 import { Data, Effect, Result } from "effect";
 import { getHosts, primaryHost, type HostConfig } from "./hosts";
+import { agentSnapshotSchema } from "./agent-snapshots";
 
 export class NasUnavailable extends Data.TaggedError("NasUnavailable")<{
   readonly cause: unknown;
@@ -20,6 +21,19 @@ export const CONTAINER_UPDATE_TIMEOUT_MS = 300_000;
 function durationFor(body: unknown, timeoutMs?: number) {
   const fallback = body === undefined ? 25_000 : 45_000;
   return `${Math.ceil((timeoutMs ?? fallback) / 1000)} seconds` as const;
+}
+
+function rejectedMessage(data: unknown) {
+  if (
+    typeof data === "object" &&
+    data !== null &&
+    "error" in data &&
+    typeof (data as { error?: unknown }).error === "string"
+  )
+    return (data as { error: string }).error;
+  // The status is the trustworthy part of a rejection; a broken or non-JSON
+  // body must not turn it into a schema failure.
+  return "El NAS rechazó la operación";
 }
 
 export function nasEffectForHost<T>(
@@ -43,17 +57,42 @@ export function nasEffectForHost<T>(
         }),
       catch: (cause) => new NasUnavailable({ cause }),
     });
-    const data = yield* Effect.tryPromise({
-      try: () => response.json(),
-      catch: (cause) => new NasInvalidResponse({ cause }),
+    const raw = yield* Effect.tryPromise({
+      try: () => response.text(),
+      catch: (cause) => new NasUnavailable({ cause }),
     });
+    let data: unknown;
+    let parseError: unknown;
+    if (raw.trim()) {
+      try {
+        data = JSON.parse(raw);
+      } catch (cause) {
+        parseError = cause;
+      }
+    } else {
+      parseError = new Error("Respuesta vacía");
+    }
     if (!response.ok)
       return yield* Effect.fail(
         new NasRejected({
           status: response.status,
-          message: data.error ?? "El NAS rechazó la operación",
+          message: rejectedMessage(data),
         }),
       );
+    if (parseError)
+      return yield* Effect.fail(new NasInvalidResponse({ cause: parseError }));
+    // Decode the producer shape inside the Effect, before the Promise boundary,
+    // so route handlers and the collector receive either typed data or a
+    // distinct NasInvalidResponse.
+    const schema = body === undefined ? agentSnapshotSchema(path) : undefined;
+    if (schema) {
+      const parsed = schema.safeParse(data);
+      if (!parsed.success)
+        return yield* Effect.fail(
+          new NasInvalidResponse({ cause: parsed.error }),
+        );
+      return parsed.data as T;
+    }
     return data as T;
   }).pipe(
     Effect.timeoutOrElse({

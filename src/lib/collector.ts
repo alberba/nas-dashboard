@@ -1,7 +1,7 @@
 import { and, eq, gt } from "drizzle-orm";
 import { db } from "./db";
 import { operations, samples } from "./schema";
-import { nasForHost } from "./nas";
+import { nasForHost, NasInvalidResponse } from "./nas";
 import { getSettings, saveSettings } from "./settings";
 import { getHosts, type HostConfig } from "./hosts";
 import {
@@ -114,13 +114,12 @@ export async function collectHost(host: HostConfig, now = Date.now()) {
   let metrics: Metrics;
   try {
     metrics = await nasForHost<Metrics>(host, "/metrics");
-    if (
-      !Number.isFinite(metrics.timestamp) ||
-      !Array.isArray(metrics.containers) ||
-      !metrics.memory?.total
-    )
-      throw new Error("Muestra no válida");
-  } catch {
+  } catch (error) {
+    // A malformed successful response is a contract failure, not a
+    // disconnection: it must not write a sample, open `connection` or touch
+    // any episode. Only a real transport/HTTP failure keeps the disconnect
+    // policy and the planned-reboot grace below.
+    if (error instanceof NasInvalidResponse) return;
     const [planned] = await db
       .select()
       .from(operations)
@@ -171,15 +170,19 @@ export async function collectHost(host: HostConfig, now = Date.now()) {
     settings.initialized = true;
     await saveSettings(host.id, settings);
   }
-  await condition(
-    host,
-    "cpu",
-    metrics.cpu !== null && metrics.cpu >= settings.cpu,
-    `CPU elevada en ${host.name}`,
-    `Uso sostenido superior al ${settings.cpu} %.`,
-    now,
-    settings.sustainedSeconds,
-  );
+  // A null CPU measurement or an empty temperature list is absence of
+  // evidence, not a recovery. Leave those episodes exactly as they were.
+  if (metrics.cpu !== null) {
+    await condition(
+      host,
+      "cpu",
+      metrics.cpu >= settings.cpu,
+      `CPU elevada en ${host.name}`,
+      `Uso sostenido superior al ${settings.cpu} %.`,
+      now,
+      settings.sustainedSeconds,
+    );
+  }
   const memory = (metrics.memory.used / metrics.memory.total) * 100;
   await condition(
     host,
@@ -190,28 +193,32 @@ export async function collectHost(host: HostConfig, now = Date.now()) {
     now,
     settings.sustainedSeconds,
   );
-  await condition(
-    host,
-    "disk",
-    metrics.disks.some(
-      (disk) => (disk.used / disk.total) * 100 >= settings.disk,
-    ),
-    `Queda poco espacio en ${host.name}`,
-    `Algún volumen supera el ${settings.disk} % de ocupación.`,
-    now,
-  );
-  await condition(
-    host,
-    "temperature",
-    metrics.temperatures.some(
-      (temperature) => temperature.value >= settings.temperature,
-    ),
-    `Temperatura elevada en ${host.name}`,
-    `Algún sensor supera ${settings.temperature} °C.`,
-    now,
-    30,
-    "critical",
-  );
+  if (metrics.disks.length > 0) {
+    await condition(
+      host,
+      "disk",
+      metrics.disks.some(
+        (disk) => (disk.used / disk.total) * 100 >= settings.disk,
+      ),
+      `Queda poco espacio en ${host.name}`,
+      `Algún volumen supera el ${settings.disk} % de ocupación.`,
+      now,
+    );
+  }
+  if (metrics.temperatures.length > 0) {
+    await condition(
+      host,
+      "temperature",
+      metrics.temperatures.some(
+        (temperature) => temperature.value >= settings.temperature,
+      ),
+      `Temperatura elevada en ${host.name}`,
+      `Algún sensor supera ${settings.temperature} °C.`,
+      now,
+      30,
+      "critical",
+    );
+  }
   for (const name of settings.expectedContainers) {
     await condition(
       host,

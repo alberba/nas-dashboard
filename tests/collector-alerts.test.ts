@@ -12,6 +12,9 @@ import { deploymentsSnapshot, maintenanceSnapshot, metricsSnapshot } from "./hos
 type AgentState = {
   maintenance: unknown;
   deployments: unknown;
+  metrics: unknown;
+  rawMetrics: string | null;
+  failMetrics: boolean;
   failMaintenance: boolean;
   failDeployments: boolean;
   requests: string[];
@@ -32,12 +35,18 @@ async function fakeAgent(name: string): Promise<FakeAgent> {
     url: "",
     maintenance: maintenanceSnapshot(),
     deployments: deploymentsSnapshot(),
+    metrics: metricsSnapshot(),
+    rawMetrics: null,
+    failMetrics: false,
     failMaintenance: false,
     failDeployments: false,
     requests: [],
     reset() {
       agent.maintenance = maintenanceSnapshot();
       agent.deployments = deploymentsSnapshot();
+      agent.metrics = metricsSnapshot();
+      agent.rawMetrics = null;
+      agent.failMetrics = false;
       agent.failMaintenance = false;
       agent.failDeployments = false;
       agent.requests = [];
@@ -58,7 +67,15 @@ async function fakeAgent(name: string): Promise<FakeAgent> {
     };
     if (request.headers.authorization !== `Bearer ${agent.token}`)
       return send(401, { error: "No autorizado" });
-    if (path === "/metrics") return send(200, metricsSnapshot());
+    if (path === "/metrics") {
+      if (agent.failMetrics) return send(503, { error: "El host no responde" });
+      if (agent.rawMetrics !== null) {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(agent.rawMetrics);
+        return;
+      }
+      return send(200, agent.metrics);
+    }
     if (path === "/maintenance")
       return agent.failMaintenance
         ? send(503, { error: "Sin instantánea" })
@@ -83,6 +100,7 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
   let nas: FakeAgent;
   let apps: FakeAgent;
   let collectAll: typeof import("@/lib/collector").collectAll;
+  let collectHost: typeof import("@/lib/collector").collectHost;
   let getHosts: typeof import("@/lib/hosts").getHosts;
   let db: typeof import("@/lib/db").db;
   let pool: typeof import("@/lib/db").pool;
@@ -101,6 +119,18 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
       events: await db.select().from(tables.incidentEvents),
       outbox: await db.select().from(tables.notificationOutbox),
     };
+  }
+
+  async function setSettings(
+    hostId: string,
+    overrides: Partial<import("@/lib/types").Settings>,
+  ) {
+    const { defaults } = await import("@/lib/settings");
+    await db.insert(tables.configuration).values({
+      hostId,
+      id: "settings",
+      value: { ...defaults, initialized: true, ...overrides },
+    });
   }
 
   beforeAll(async () => {
@@ -129,7 +159,7 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
     db = database.db;
     pool = database.pool;
     await migrate(db, { migrationsFolder: "./drizzle" });
-    ({ collectAll } = await import("@/lib/collector"));
+    ({ collectAll, collectHost } = await import("@/lib/collector"));
     ({ getHosts } = await import("@/lib/hosts"));
     tables = await import("@/lib/schema");
   });
@@ -483,5 +513,131 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
     expect(after.outbox).toHaveLength(1);
     expect(after.outbox[0].key).toBe(`incident:${incidentId}:open`);
     expect(after.outbox[0].status).toBe("pending");
+  });
+
+  it("persists a valid sample and ignores a malformed 200 without touching incidents", async () => {
+    const start = Date.UTC(2026, 10, 18, 10);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    await setSettings("nas-home", { temperature: 50 });
+    nas.metrics = metricsSnapshot({
+      temperatures: [{ name: "CPU", value: 90 }],
+    });
+
+    await collectHost(host, start);
+    await collectHost(host, start + 31_000);
+    let current = await state();
+    expect(await db.select().from(tables.samples)).toHaveLength(2);
+    expect(current.incidents).toHaveLength(1);
+    expect(current.incidents[0]).toMatchObject({
+      key: "temperature",
+      severity: "critical",
+      seq: 1,
+      resolvedAt: null,
+    });
+    const incidentId = current.incidents[0].id;
+    expect(current.events).toHaveLength(1);
+    expect(current.outbox).toHaveLength(1);
+    expect(current.outbox[0]).toMatchObject({
+      incidentId,
+      channel: "telegram",
+      status: "pending",
+    });
+
+    const before = await state();
+    nas.rawMetrics = '{"timestamp":';
+    await collectHost(host, start + 62_000);
+    expect(await db.select().from(tables.samples)).toHaveLength(2);
+    const after = await state();
+    expect(after).toEqual(before);
+    expect(after.incidents).toHaveLength(1);
+    expect(after.incidents[0]).toMatchObject({
+      id: incidentId,
+      resolvedAt: null,
+      seq: 1,
+    });
+    expect(after.incidents.some((row) => row.key === "connection")).toBe(false);
+  });
+
+  it("keeps CPU and temperature episodes open when the sample has no measurement", async () => {
+    const start = Date.UTC(2026, 10, 19, 10);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    await setSettings("nas-home", {
+      cpu: 10,
+      temperature: 50,
+      sustainedSeconds: 0,
+    });
+    nas.metrics = metricsSnapshot({
+      cpu: 50,
+      temperatures: [{ name: "CPU", value: 90 }],
+    });
+
+    await collectHost(host, start);
+    await collectHost(host, start + 31_000);
+    let current = await state();
+    expect(current.incidents.map((row) => row.key).sort()).toEqual([
+      "cpu",
+      "temperature",
+    ]);
+    expect(current.incidents.every((row) => row.resolvedAt === null)).toBe(
+      true,
+    );
+    const eventsBefore = current.events.length;
+    const outboxBefore = current.outbox.length;
+
+    nas.metrics = metricsSnapshot({ cpu: null, temperatures: [] });
+    await collectHost(host, start + 62_000);
+    current = await state();
+    expect(current.incidents).toHaveLength(2);
+    expect(current.incidents.every((row) => row.resolvedAt === null)).toBe(
+      true,
+    );
+    expect(current.incidents.every((row) => row.seq === 1)).toBe(true);
+    expect(current.events).toHaveLength(eventsBefore);
+    expect(current.outbox).toHaveLength(outboxBefore);
+    expect(await db.select().from(tables.samples)).toHaveLength(3);
+  });
+
+  it("treats a wrong shape in a 200 as a contract failure, not a disconnect", async () => {
+    const start = Date.UTC(2026, 10, 20, 10);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    nas.metrics = metricsSnapshot({ memory: { total: 0, used: 0 } });
+
+    await collectHost(host, start);
+
+    expect(await db.select().from(tables.samples)).toHaveLength(0);
+    expect(await db.select().from(tables.incidents)).toHaveLength(0);
+    expect(await db.select().from(tables.notificationOutbox)).toHaveLength(0);
+  });
+
+  it("keeps the disconnect policy and the planned-reboot grace on real failures", async () => {
+    const start = Date.UTC(2026, 10, 21, 10);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    await db.insert(tables.operations).values({
+      id: "reboot-grace",
+      hostId: "nas-home",
+      userId: "test-user",
+      action: "reboot",
+      target: "NAS-HOME",
+      status: "pending",
+      at: new Date(start - 60_000),
+    });
+    nas.failMetrics = true;
+
+    await collectHost(host, start);
+    await collectHost(host, start + 61_000);
+    let current = await state();
+    expect(current.incidents).toEqual([]);
+    expect(current.outbox).toEqual([]);
+
+    await db.delete(tables.operations);
+    await collectHost(host, start + 122_000);
+    await collectHost(host, start + 183_000);
+    current = await state();
+    expect(current.incidents).toHaveLength(1);
+    expect(current.incidents[0]).toMatchObject({
+      key: "connection",
+      severity: "critical",
+    });
+    expect(current.outbox).toHaveLength(1);
   });
 });
