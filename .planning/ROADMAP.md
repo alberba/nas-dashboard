@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Auditoría del ruido** - Medir mensajes, recuperaciones, duplicados y horas antes de fijar la política. (completed 2026-11-24)
 - [x] **Phase 2: Incidencias y entrega única** - Una incidencia con identidad y exactamente un mensaje, con outbox y estado de entrega. (completed 2026-11-25)
-- [ ] **Phase 3: Agrupación, inventario y ayudantes** - Una caída de host es una incidencia, sin fantasmas ni ayudantes huérfanos.
+- [x] **Phase 3: Agrupación, inventario y ayudantes** - Una caída de host es una incidencia, sin fantasmas ni ayudantes huérfanos. (completed 2026-11-25)
 - [ ] **Phase 4: Resumen diario** - Lo no urgente llega una vez al día, sin duplicarse ni perderse en los cambios de hora.
 - [ ] **Phase 5: Bot de lectura y reconocimiento** - Abrir, silenciar y reconocer desde el mensaje, con allowlist y tokens de un solo uso.
 - [ ] **Phase 6: Puerta de seguridad** - Verificación reciente en el servidor para todas las acciones destructivas, más CSP y HSTS.
@@ -93,7 +93,7 @@ Plans:
   2. Mientras el host está caído, las incidencias de contenedor quedan inhibidas con su motivo visible, y al volver no se abren por la caída.
   3. Renombrar o recrear un contenedor deja de producir una incidencia `container:<nombre>` permanente.
   4. Los ayudantes privilegiados huérfanos se recogen y un fallo de limpieza queda visible para el operador.
-**Plans**: 3/3 plans executed
+**Plans**: 3/3 plans complete
 
 Plans:
 **Wave 1**
@@ -219,7 +219,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 |-------|----------------|--------|-----------|
 | 1. Auditoría del ruido | 3/3 | Complete    | 2026-11-24 |
 | 2. Incidencias y entrega única | 5/5 | Complete    | 2026-11-25 |
-| 3. Agrupación, inventario y ayudantes | 3/3 | In Progress | - |
+| 3. Agrupación, inventario y ayudantes | 3/3 | Complete    | 2026-11-25 |
 | 4. Resumen diario | 0/3 | Not started | - |
 | 5. Bot de lectura y reconocimiento | 0/3 | Not started | - |
 | 6. Puerta de seguridad | 0/3 | Not started | - |

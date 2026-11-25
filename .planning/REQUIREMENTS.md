@@ -25,8 +25,8 @@ Alcance de este milestone: auditar el ruido, sustituir los emisores por una entr
 - [x] **INCD-06**: Solo el worker con el lock de recolección envía, y un reintento no duplica el mensaje
 - [x] **INCD-07**: Un 429 se reintenta respetando `retry_after`; 400/403/404 quedan fallidos de forma permanente y visible
 - [x] **INCD-08**: El operador ve en el hub el estado de entrega de cada incidencia (enviado, fallido, suprimido y motivo)
-- [ ] **INCD-09**: Una caída de host se agrupa en una incidencia de servicios e inhibe las de contenedor durante la caída
-- [ ] **INCD-10**: `expectedContainers` se reconcilia con el inventario real y no deja incidencias fantasma
+- [x] **INCD-09**: Una caída de host se agrupa en una incidencia de servicios e inhibe las de contenedor durante la caída
+- [x] **INCD-10**: `expectedContainers` se reconcilia con el inventario real y no deja incidencias fantasma
 
 ### Resumen diario
 
@@ -64,7 +64,7 @@ Alcance de este milestone: auditar el ruido, sustituir los emisores por una entr
 - [x] **CONT-01**: Métricas, mantenimiento y despliegues se validan en runtime en el borde del hub, y un payload inválido no resuelve incidencias
 - [ ] **CONT-02**: El ingest de `media-stack` valida HMAC, ventana de 5 minutos e idempotencia por evento
 - [ ] **CONT-03**: Agente y worker tienen healthcheck, y el worker puede reportar que el resumen no salió
-- [ ] **CONT-04**: Los contenedores auxiliares huérfanos del agente se recogen y los fallos de limpieza son visibles
+- [x] **CONT-04**: Los contenedores auxiliares huérfanos del agente se recogen y los fallos de limpieza son visibles
 
 ### Rendimiento
 
@@ -120,9 +120,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | BOT-03 | Phase 2 | Complete |
 | SEC-03 | Phase 2 | Complete |
 | CONT-01 | Phase 2 | Complete |
-| INCD-09 | Phase 3 | Pending |
-| INCD-10 | Phase 3 | Pending |
-| CONT-04 | Phase 3 | Pending |
+| INCD-09 | Phase 3 | Complete |
+| INCD-10 | Phase 3 | Complete |
+| CONT-04 | Phase 3 | Complete |
 | DIG-01 | Phase 4 | Pending |
 | DIG-02 | Phase 4 | Pending |
 | DIG-03 | Phase 4 | Pending |

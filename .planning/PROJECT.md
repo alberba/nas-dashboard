@@ -29,6 +29,8 @@ Saber en segundos qué está pasando en los dos servidores y poder actuar sobre 
 - ✓ Avisos del bot del hub en Telegram con enlace autenticado a la incidencia — fase 02 (BOT-01 y BOT-03)
 - ✓ Validación de configuración obligatoria y rechazo de credenciales de ejemplo al arrancar — fase 02 (SEC-03)
 - ✓ Validación en runtime de métricas, mantenimiento y despliegues antes de evaluar incidencias — fase 02 (CONT-01)
+- ✓ Incidencia agrupada por caída de host y reconciliación de `expectedContainers` con Docker — fase 03 (INCD-09 e INCD-10)
+- ✓ Recogida de ayudantes huérfanos de propiedad demostrable y fallos de limpieza visibles — fase 03 (CONT-04)
 
 ### Active
 
@@ -38,7 +40,7 @@ Saber en segundos qué está pasando en los dos servidores y poder actuar sobre 
 - [ ] Documentar y probar la rotación conjunta del token de Telegram
 - [ ] CSP y HSTS, más límites de cuerpo y de tamaño de respuesta en el hub
 - [ ] Rollups y caché del histórico para que 30 días de muestras no dominen la carga de PostgreSQL
-- [ ] Healthchecks de agente y worker, reaper de contenedores auxiliares y `expectedContainers` reconciliado
+- [ ] Healthchecks de agente y worker
 
 ### Out of Scope
 
@@ -74,6 +76,9 @@ Saber en segundos qué está pasando en los dos servidores y poder actuar sobre 
 | Registrar la entrega incierta sin segundo envío automático | Un envío pudo llegar aunque el worker perdiera la confirmación | Fase 02 muestra el motivo. El respaldo push para críticas requiere un fallo definitivo confirmado. |
 | Migrar en silencio las incidencias abiertas | El histórico se conserva sin volver a avisar al activar el bot | Fase 02 validada sobre una copia restaurada de producción |
 | Actualizar en silencio un push existente cuando el hub esté visible | Una escalada debe reflejarse sin volver a interrumpir | Fase 02 validada en iOS con el aviso presente y descartado |
+| Conservar el episodio de conexión al agrupar la caída del host | El historial y la entrega quedan asociados a la misma incidencia | Fase 03 verificada con inhibición y recuperación por host |
+| Retirar una entrada ausente tras 30 minutos de inventario válido | Las recreaciones breves conservan la vigilancia | Fase 03 conserva el episodio ante un reemplazo inequívoco |
+| Incluir los fallos persistentes de limpieza en el resumen | Mantenimiento muestra el primer fallo y el segundo abre una incidencia por host | La fase 03 registra la incidencia. Su entrega corresponde a la fase 04. |
 | Resumen diario para lo no urgente | Evita interrumpir por informativo sin perderlo | — Pending |
 | Telegram con acciones inline | El usuario quiere resolver desde el móvil, no solo enterarse | — Pending |
 | Auditar con datos reales del NAS y de media-stack | Sin una cifra de partida no hay criterio de éxito | Telegram medido. El push histórico queda sin medir en ausencia del CSV de `alerts`. |
@@ -96,4 +101,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-11-25 after Phase 2*
+*Last updated: 2026-11-25 after Phase 3*
