@@ -272,14 +272,17 @@ export async function reconcileContainers(input: {
   revision: number;
 }): Promise<number | null> {
   const mark = inventoryMark(input.metrics);
-  // An older agent has no list date: presence is still evaluated, but absence
-  // is never evidence and no watch state is written.
-  if (mark === null) return input.revision;
   let evaluatedRevision: number | null = null;
   await mutateSettings(input.host.id, async (current, tx) => {
     const watch = watchOf(current);
     if (watch.revision !== input.revision) return current;
     evaluatedRevision = watch.revision;
+    // An undated list can still confirm presence, but breaks the absence chain.
+    if (mark === null) {
+      if (watch.chainAt === null) return current;
+      watch.chainAt = null;
+      return { ...current, watch };
+    }
     if (watch.lastInventoryAt !== null && mark <= watch.lastInventoryAt)
       return current;
 
@@ -382,6 +385,12 @@ export async function reconcileContainers(input: {
 
     if (changed) watch.revision += 1;
     evaluatedRevision = watch.revision;
+    // An undated list can still confirm presence, but breaks the absence chain.
+    if (mark === null) {
+      if (watch.chainAt === null) return current;
+      watch.chainAt = null;
+      return { ...current, watch };
+    }
     watch.lastInventoryAt = mark;
     watch.chainAt = mark;
     watch.workerId = WORKER_ID;

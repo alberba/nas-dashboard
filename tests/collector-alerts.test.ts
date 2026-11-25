@@ -917,6 +917,10 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
     await collectHost(host, start + 90_000);
     expect((await watchState()).entries.gone.accreditedMs).toBe(60_000);
 
+    nas.metrics = at(95);
+    await collectHost(host, start + 95_000);
+    expect((await watchState()).entries.gone.accreditedMs).toBe(60_000);
+
     // A contract failure breaks the chain without losing accredited time.
     nas.rawMetrics = '{"timestamp":';
     await collectHost(host, start + 100_000);
