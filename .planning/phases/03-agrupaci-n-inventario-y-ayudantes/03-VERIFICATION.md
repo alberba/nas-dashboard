@@ -1,7 +1,7 @@
 ---
 phase: 03-agrupaci-n-inventario-y-ayudantes
 verified: 2026-11-25T15:21:44Z
-status: human_needed
+status: passed
 score: 21/21 must-haves verified
 covered_files: [
     ".planning/phases/03-agrupaci-n-inventario-y-ayudantes/03-01-PLAN.md",
@@ -94,7 +94,7 @@ human_verification:
 
 - **Objetivo** — Agrupar una caída de host en una sola incidencia, eliminar las incidencias fantasma de `expectedContainers` y recoger los ayudantes privilegiados huérfanos del agente.
 - **Verificado** — 2026-11-25T15:21:44Z, sobre `a005ccd`
-- **Estado** — `human_needed`. Los 21 puntos y las seis prohibiciones tienen evidencia automatizada. Quedan dos comprobaciones manuales de despliegue.
+- **Estado** — `passed`. Los 21 puntos y las seis prohibiciones tienen evidencia automatizada. El operador confirmó las dos comprobaciones manuales de despliegue.
 - **Reverificación** — 21/21 frente a 13/21 en `ed40dfb`. Las sondas A, B y C pasan.
 
 Se contrastaron los cuatro criterios de ROADMAP y las 17 verdades de los planes con los puntos de entrada de producción, la persistencia y las pruebas de comportamiento.
@@ -198,7 +198,7 @@ El registro de fase declara nueve amenazas mitigadas y las nueve correcciones de
 
 ## Verificación humana
 
-Quedan pendientes las dos comprobaciones de despliegue de esta sección. El método de GSD fija `human_needed` mientras queden comprobaciones humanas. [Matriz de validación](03-VALIDATION.md).
+El operador confirmó las dos comprobaciones de despliegue. [Registro de aceptación](03-UAT.md).
 
 1. **Docker desechable.** Observar el barrido de un ayudante propio huérfano, verificar que se conserva su volumen y observar el primer fallo en Mantenimiento y la incidencia digest tras un segundo fallo. La integración de esta verificación usó un cliente Docker inyectado.
 2. **Lectura de estados.** Comprobar en Avisos y Mantenimiento que la fecha, el motivo de inhibición, la ausencia pendiente y el estado de limpieza se distinguen al cambiar de host. Playwright comprueba el estado estructural, y la revisión manual cubre la claridad del texto.
