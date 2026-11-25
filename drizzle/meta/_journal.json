@@ -29,6 +29,13 @@
       "when": 1794591874285,
       "tag": "0003_multi_host",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795591379120,
+      "tag": "0004_incidents",
+      "breakpoints": true
     }
   ]
 }

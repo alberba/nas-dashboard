@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   pgTable,
   text,
@@ -7,6 +8,7 @@ import {
   jsonb,
   index,
   primaryKey,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import type { Metrics, Settings } from "./types";
 
@@ -131,8 +133,13 @@ export const configuration = pgTable(
   },
   (t) => [primaryKey({ columns: [t.hostId, t.id] })],
 );
-export const alerts = pgTable(
-  "alerts",
+/**
+ * One durable episode per watched condition. `fingerprint` identifies the
+ * host/key pair across episodes; `id` identifies the episode itself. Only one
+ * row per pair may stay open, enforced by a partial unique index.
+ */
+export const incidents = pgTable(
+  "incidents",
   {
     id: integer().primaryKey().generatedAlwaysAsIdentity(),
     hostId: text().notNull().default("nas-home"),
@@ -142,11 +149,98 @@ export const alerts = pgTable(
     severity: text().notNull(),
     at: timestamp().notNull().defaultNow(),
     resolvedAt: timestamp(),
+    fingerprint: text().notNull(),
+    seq: integer().notNull().default(0),
+    /** `legacy` marks episodes already open before the 0004 backfill (D-03). */
+    origin: text().notNull().default("live"),
+    /** `collector`, `lifecycle` or the synthetic `migration-dedup` closure. */
+    closedBy: text(),
+    /** Original `resolvedAt`, kept for the reversible migration. */
+    previousResolvedAt: timestamp(),
   },
   (t) => [
-    index("alerts_key_idx").on(t.key),
-    index("alerts_at_idx").on(t.at),
-    index("alerts_host_key_idx").on(t.hostId, t.key),
+    index("incidents_key_idx").on(t.key),
+    index("incidents_at_idx").on(t.at),
+    index("incidents_host_key_idx").on(t.hostId, t.key),
+    index("incidents_fingerprint_idx").on(t.fingerprint),
+    uniqueIndex("incidents_open_host_key_idx")
+      .on(t.hostId, t.key)
+      .where(sql`${t.resolvedAt} is null`),
+  ],
+);
+
+/**
+ * Temporary name kept for every reader that still imports `alerts`. It is the
+ * same table object, never a second SQL table.
+ */
+export const alerts = incidents;
+
+/** Immutable timeline of the significant transitions of one episode. */
+export const incidentEvents = pgTable(
+  "incident_events",
+  {
+    incidentId: integer()
+      .notNull()
+      .references(() => incidents.id, { onDelete: "cascade" }),
+    seq: integer().notNull(),
+    kind: text().notNull(),
+    severity: text().notNull(),
+    title: text().notNull(),
+    detail: text().notNull(),
+    at: timestamp().notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.incidentId, t.seq] }),
+    index("incident_events_at_idx").on(t.at),
+  ],
+);
+
+/**
+ * Delivery of the initial notice and its later edits, written in the same
+ * transaction as the episode. `key` is the logical idempotency key; a push
+ * test may have `incidentId` null and an incident job has `ownerUserId` null.
+ */
+export type NotificationOutcome = {
+  state: "sent" | "failed" | "suppressed" | "uncertain";
+  reason: string | null;
+  at: string;
+};
+
+export const notificationOutbox = pgTable(
+  "notification_outbox",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    key: text().notNull(),
+    incidentId: integer().references(() => incidents.id, {
+      onDelete: "cascade",
+    }),
+    ownerUserId: text().references(() => user.id, { onDelete: "cascade" }),
+    /** `incident-open`, `incident-edit`, `incident-push` or `push-test`. */
+    kind: text().notNull(),
+    /** `telegram` or `push`. */
+    channel: text().notNull(),
+    status: text().notNull().default("pending"),
+    nextAttemptAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    leaseUntil: timestamp({ withTimezone: true }),
+    claimToken: text(),
+    attemptStartedAt: timestamp({ withTimezone: true }),
+    attempts: integer().notNull().default(0),
+    /** Incident `seq` this row reflects; stale edits are never applied. */
+    revision: integer().notNull().default(0),
+    /** Chat and message confirmed by Telegram, kept for later edits. */
+    chatId: text(),
+    messageId: text(),
+    result: jsonb().$type<NotificationOutcome>(),
+    fallbackResult: jsonb().$type<NotificationOutcome>(),
+    editResult: jsonb().$type<NotificationOutcome>(),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("notification_outbox_key_idx").on(t.key),
+    index("notification_outbox_due_idx").on(t.status, t.nextAttemptAt),
+    index("notification_outbox_incident_idx").on(t.incidentId),
+    index("notification_outbox_owner_idx").on(t.ownerUserId),
   ],
 );
 export const operations = pgTable(
