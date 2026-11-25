@@ -110,6 +110,59 @@ function InventoryDetail({ alert }: { alert: Alert }) {
   );
 }
 
+function ObservationBlock({ alert }: { alert: Alert }) {
+  if (alert.inhibitedBy === null) return null;
+  return (
+    <p
+      className="alert-inhibited"
+      data-inhibited="true"
+      data-inhibited-by={alert.inhibitedBy}
+      data-inhibited-reason={alert.inhibitedReason ?? undefined}
+      data-observation-pending={alert.observationPending ? "true" : "false"}
+    >
+      <TriangleAlert />
+      <span>
+        Estado sin verificar: el host no responde
+        {alert.inhibitedReason === "host-unreachable"
+          ? " y la lectura se reanudará al recuperar la conexión."
+          : "."}
+      </span>
+    </p>
+  );
+}
+
+function InhibitedEpisodes({ alert }: { alert: Alert }) {
+  if (!alert.inhibited?.length) return null;
+  return (
+    <div
+      className="alert-inhibited-list"
+      data-inhibited-count={alert.inhibited.length}
+    >
+      <strong>Episodios inhibidos por la caída</strong>
+      {alert.inhibited.map((episode) => (
+        <div
+          className="alert-inhibited-row"
+          key={episode.id}
+          data-inhibited-incident={episode.id}
+          data-observation-pending={
+            episode.observationPending ? "true" : "false"
+          }
+          data-delivery-state={episode.delivery.state}
+          data-delivery-reason={episode.delivery.reason ?? undefined}
+        >
+          <span>{episode.title}</span>
+          <span className="subtle">
+            Sin verificar · {stateLabels[episode.delivery.state]}
+            {episode.delivery.reason
+              ? ` · ${reasonLabels[episode.delivery.reason]}`
+              : ""}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function AlertsView({
   data,
   requested,
@@ -196,7 +249,9 @@ export function AlertsView({
                   )}
                 </div>
                 <p className="subtle">{alert.detail}</p>
+                <ObservationBlock alert={alert} />
                 <InventoryDetail alert={alert} />
+                <InhibitedEpisodes alert={alert} />
                 <time>
                   {new Date(alert.at).toLocaleString("es")}
                   {alert.resolvedAt

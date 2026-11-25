@@ -135,6 +135,20 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
     };
   }
 
+  async function openContainer(hostId: string, name: string, now: number) {
+    const opened = await store.recordIncidentObservation({
+      hostId,
+      key: `container:${name}`,
+      failing: true,
+      severity: "warning",
+      title: `Servicio detenido en ${hostId}: ${name}`,
+      detail: "El servicio estaba previsto en ejecución y no está disponible.",
+      now,
+      delivery: { channel: "silent", reason: "policy_silent" },
+    });
+    return opened.incidentId!;
+  }
+
   async function setSettings(
     hostId: string,
     overrides: Partial<import("@/lib/types").Settings>,
@@ -1257,6 +1271,107 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
       complete: false,
       entries: [],
       omitted: 0,
+    });
+  });
+
+  it("inhibits open container episodes during the outage and keeps their delivery", async () => {
+    const start = Date.UTC(2027, 0, 6, 10);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    await setSettings("nas-home", { expectedContainers: [] });
+    await collectHost(host, start - 5_000);
+    const nasOpen = await openContainer("nas-home", "sonarr", start - 10_000);
+    const appsOpen = await openContainer("apps", "sonarr", start - 10_000);
+    const [nasRowBefore] = await db
+      .select()
+      .from(tables.incidents)
+      .where(eq(tables.incidents.id, nasOpen));
+    nas.failMetrics = true;
+
+    await collectHost(host, start);
+    let [row] = await db
+      .select()
+      .from(tables.incidents)
+      .where(eq(tables.incidents.id, nasOpen));
+    expect(row.inhibitedBy).toBeNull();
+    expect(row.seq).toBe(1);
+
+    await collectHost(host, start + 61_000);
+    let current = await state();
+    const group = current.incidents.find(
+      (row) => row.key === "connection" && row.hostId === "nas-home",
+    )!;
+    [row] = await db
+      .select()
+      .from(tables.incidents)
+      .where(eq(tables.incidents.id, nasOpen));
+    expect(row).toMatchObject({
+      id: nasOpen,
+      inhibitedBy: group.id,
+      inhibitedReason: "host-unreachable",
+      observationPending: true,
+      resolvedAt: null,
+      seq: 2,
+    });
+    expect(row.fingerprint).toBe(nasRowBefore.fingerprint);
+    expect(
+      current.events.filter(
+        (event) => event.incidentId === nasOpen && event.kind === "inhibited",
+      ),
+    ).toHaveLength(1);
+    const nasOutbox = current.outbox.filter(
+      (notice) => notice.incidentId === nasOpen,
+    );
+    expect(nasOutbox).toHaveLength(1);
+    expect(nasOutbox[0]).toMatchObject({
+      key: `incident:${nasOpen}:open`,
+      channel: "silent",
+      status: "suppressed",
+      result: expect.objectContaining({ reason: "policy_silent" }),
+    });
+    const appsRow = current.incidents.find((entry) => entry.id === appsOpen)!;
+    expect(appsRow.inhibitedBy).toBeNull();
+    expect(appsRow.seq).toBe(1);
+
+    await collectHost(host, start + 122_000);
+    // A restart loses the local window but the durable group and block stay
+    // idempotent: no second opening and no repeated inhibition event.
+    vi.resetModules();
+    const recreated = await import("@/lib/collector");
+    await recreated.collectHost(host, start + 130_000);
+    await recreated.collectHost(host, start + 191_000);
+    current = await state();
+    expect(
+      current.incidents.filter((entry) => entry.key === "connection"),
+    ).toHaveLength(1);
+    [row] = await db
+      .select()
+      .from(tables.incidents)
+      .where(eq(tables.incidents.id, nasOpen));
+    expect(row).toMatchObject({
+      id: nasOpen,
+      inhibitedBy: group.id,
+      observationPending: true,
+      seq: 2,
+    });
+    expect(
+      current.events.filter(
+        (event) => event.incidentId === nasOpen && event.kind === "inhibited",
+      ),
+    ).toHaveLength(1);
+    expect(
+      current.outbox.filter((notice) => notice.incidentId === nasOpen),
+    ).toHaveLength(1);
+
+    const [projected] = await store.projectIncidents([group]);
+    expect(projected.kind).toBe("services-down");
+    expect(projected.inhibited).toHaveLength(1);
+    expect(projected.inhibited![0]).toMatchObject({
+      id: nasOpen,
+      kind: "container",
+      inhibitedBy: group.id,
+      inhibitedReason: "host-unreachable",
+      observationPending: true,
+      delivery: { channel: "silent", state: "suppressed", reason: "policy_silent" },
     });
   });
 
