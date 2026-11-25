@@ -63,6 +63,12 @@ describe("incidentHref", () => {
     expect(route).toMatchObject({ view: "alerts", host: "nas-home", incident: 12 });
     expect(routeHref(route)).toBe("/?view=alerts&host=nas-home&incident=12");
     expect(readRoute("?view=alerts&incident=0").incident).toBeUndefined();
+    expect(
+      readRoute("?view=alerts&incident=2147483647").incident,
+    ).toBe(2147483647);
+    expect(
+      readRoute("?view=alerts&incident=2147483648").incident,
+    ).toBeUndefined();
   });
 });
 

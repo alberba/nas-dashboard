@@ -28,6 +28,16 @@ const aliases: Record<string, View> = { containers: "maintenance" };
 /** Same shape as the server's host identifiers (`src/lib/hosts.ts`). */
 const hostIdPattern = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
 const incidentIdPattern = /^[1-9]\d{0,9}$/;
+/** `incidents.id` is a PostgreSQL integer; deeper ids cannot exist. */
+const MAX_INCIDENT_ID = 2_147_483_647;
+
+function incidentIdFrom(value: string): number | null {
+  if (!incidentIdPattern.test(value)) return null;
+  const incidentId = Number(value);
+  return Number.isSafeInteger(incidentId) && incidentId <= MAX_INCIDENT_ID
+    ? incidentId
+    : null;
+}
 
 export function readRoute(search: string): Route {
   const params = new URLSearchParams(search);
@@ -38,15 +48,14 @@ export function readRoute(search: string): Route {
   const tab = params.get("tab");
   const host = params.get("host");
   const incident = params.get("incident");
+  const parsedIncident = incident ? incidentIdFrom(incident) : null;
   return {
     view,
     tab: maintenanceTabs.includes(tab as MaintenanceTab)
       ? (tab as MaintenanceTab)
       : "status",
     ...(host && hostIdPattern.test(host) ? { host } : {}),
-    ...(incident && incidentIdPattern.test(incident)
-      ? { incident: Number(incident) }
-      : {}),
+    ...(parsedIncident !== null ? { incident: parsedIncident } : {}),
   };
 }
 
@@ -57,7 +66,12 @@ export function routeHref({ view, tab, host, incident }: Route) {
   if (view === "alerts") {
     const query = new URLSearchParams({ view: "alerts" });
     if (host && hostIdPattern.test(host)) query.set("host", host);
-    if (incident && Number.isSafeInteger(incident) && incident > 0)
+    if (
+      incident &&
+      Number.isSafeInteger(incident) &&
+      incident > 0 &&
+      incident <= MAX_INCIDENT_ID
+    )
       query.set("incident", String(incident));
     return `/?${query.toString()}`;
   }

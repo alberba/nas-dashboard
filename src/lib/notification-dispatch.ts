@@ -351,7 +351,10 @@ async function recordTelegramSent(
       .select()
       .from(incidents)
       .where(eq(incidents.id, job.incidentId!))
-      .limit(1);
+      .limit(1)
+      // Serialize with a closure or severity change: only this side locks the
+      // incident row, so the closer never waits on a confirmation lock.
+      .for("update");
     if (!incident || incident.seq <= job.revision) return;
     // The episode changed while the opening was in flight: confirm the message
     // and immediately schedule its final edit for the current seq (D-06).

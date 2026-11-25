@@ -293,6 +293,108 @@ describe.skipIf(!baseUrl)("notification dispatch", () => {
     }
   });
 
+  it("queues the final edit when a closure commits during the send confirmation", async () => {
+    const incidentId = await openCritical();
+    let sendStarted!: () => void;
+    const sendStartedPromise = new Promise<void>((resolve) => {
+      sendStarted = resolve;
+    });
+    let releaseSend!: () => void;
+    const sendGate = new Promise<void>((resolve) => {
+      releaseSend = resolve;
+    });
+    const transport: TelegramTransport = async () => {
+      sendStarted();
+      await sendGate;
+      return json({
+        ok: true,
+        result: { message_id: 701, chat: { id: -1001234567890 } },
+      });
+    };
+    const owner = await lockOwner();
+    const closer = await connect();
+    try {
+      const ownerPid = (
+        await owner.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")
+      ).rows[0].pid;
+      const dispatchPromise = dispatch.runDispatchOnce({
+        client: owner,
+        config,
+        now: () => START + 1_000,
+        fetchImpl: transport,
+      });
+      await sendStartedPromise;
+      // The dispatcher read the incident at seq 1 before the provider replied.
+      const [before] = await db
+        .select()
+        .from(tables.incidents)
+        .where(eq(tables.incidents.id, incidentId));
+      expect(before.seq).toBe(1);
+
+      // A closer commits the resolution while the send is still in flight.
+      await closer.query("BEGIN");
+      await closer.query(
+        `UPDATE incidents
+            SET "resolvedAt" = $2, seq = 2, "closedBy" = 'collector'
+          WHERE id = $1`,
+        [incidentId, new Date(START + 2_000)],
+      );
+      const opening = await closer.query<{
+        status: string;
+        attemptStartedAt: Date | null;
+      }>(
+        `SELECT status, "attemptStartedAt"
+           FROM notification_outbox
+          WHERE key = $1`,
+        [`incident:${incidentId}:open`],
+      );
+      expect(opening.rows[0]).toMatchObject({ status: "claimed" });
+      expect(opening.rows[0].attemptStartedAt).not.toBeNull();
+
+      releaseSend();
+      // The confirmation must wait for the closer instead of reading seq 1.
+      const deadline = Date.now() + 5_000;
+      let waited = false;
+      while (Date.now() < deadline) {
+        const { rows } = await closer.query<{
+          wait_event_type: string | null;
+        }>(
+          "SELECT wait_event_type FROM pg_stat_activity WHERE pid = $1",
+          [ownerPid],
+        );
+        if (rows[0]?.wait_event_type === "Lock") {
+          waited = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(waited).toBe(true);
+      await closer.query("COMMIT");
+
+      await expect(dispatchPromise).resolves.toMatchObject({ action: "sent" });
+      const edits = await db
+        .select()
+        .from(tables.notificationOutbox)
+        .where(
+          and(
+            eq(tables.notificationOutbox.incidentId, incidentId),
+            eq(tables.notificationOutbox.kind, "incident-edit"),
+          ),
+        );
+      expect(edits).toHaveLength(1);
+      expect(edits[0]).toMatchObject({
+        revision: 2,
+        status: "pending",
+        chatId: CHAT_ID,
+        messageId: "701",
+      });
+    } finally {
+      await closer.query("ROLLBACK").catch(() => {});
+      await safeEnd(owner);
+      await safeEnd(closer);
+    }
+  });
+
   it("recovers a lease that expired before the attempt started", async () => {
     const incidentId = await openCritical();
     const provider = fakeProvider();
@@ -931,6 +1033,43 @@ describe.skipIf(!baseUrl)("notification dispatch", () => {
         .where(eq(tables.notificationOutbox.key, "push-test:owner:1"));
       expect(row).toMatchObject({ status: "sent", channel: "push" });
       expect(row.result).toMatchObject({ state: "sent" });
+    } finally {
+      await safeEnd(owner);
+    }
+  });
+
+  it("records transient push responses as uncertain and other 4xx as failed", async () => {
+    await createUser("owner");
+    await createSubscription("owner", "https://push.example/owner");
+    const owner = await lockOwner();
+    try {
+      for (const [status, action] of [
+        [429, "uncertain"],
+        [500, "uncertain"],
+        [400, "failed"],
+      ] as const) {
+        const incidentId = await openWarning(`push-${status}`);
+        const push = fakePush(() => {
+          throw { statusCode: status };
+        });
+        const result = await dispatch.runDispatchOnce({
+          client: owner,
+          config: vapidConfig(),
+          now: () => START + 1_000,
+          pushTransport: push.transport,
+        });
+        expect(result.action).toBe(action);
+        const [row] = await db
+          .select()
+          .from(tables.notificationOutbox)
+          .where(eq(tables.notificationOutbox.incidentId, incidentId));
+        expect(row.status).toBe(action);
+        expect(row.result).toMatchObject(
+          action === "uncertain"
+            ? { state: "uncertain", reason: "endpoint_uncertain" }
+            : { state: "failed", reason: "endpoint_rejected" },
+        );
+      }
     } finally {
       await safeEnd(owner);
     }

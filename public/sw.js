@@ -5,6 +5,8 @@ self.addEventListener("activate", event => event.waitUntil(self.clients.claim())
 const ALERTS_FALLBACK = "/?view=alerts";
 const HOST_ID = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
 const INCIDENT_ID = /^[1-9]\d{0,9}$/;
+/** `incidents.id` is a PostgreSQL integer; deeper ids cannot exist. */
+const MAX_INCIDENT_ID = 2147483647;
 
 /**
  * Only the internal Avisos route with validated host and episode parameters
@@ -27,7 +29,10 @@ function alertsPath(value) {
   const host = url.searchParams.get("host");
   const incident = url.searchParams.get("incident");
   if (host !== null && !HOST_ID.test(host)) return ALERTS_FALLBACK;
-  if (incident !== null && !INCIDENT_ID.test(incident)) return ALERTS_FALLBACK;
+  if (incident !== null) {
+    if (!INCIDENT_ID.test(incident)) return ALERTS_FALLBACK;
+    if (Number(incident) > MAX_INCIDENT_ID) return ALERTS_FALLBACK;
+  }
   let path = ALERTS_FALLBACK;
   if (host) path += `&host=${encodeURIComponent(host)}`;
   if (incident) path += `&incident=${incident}`;

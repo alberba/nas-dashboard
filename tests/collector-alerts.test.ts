@@ -1018,4 +1018,103 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
       .where(eq(tables.incidents.id, legacy.id));
     expect(row).toMatchObject({ seq: 1, resolvedAt: null });
   });
+
+  it("restarts the sustained CPU window after a sample without a CPU measurement", async () => {
+    const start = Date.UTC(2026, 11, 1, 10);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    await setSettings("nas-home", {
+      cpu: 10,
+      memory: 90,
+      disk: 90,
+      temperature: 200,
+      sustainedSeconds: 60,
+      expectedContainers: [],
+    });
+    // A healthy baseline clears any timer left by another test.
+    nas.metrics = metricsSnapshot({ cpu: 5, disks: [], temperatures: [] });
+    await collectHost(host, start - 1_000);
+
+    nas.metrics = metricsSnapshot({ cpu: 50, disks: [], temperatures: [] });
+    await collectHost(host, start);
+    nas.metrics = metricsSnapshot({ cpu: null, disks: [], temperatures: [] });
+    await collectHost(host, start + 10_000);
+    nas.metrics = metricsSnapshot({ cpu: 50, disks: [], temperatures: [] });
+    await collectHost(host, start + 90_000);
+
+    let current = await state();
+    expect(current.incidents.filter((row) => row.key === "cpu")).toHaveLength(0);
+
+    await collectHost(host, start + 151_000);
+    current = await state();
+    expect(current.incidents.filter((row) => row.key === "cpu")).toMatchObject([
+      { resolvedAt: null, seq: 1 },
+    ]);
+  });
+
+  it("restarts the temperature window after a sample without temperatures", async () => {
+    const start = Date.UTC(2026, 11, 2, 10);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    await setSettings("nas-home", {
+      cpu: 200,
+      memory: 90,
+      disk: 90,
+      temperature: 50,
+      sustainedSeconds: 0,
+      expectedContainers: [],
+    });
+    nas.metrics = metricsSnapshot({ cpu: 5, disks: [], temperatures: [] });
+    await collectHost(host, start - 1_000);
+
+    nas.metrics = metricsSnapshot({ temperatures: [{ name: "CPU", value: 90 }] });
+    await collectHost(host, start);
+    nas.metrics = metricsSnapshot({ temperatures: [] });
+    await collectHost(host, start + 10_000);
+    nas.metrics = metricsSnapshot({ temperatures: [{ name: "CPU", value: 90 }] });
+    await collectHost(host, start + 41_000);
+
+    let current = await state();
+    expect(
+      current.incidents.filter((row) => row.key === "temperature"),
+    ).toHaveLength(0);
+
+    await collectHost(host, start + 72_000);
+    current = await state();
+    expect(
+      current.incidents.filter((row) => row.key === "temperature"),
+    ).toMatchObject([{ resolvedAt: null, seq: 1 }]);
+  });
+
+  it("restarts sustained windows after a malformed snapshot", async () => {
+    const start = Date.UTC(2026, 11, 3, 10);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    await setSettings("nas-home", {
+      cpu: 200,
+      memory: 90,
+      disk: 90,
+      temperature: 50,
+      sustainedSeconds: 0,
+      expectedContainers: [],
+    });
+    nas.metrics = metricsSnapshot({ cpu: 5, disks: [], temperatures: [] });
+    await collectHost(host, start - 1_000);
+
+    nas.metrics = metricsSnapshot({ temperatures: [{ name: "CPU", value: 90 }] });
+    await collectHost(host, start);
+    nas.rawMetrics = '{"timestamp":';
+    await collectHost(host, start + 10_000);
+    nas.rawMetrics = null;
+    nas.metrics = metricsSnapshot({ temperatures: [{ name: "CPU", value: 90 }] });
+    await collectHost(host, start + 41_000);
+
+    let current = await state();
+    expect(
+      current.incidents.filter((row) => row.key === "temperature"),
+    ).toHaveLength(0);
+
+    await collectHost(host, start + 72_000);
+    current = await state();
+    expect(
+      current.incidents.filter((row) => row.key === "temperature"),
+    ).toMatchObject([{ resolvedAt: null, seq: 1 }]);
+  });
 });

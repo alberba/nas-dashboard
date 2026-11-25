@@ -436,7 +436,7 @@ const finiteReasons: Record<string, PublicDeliveryReason> = {
   digest_pending: "digest_pending",
   policy_silent: "policy_silent",
   telegram_disabled: "telegram_disabled",
-  push_disabled: "telegram_disabled",
+  push_disabled: "push_disabled",
   resolved_before_send: "policy_silent",
   owner_required: "policy_silent",
   no_subscriptions: "policy_silent",
@@ -453,8 +453,10 @@ function publicState(
   state: string,
   result: NotificationOutcome | null,
 ): PublicDeliveryState {
-  if (result?.state) return result.state;
+  // The persisted row status wins over the last attempt result: a queued or
+  // claimed retry is still pending even when its previous attempt failed.
   if (state === "claimed" || state === "pending") return "pending";
+  if (result?.state) return result.state;
   if (state === "sent" || state === "failed") return state;
   if (state === "suppressed" || state === "uncertain") return state;
   return "none";

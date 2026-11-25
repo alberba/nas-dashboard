@@ -233,7 +233,9 @@ async function handle(
         .safeParse(incidentRoute[1]);
       if (!id.success) return json({ error: "No encontrado" }, 404);
       const incidentId = Number(id.data);
-      if (!Number.isSafeInteger(incidentId))
+      // `incidents.id` is a PostgreSQL integer; an out-of-range id is simply
+      // not found instead of reaching the database as a 503.
+      if (!Number.isSafeInteger(incidentId) || incidentId > 2_147_483_647)
         return json({ error: "No encontrado" }, 404);
       const hosts = getHosts();
       const host = resolveHost(hosts, hostParam);

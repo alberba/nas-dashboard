@@ -73,6 +73,14 @@ function statusCode(error: unknown): number | null {
   return typeof value === "number" && value >= 400 ? value : null;
 }
 
+/**
+ * Provider responses that may succeed on a later attempt. They are recorded as
+ * uncertain (never retried, per D-01) instead of a permanent rejection.
+ */
+function transientStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
 async function removeSubscription(endpoint: string): Promise<void> {
   await db.delete(subscriptions).where(eq(subscriptions.endpoint, endpoint));
 }
@@ -133,8 +141,13 @@ export async function deliverPush(
           rejected += 1;
           return;
         }
-        if (status !== null) rejected += 1;
-        else uncertain += 1;
+        // Rate limiting, request timeouts and provider failures are transient:
+        // the attempt is uncertain, never a permanent rejection (D-01).
+        if (status !== null && !transientStatus(status)) {
+          rejected += 1;
+          return;
+        }
+        uncertain += 1;
       }
     }),
   );
@@ -145,20 +158,4 @@ export async function deliverPush(
     return { state: "uncertain", reason: "endpoint_uncertain" };
   if (rejected > 0) return { state: "failed", reason: "endpoint_rejected" };
   return { state: "no_subscriptions" };
-}
-
-/**
- * Signature kept for the existing `/api/push/test` caller until 02-05 moves it
- * to the outbox. The optional owner scopes a worker test to its subscriptions.
- */
-export async function notify(
-  title: string,
-  body: string,
-  tag: string,
-  ownerUserId?: string,
-): Promise<PushOutcome> {
-  return deliverPush(
-    { title, body, tag, url: "/?view=alerts" },
-    { ownerUserId },
-  );
 }

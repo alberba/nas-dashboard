@@ -314,6 +314,14 @@ describe.skipIf(!baseUrl)("incidents API", () => {
       (await api("GET", `/api/incidents/99999999999999999999?host=nas-home`))
         .status,
     ).toBe(404);
+    // `incidents.id` is a PostgreSQL integer: one past the maximum is not found
+    // instead of reaching the database and surfacing as a 503.
+    expect(
+      (await api("GET", "/api/incidents/2147483647?host=nas-home")).status,
+    ).toBe(404);
+    expect(
+      (await api("GET", "/api/incidents/2147483648?host=nas-home")).status,
+    ).toBe(404);
   });
 
   it("resolves the exact host and id pair without a cross-host fallback", async () => {

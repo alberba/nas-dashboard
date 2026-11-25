@@ -29,6 +29,19 @@ function scoped(host: HostConfig, key: string) {
   return `${host.id}:${key}`;
 }
 
+/** Drops one sustained timer without touching an already-open episode. */
+function forget(host: HostConfig, key: string) {
+  started.delete(scoped(host, key));
+}
+
+/** A snapshot with no usable evidence cannot extend any sustained window. */
+function forgetHost(host: HostConfig) {
+  const prefix = `${host.id}:`;
+  for (const key of started.keys()) {
+    if (key.startsWith(prefix)) started.delete(key);
+  }
+}
+
 /**
  * Audited disposition for the collection path. Severity alone is not enough:
  * `disk-health` escalates from digest to immediate and `container:<name>` is
@@ -124,9 +137,12 @@ export async function collectHost(host: HostConfig, now = Date.now()) {
   } catch (error) {
     // A malformed successful response is a contract failure, not a
     // disconnection: it must not write a sample, open `connection` or touch
-    // any episode. Only a real transport/HTTP failure keeps the disconnect
-    // policy and the planned-reboot grace below.
-    if (error instanceof NasInvalidResponse) return;
+    // any episode. It also breaks every sustained window: non-contiguous
+    // evidence must never satisfy a duration threshold.
+    if (error instanceof NasInvalidResponse) {
+      forgetHost(host);
+      return;
+    }
     const [planned] = await db
       .select()
       .from(operations)
@@ -189,6 +205,8 @@ export async function collectHost(host: HostConfig, now = Date.now()) {
       now,
       settings.sustainedSeconds,
     );
+  } else {
+    forget(host, "cpu");
   }
   const memory = (metrics.memory.used / metrics.memory.total) * 100;
   await condition(
@@ -211,6 +229,8 @@ export async function collectHost(host: HostConfig, now = Date.now()) {
       `Algún volumen supera el ${settings.disk} % de ocupación.`,
       now,
     );
+  } else {
+    forget(host, "disk");
   }
   if (metrics.temperatures.length > 0) {
     await condition(
@@ -225,6 +245,8 @@ export async function collectHost(host: HostConfig, now = Date.now()) {
       30,
       "critical",
     );
+  } else {
+    forget(host, "temperature");
   }
   for (const name of settings.expectedContainers) {
     await condition(

@@ -174,6 +174,7 @@ export type PublicDeliveryReason =
   | "digest_pending"
   | "policy_silent"
   | "telegram_disabled"
+  | "push_disabled"
   | "permanent_rejection"
   | "uncertain";
 export type PublicDelivery = {

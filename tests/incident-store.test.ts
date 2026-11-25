@@ -468,4 +468,88 @@ describe.skipIf(!baseUrl)("incident store", () => {
     expect(rows).toHaveLength(3);
     expect(rows.find((row) => row.kind === "incident-open")!.status).toBe("sent");
   });
+
+  it("projects a queued retry as pending even when its last attempt failed", async () => {
+    const start = Date.UTC(2026, 10, 25, 10);
+    const opened = await observation({
+      hostId: "nas-home",
+      key: "rate-limited",
+      failing: true,
+      severity: "warning",
+      title: "Aviso en espera",
+      detail: "",
+      now: start,
+      delivery: { channel: "telegram", reason: "policy_immediate" },
+    });
+    const incidentId = opened.incidentId!;
+    await db
+      .update(tables.notificationOutbox)
+      .set({
+        status: "pending",
+        result: {
+          state: "failed",
+          reason: "rate_limited",
+          at: new Date(start + 1_000).toISOString(),
+        },
+      })
+      .where(
+        and(
+          eq(tables.notificationOutbox.incidentId, incidentId),
+          eq(tables.notificationOutbox.kind, "incident-open"),
+        ),
+      );
+
+    const [incident] = await db
+      .select()
+      .from(tables.incidents)
+      .where(eq(tables.incidents.id, incidentId));
+    const [alert] = await store.projectIncidents([incident]);
+    expect(alert.delivery).toEqual({
+      channel: "telegram",
+      state: "pending",
+      reason: null,
+    });
+  });
+
+  it("projects a disabled push channel with its own finite reason", async () => {
+    const start = Date.UTC(2026, 10, 25, 11);
+    const opened = await observation({
+      hostId: "nas-home",
+      key: "push-disabled",
+      failing: true,
+      severity: "critical",
+      title: "Aviso sin push",
+      detail: "",
+      now: start,
+      delivery: { channel: "push", reason: "policy_immediate" },
+    });
+    const incidentId = opened.incidentId!;
+    await db
+      .update(tables.notificationOutbox)
+      .set({
+        status: "suppressed",
+        result: {
+          state: "suppressed",
+          reason: "push_disabled",
+          at: new Date(start + 1_000).toISOString(),
+        },
+      })
+      .where(
+        and(
+          eq(tables.notificationOutbox.incidentId, incidentId),
+          eq(tables.notificationOutbox.kind, "incident-open"),
+        ),
+      );
+
+    const [incident] = await db
+      .select()
+      .from(tables.incidents)
+      .where(eq(tables.incidents.id, incidentId));
+    const [alert] = await store.projectIncidents([incident]);
+    expect(alert.delivery).toEqual({
+      channel: "push",
+      state: "suppressed",
+      reason: "push_disabled",
+    });
+  });
 });

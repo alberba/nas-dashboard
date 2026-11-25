@@ -118,6 +118,7 @@ describe("incident service worker", () => {
       "/?view=alerts&host=nas-home&incident=42&next=https://evil.example",
       "/?view=alerts&host=NAS-HOME&incident=42",
       "/?view=alerts&host=nas-home&incident=0",
+      "/?view=alerts&host=nas-home&incident=2147483648",
     ];
 
     for (const url of targets) {
