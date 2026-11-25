@@ -43,6 +43,7 @@ HELPER_LABEL_VALUE = "1"
 FAMILIES = frozenset({"host", "disk", "reboot"})
 # Docker states in which a plain delete is unsafe or the helper may be serving.
 ACTIVE_STATES = frozenset({"running", "paused", "restarting", "removing"})
+STOPPED_STATES = frozenset({"created", "exited", "dead"})
 
 OWNER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,120}$")
 INSTANCE_PATTERN = re.compile(r"^[A-Za-z0-9-]{16,64}$")
@@ -112,8 +113,18 @@ def _created_of(item):
 def _state_of(item):
     value = item.get("State")
     if isinstance(value, dict):
-        return _text(value.get("Status"), 40) or ""
-    return value if isinstance(value, str) else ""
+        status = value.get("Status")
+        if isinstance(status, str) and status in STOPPED_STATES:
+            if any(
+                value.get(flag, False) is not False
+                for flag in ("Running", "Paused", "Restarting")
+            ):
+                return None
+            dead = status == "dead"
+            if value.get("Dead", dead) is not dead:
+                return None
+        value = status
+    return value if isinstance(value, str) else None
 
 
 class HelperRegistry:
@@ -368,6 +379,7 @@ class HelperReaper:
         if not self._lock.acquire(blocking=False):
             return {"status": "busy", "deleted": 0}
         deleted = 0
+        attempted = 0
         complete = True
         try:
             now = self.clock()
@@ -392,14 +404,16 @@ class HelperReaper:
                     self.registry.confirm_absent(ident, now)
 
             for entry in parsed:
-                if deleted >= self.max_candidates:
-                    break
                 eligible = self._eligible(entry, now)
                 if eligible == "indeterminate":
                     complete = False
                     continue
                 if not eligible:
                     continue
+                if attempted >= self.max_candidates:
+                    complete = False
+                    break
+                attempted += 1
                 outcome = self._delete(entry, now)
                 if outcome == "deleted":
                     deleted += 1
@@ -459,6 +473,8 @@ class HelperReaper:
         if entry["state"] in ACTIVE_STATES:
             # Running helpers may still be serving; never delete them.
             return False
+        if entry["state"] not in STOPPED_STATES:
+            return "indeterminate"
         if self.registry.is_protected(entry["id"]):
             return False
         if entry["instance"] == self.registry.instance:
@@ -486,7 +502,9 @@ class HelperReaper:
             return False
         if labels.get(INSTANCE_LABEL) != entry["instance"]:
             return False
-        if _state_of(detail) in ACTIVE_STATES:
+        if not isinstance(detail.get("State"), dict):
+            return False
+        if _state_of(detail) not in STOPPED_STATES:
             return False
         return not self.registry.is_protected(entry["id"])
 
