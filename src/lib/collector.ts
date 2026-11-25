@@ -250,6 +250,7 @@ async function collectContainers(
         .where(inArray(incidents.id, groupIds))
     : [];
   const groupById = new Map(groups.map((group) => [group.id, group]));
+  const openByKey = new Map(open.map((row) => [row.key, row]));
   const inhibitedKeys = new Set(
     open
       .filter((row) => row.inhibitedBy !== null)
@@ -302,8 +303,10 @@ async function collectContainers(
     const container = metrics.containers.find((item) => item.name === name);
     // A name missing from the list never opens an episode (D-06): absence is
     // only evidence for the durable watch window. A present but stopped
-    // container keeps the existing 30-second failure threshold (D-05).
+    // container keeps the existing 30-second failure threshold (D-05), but an
+    // episode that was already open resumes on this first valid reading (D-04).
     if (!container) continue;
+    const existing = openByKey.get(key);
     await condition(
       host,
       key,
@@ -311,7 +314,9 @@ async function collectContainers(
       `Servicio detenido en ${host.name}: ${name}`,
       "El servicio estaba previsto en ejecución y no está disponible.",
       now,
-      30,
+      existing ? 0 : 30,
+      "warning",
+      existing ? { clearObservation: true } : {},
     );
   }
 }

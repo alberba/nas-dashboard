@@ -1126,6 +1126,370 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
     expect(await db.select().from(tables.incidents)).toHaveLength(0);
   });
 
+  async function setWatchSettings(
+    hostId: string,
+    expected: string[],
+    identities: Record<string, import("@/lib/types").ContainerIdentity>,
+    entries: Record<string, import("@/lib/types").ContainerWatchEntry> = {},
+    mark = Date.now() / 1000,
+  ) {
+    const { currentWatchWorkerId } = await import("@/lib/container-watch");
+    await setSettings(hostId, {
+      expectedContainers: expected,
+      watch: {
+        revision: 1,
+        workerId: currentWatchWorkerId(),
+        lastInventoryAt: mark,
+        chainAt: mark,
+        entries,
+        identities,
+      },
+    });
+  }
+
+  it("moves the watch and the episode to a new name with the same Docker ID", async () => {
+    const start = Date.UTC(2026, 9, 25, 15);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    const oldId = "1".repeat(64);
+    const incidentId = await openContainer("nas-home", "old", start - 60_000);
+    const appsIncident = await openContainer("apps", "old", start - 60_000);
+    await setWatchSettings(
+      "nas-home",
+      ["old"],
+      {
+        old: {
+          containerId: oldId,
+          composeProject: null,
+          composeService: null,
+        },
+      },
+      {},
+      (start - 30_000) / 1000,
+    );
+    await setWatchSettings("apps", ["old"], {
+      old: { containerId: oldId, composeProject: null, composeService: null },
+    });
+    // The previous name is now occupied by another container; the ID wins.
+    nas.metrics = metricsSnapshot({
+      timestamp: start / 1000,
+      containersObservedAt: start / 1000,
+      containers: [
+        { ...containerOf("old", "running"), id: "2".repeat(64) },
+        { ...containerOf("new", "running"), id: oldId },
+      ],
+    });
+
+    await collectHost(host, start);
+
+    const rows = await db.select().from(tables.incidents);
+    const moved = rows.find((row) => row.id === incidentId)!;
+    expect(moved).toMatchObject({
+      id: incidentId,
+      key: "container:new",
+      title: expect.stringContaining("new"),
+      resolvedAt: expect.any(Date),
+      closedBy: "collector",
+      fingerprint: store.incidentFingerprint("nas-home", "container:new"),
+    });
+    const events = (await db.select().from(tables.incidentEvents)).filter(
+      (event) => event.incidentId === incidentId,
+    );
+    expect(events.map((event) => event.kind)).toEqual([
+      "opened",
+      "reassigned",
+      "closed",
+    ]);
+    expect(events.find((event) => event.kind === "reassigned")!.detail).toContain(
+      "container:old",
+    );
+    expect(events.find((event) => event.kind === "reassigned")!.detail).toContain(
+      "container:new",
+    );
+    expect(
+      (await db.select().from(tables.notificationOutbox)).filter(
+        (notice) => notice.incidentId === incidentId,
+      ),
+    ).toHaveLength(1);
+    const [settingsRow] = await db
+      .select()
+      .from(tables.configuration)
+      .where(eq(tables.configuration.hostId, "nas-home"));
+    expect(settingsRow.value.expectedContainers).toEqual(["new"]);
+    expect(settingsRow.value.watch!.identities.new.containerId).toBe(oldId);
+    expect(settingsRow.value.watch!.identities.old).toBeUndefined();
+    // Another host with the same name keeps its own episode.
+    const appsRow = rows.find((row) => row.id === appsIncident)!;
+    expect(appsRow).toMatchObject({
+      key: "container:old",
+      resolvedAt: null,
+    });
+  });
+
+  it("resumes a stopped replacement after an absence without reopening it", async () => {
+    const start = Date.UTC(2026, 9, 25, 16);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    const containerId = "3".repeat(64);
+    const incidentId = await openContainer("nas-home", "svc", start - 120_000);
+    await setWatchSettings(
+      "nas-home",
+      ["svc"],
+      {
+        svc: {
+          containerId,
+          composeProject: "media",
+          composeService: "svc",
+        },
+      },
+      {},
+      (start - 60_000) / 1000,
+    );
+
+    nas.metrics = metricsSnapshot({
+      timestamp: (start - 30_000) / 1000,
+      containersObservedAt: (start - 30_000) / 1000,
+      containers: [containerOf("other", "running")],
+    });
+    await collectHost(host, start - 30_000);
+    let [row] = await db
+      .select()
+      .from(tables.incidents)
+      .where(eq(tables.incidents.id, incidentId));
+    expect(row).toMatchObject({
+      key: "container:svc",
+      resolvedAt: null,
+      inhibitedReason: "container-absent",
+      observationPending: true,
+      seq: 2,
+    });
+
+    nas.metrics = metricsSnapshot({
+      timestamp: start / 1000,
+      containersObservedAt: start / 1000,
+      containers: [{ ...containerOf("svc", "exited"), id: containerId }],
+    });
+    await collectHost(host, start);
+
+    [row] = await db
+      .select()
+      .from(tables.incidents)
+      .where(eq(tables.incidents.id, incidentId));
+    expect(row).toMatchObject({
+      id: incidentId,
+      key: "container:svc",
+      resolvedAt: null,
+      inhibitedBy: null,
+      inhibitedReason: null,
+      observationPending: false,
+      seq: 3,
+    });
+    const events = (await db.select().from(tables.incidentEvents)).filter(
+      (event) => event.incidentId === incidentId,
+    );
+    expect(events.map((event) => event.kind)).toEqual([
+      "opened",
+      "pending",
+      "resumed",
+    ]);
+    expect(
+      (await db.select().from(tables.notificationOutbox)).filter(
+        (notice) => notice.incidentId === incidentId,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("moves the watch to a unique Compose replacement with another ID", async () => {
+    const start = Date.UTC(2026, 9, 25, 17);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    const incidentId = await openContainer("nas-home", "old", start - 60_000);
+    await setWatchSettings(
+      "nas-home",
+      ["old"],
+      {
+        old: {
+          containerId: "4".repeat(64),
+          composeProject: "media",
+          composeService: "old",
+        },
+      },
+      {},
+      (start - 30_000) / 1000,
+    );
+    nas.metrics = metricsSnapshot({
+      timestamp: start / 1000,
+      containersObservedAt: start / 1000,
+      containers: [
+        {
+          ...containerOf("replacement", "running"),
+          id: "5".repeat(64),
+          compose: { project: "media", service: "old" },
+        },
+      ],
+    });
+
+    await collectHost(host, start);
+
+    const [row] = await db
+      .select()
+      .from(tables.incidents)
+      .where(eq(tables.incidents.id, incidentId));
+    expect(row).toMatchObject({
+      key: "container:replacement",
+      resolvedAt: expect.any(Date),
+      closedBy: "collector",
+    });
+    const [settingsRow] = await db
+      .select()
+      .from(tables.configuration)
+      .where(eq(tables.configuration.hostId, "nas-home"));
+    expect(settingsRow.value.expectedContainers).toEqual(["replacement"]);
+  });
+
+  it("keeps both names pending when a scaled Compose service is ambiguous", async () => {
+    const start = Date.UTC(2026, 9, 25, 18);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    await setWatchSettings(
+      "nas-home",
+      ["old"],
+      {
+        old: {
+          containerId: "6".repeat(64),
+          composeProject: "media",
+          composeService: "old",
+        },
+      },
+      {},
+      (start - 30_000) / 1000,
+    );
+    nas.metrics = metricsSnapshot({
+      timestamp: start / 1000,
+      containersObservedAt: start / 1000,
+      containers: [
+        {
+          ...containerOf("old-a", "running"),
+          id: "7".repeat(64),
+          compose: { project: "media", service: "old" },
+        },
+        {
+          ...containerOf("old-b", "running"),
+          id: "8".repeat(64),
+          compose: { project: "media", service: "old" },
+        },
+      ],
+    });
+
+    await collectHost(host, start);
+
+    const [settingsRow] = await db
+      .select()
+      .from(tables.configuration)
+      .where(eq(tables.configuration.hostId, "nas-home"));
+    expect(settingsRow.value.expectedContainers).toEqual(["old"]);
+    expect(settingsRow.value.watch!.entries.old).toMatchObject({
+      accreditedMs: 0,
+    });
+    expect(await db.select().from(tables.incidents)).toHaveLength(0);
+  });
+
+  it("does not choose a destination claimed by two watched names", async () => {
+    const start = Date.UTC(2026, 9, 25, 19);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    await setWatchSettings(
+      "nas-home",
+      ["a", "b"],
+      {
+        a: {
+          containerId: "9".repeat(64),
+          composeProject: "media",
+          composeService: "shared",
+        },
+        b: {
+          containerId: "a".repeat(64),
+          composeProject: "media",
+          composeService: "shared",
+        },
+      },
+      {},
+      (start - 30_000) / 1000,
+    );
+    nas.metrics = metricsSnapshot({
+      timestamp: start / 1000,
+      containersObservedAt: start / 1000,
+      containers: [
+        {
+          ...containerOf("candidate", "running"),
+          id: "b".repeat(64),
+          compose: { project: "media", service: "shared" },
+        },
+      ],
+    });
+
+    await collectHost(host, start);
+
+    const [settingsRow] = await db
+      .select()
+      .from(tables.configuration)
+      .where(eq(tables.configuration.hostId, "nas-home"));
+    expect(settingsRow.value.expectedContainers).toEqual(["a", "b"]);
+    expect(Object.keys(settingsRow.value.watch!.entries).sort()).toEqual([
+      "a",
+      "b",
+    ]);
+    expect(await db.select().from(tables.incidents)).toHaveLength(0);
+  });
+
+  it("keeps the original episode and closes a duplicate destination row", async () => {
+    const start = Date.UTC(2026, 9, 25, 20);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    const oldId = "c".repeat(64);
+    const original = await openContainer("nas-home", "old", start - 60_000);
+    const duplicate = await openContainer("nas-home", "new", start - 50_000);
+    await setWatchSettings(
+      "nas-home",
+      ["old"],
+      {
+        old: {
+          containerId: oldId,
+          composeProject: null,
+          composeService: null,
+        },
+      },
+      {},
+      (start - 30_000) / 1000,
+    );
+    nas.metrics = metricsSnapshot({
+      timestamp: start / 1000,
+      containersObservedAt: start / 1000,
+      containers: [{ ...containerOf("new", "running"), id: oldId }],
+    });
+
+    await collectHost(host, start);
+
+    const rows = await db.select().from(tables.incidents);
+    const kept = rows.find((row) => row.id === original)!;
+    const resolved = rows.find((row) => row.id === duplicate)!;
+    expect(kept).toMatchObject({
+      id: original,
+      key: "container:new",
+      resolvedAt: expect.any(Date),
+    });
+    expect(resolved).toMatchObject({
+      id: duplicate,
+      key: "container:new",
+      resolvedAt: expect.any(Date),
+    });
+    const events = await db.select().from(tables.incidentEvents);
+    expect(
+      events
+        .filter((event) => event.incidentId === original)
+        .map((event) => event.kind),
+    ).toEqual(["opened", "reassigned", "closed"]);
+    expect(
+      events
+        .filter((event) => event.incidentId === duplicate)
+        .map((event) => event.kind),
+    ).toEqual(["opened", "closed"]);
+  });
+
   it("ignores an invalid maintenance payload without resolving its episodes", async () => {
     const start = Date.UTC(2026, 10, 26, 10);
     nas.maintenance = maintenanceSnapshot({

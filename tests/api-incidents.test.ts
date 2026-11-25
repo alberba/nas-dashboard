@@ -815,6 +815,85 @@ describe.skipIf(!baseUrl)("incidents API", () => {
     ).toBe(false);
   });
 
+  it("keeps the original link working after a proven container rename", async () => {
+    const start = Date.UTC(2026, 10, 26, 11);
+    const oldId = "d".repeat(64);
+    const incidentId = await openIncident("nas-home", "container:old");
+    const { currentWatchWorkerId } = await import("@/lib/container-watch");
+    const [settingsRow] = await db
+      .select()
+      .from(tables.configuration)
+      .where(eq(tables.configuration.hostId, "nas-home"));
+    await db
+      .update(tables.configuration)
+      .set({
+        value: {
+          ...settingsRow.value,
+          expectedContainers: ["old"],
+          watch: {
+            revision: 1,
+            workerId: currentWatchWorkerId(),
+            lastInventoryAt: (start - 30_000) / 1000,
+            chainAt: (start - 30_000) / 1000,
+            entries: {},
+            identities: {
+              old: {
+                containerId: oldId,
+                composeProject: null,
+                composeService: null,
+              },
+            },
+          },
+        },
+      })
+      .where(eq(tables.configuration.hostId, "nas-home"));
+    const base = metrics("nas-home");
+    agent.metricsBody = {
+      ...base,
+      timestamp: start / 1000,
+      containersObservedAt: start / 1000,
+      containers: [
+        {
+          ...base.containers[0],
+          id: oldId,
+          name: "new",
+          state: "running",
+          status: "Up 1 minute",
+        },
+      ],
+    };
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    await collectHost(host, start);
+
+    // The link carries the original episode id, not the old operational key.
+    const response = await api(
+      "GET",
+      `/api/incidents/${incidentId}?host=nas-home`,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      incident: {
+        id: incidentId,
+        key: "container:new",
+        kind: "container",
+        resolvedAt: expect.any(String),
+      },
+    });
+    const events = (await db.select().from(tables.incidentEvents)).filter(
+      (event) => event.incidentId === incidentId,
+    );
+    expect(events.map((event) => event.kind)).toEqual([
+      "opened",
+      "reassigned",
+      "closed",
+    ]);
+    expect(
+      (await db.select().from(tables.notificationOutbox)).filter(
+        (notice) => notice.incidentId === incidentId,
+      ),
+    ).toHaveLength(1);
+  });
+
   it("closes only the selected host's incident through the store after a confirmed stop", async () => {
     const nasIncident = await openIncident("nas-home");
     const appsIncident = await openIncident("apps");
