@@ -716,6 +716,7 @@ export function Dashboard({ name }: { name: string }) {
                   <MaintenanceStatus
                     metrics={metrics}
                     expected={data.settings.expectedContainers}
+                    watchPending={data.watchPending}
                     connected={connected}
                     disabled={!connected || busy}
                     lastAt={data.lastAt}

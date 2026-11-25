@@ -133,6 +133,56 @@ export type Metrics = {
   temperatures: { name: string; value: number }[];
   containers: Container[];
 };
+/**
+ * Docker identity confirmed for one watched name. The ID wins over the Compose
+ * pair; both are stored so a later rename or recreation can be proven.
+ */
+export type ContainerIdentity = {
+  containerId: string | null;
+  composeProject: string | null;
+  composeService: string | null;
+};
+/**
+ * Durable absence window of one expected container. Wall-clock time is never
+ * used: `accreditedMs` only grows across consecutive fresh, complete Docker
+ * lists, and `observedAt` anchors that continuity.
+ */
+export type ContainerWatchEntry = {
+  identity: ContainerIdentity;
+  /** Unix seconds of the first absence observation. */
+  absentSince: number;
+  /** Unix seconds of the last inventory that accredited this absence. */
+  observedAt: number;
+  /** Accumulated absence proven by consecutive Docker lists. */
+  accreditedMs: number;
+};
+/**
+ * Durable inventory reconciliation state for one host. It lives in the
+ * settings JSON so an API process and the collector never overwrite each
+ * other's watching intention.
+ */
+export type ContainerWatch = {
+  /** Bumped whenever the operator or the reconciliation changes watching. */
+  revision: number;
+  /** Collector instance that produced the last accepted list. */
+  workerId: string | null;
+  /** Last complete Docker list already evaluated (Unix seconds). */
+  lastInventoryAt: number | null;
+  /** Last list that continued the evidence chain (Unix seconds). */
+  chainAt: number | null;
+  entries: Record<string, ContainerWatchEntry>;
+  /** Last confirmed Docker identity per watched name. */
+  identities: Record<string, ContainerIdentity>;
+};
+/** Public projection of a name that is absent but still inside its window. */
+export type ContainerWatchPending = {
+  name: string;
+  state: "pending";
+  /** Unix seconds of the first absence. */
+  absentSince: number;
+  accreditedMs: number;
+  thresholdMs: number;
+};
 export type Settings = {
   cpu: number;
   memory: number;
@@ -141,6 +191,8 @@ export type Settings = {
   sustainedSeconds: number;
   expectedContainers: string[];
   initialized: boolean;
+  /** Optional so older rows and the previous binary keep working. */
+  watch?: ContainerWatch;
 };
 export type FileEntry = {
   name: string;
@@ -232,6 +284,9 @@ export type Alert = {
   /** Open container episodes inhibited by this group, if it is one. */
   inhibited: Alert[] | null;
 };
+
+/** Pending absence rows of the selected host, never fabricated containers. */
+export type ContainerWatchView = ContainerWatchPending[];
 export type Operation = {
   id: string;
   hostId: string;
@@ -367,6 +422,8 @@ export type Overview = {
   alerts: Alert[];
   /** Open alerts for the selected host; matches the sidebar counter. */
   openAlerts: number;
+  /** Expected names absent from fresh inventory, still inside their window. */
+  watchPending: ContainerWatchPending[];
   operations: Operation[];
   history: {
     at: string;

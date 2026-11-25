@@ -24,7 +24,7 @@ import {
   type ContainerFilterId,
   type ContainerHealth,
 } from "@/lib/containers";
-import type { Container, Metrics } from "@/lib/types";
+import type { Container, ContainerWatchPending, Metrics } from "@/lib/types";
 import type { ActionRequest } from "../file-browser";
 import { useHostScope } from "../host-context";
 import {
@@ -102,6 +102,7 @@ export function MaintenanceStatus(
 function MaintenanceContent({
   metrics,
   expected,
+  watchPending = [],
   disabled,
   request,
   appDomain,
@@ -109,6 +110,8 @@ function MaintenanceContent({
 }: {
   metrics: Metrics;
   expected: string[];
+  /** Absent names still inside their 30-minute reconciliation window. */
+  watchPending?: ContainerWatchPending[];
   connected: boolean;
   disabled: boolean;
   lastAt: string | null;
@@ -182,6 +185,7 @@ function MaintenanceContent({
       />
       <div className="columns">
         <div className={`main-column ${extraStyles.mainStack}`}>
+          <PendingWatchPanel items={watchPending} />
           <Panel
             id="containers-title"
             title="Contenedores"
@@ -297,6 +301,68 @@ function MaintenanceContent({
       </div>
       {sensitive.dialog}
     </div>
+  );
+}
+
+function pendingMinutes(item: ContainerWatchPending) {
+  return Math.max(0, Math.floor(item.accreditedMs / 60_000));
+}
+
+/**
+ * D-06: a missing name is shown as pending without inventing a Docker ID or
+ * offering actions that cannot be executed. The row only states what the
+ * inventory has proved so far.
+ */
+function PendingWatchPanel({ items }: { items: ContainerWatchPending[] }) {
+  if (!items.length) return null;
+  return (
+    <Panel
+      id="watch-pending-title"
+      title="Vigilancia pendiente"
+      count={`${items.length}`}
+    >
+      <div className="table-scroll">
+        <table className="data-table" data-watch-table="">
+          <thead>
+            <tr>
+              <th scope="col">Contenedor</th>
+              <th scope="col">Estado</th>
+              <th scope="col">Primera ausencia</th>
+              <th scope="col" className="numeric">
+                Tiempo acreditado
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item) => (
+              <tr
+                key={item.name}
+                data-watch-row={item.name}
+                data-watch-state="pending"
+                data-watch-since={item.absentSince}
+                data-watch-accredited={item.accreditedMs}
+              >
+                <td className="name-cell">
+                  <span className="row-title">
+                    <StatusDot tone="muted" />
+                    <strong>{item.name}</strong>
+                  </span>
+                </td>
+                <td data-watch-label="pending">Pendiente de reconciliar</td>
+                <td>
+                  <time dateTime={new Date(item.absentSince * 1000).toISOString()}>
+                    {new Date(item.absentSince * 1000).toLocaleString("es")}
+                  </time>
+                </td>
+                <td className="numeric">
+                  {pendingMinutes(item)} min de 30
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
   );
 }
 

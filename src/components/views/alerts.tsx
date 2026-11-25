@@ -111,21 +111,30 @@ function InventoryDetail({ alert }: { alert: Alert }) {
 }
 
 function ObservationBlock({ alert }: { alert: Alert }) {
-  if (alert.inhibitedBy === null) return null;
+  if (
+    alert.inhibitedBy === null &&
+    !alert.observationPending &&
+    alert.inhibitedReason === null
+  )
+    return null;
+  const absence = alert.inhibitedReason === "container-absent";
   return (
     <p
       className="alert-inhibited"
-      data-inhibited="true"
-      data-inhibited-by={alert.inhibitedBy}
+      data-inhibited={alert.inhibitedBy !== null ? "true" : undefined}
+      data-inhibited-by={alert.inhibitedBy ?? undefined}
       data-inhibited-reason={alert.inhibitedReason ?? undefined}
       data-observation-pending={alert.observationPending ? "true" : "false"}
+      data-watch-pending={absence ? "true" : undefined}
     >
       <TriangleAlert />
       <span>
-        Estado sin verificar: el host no responde
-        {alert.inhibitedReason === "host-unreachable"
-          ? " y la lectura se reanudará al recuperar la conexión."
-          : "."}
+        {absence
+          ? "Estado pendiente: el nombre no aparece en el inventario. La vigilancia se conserva mientras se acreditan 30 minutos de ausencia."
+          : "Estado sin verificar: el host no responde" +
+            (alert.inhibitedReason === "host-unreachable"
+              ? " y la lectura se reanudará al recuperar la conexión."
+              : ".")}
       </span>
     </p>
   );

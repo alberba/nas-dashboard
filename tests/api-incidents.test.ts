@@ -85,6 +85,7 @@ function metrics(hostId: string) {
 type FakeAgent = {
   url: string;
   behaviour: Behaviour;
+  metricsBody: unknown;
   requests: unknown[];
   reset(): void;
   close(): Promise<void>;
@@ -94,9 +95,11 @@ async function fakeAgent(token: string): Promise<FakeAgent> {
   const agent: FakeAgent = {
     url: "",
     behaviour: "ok",
+    metricsBody: null,
     requests: [],
     reset() {
       agent.behaviour = "ok";
+      agent.metricsBody = null;
       agent.requests = [];
     },
     async close() {
@@ -112,6 +115,12 @@ async function fakeAgent(token: string): Promise<FakeAgent> {
     if (request.headers.authorization !== `Bearer ${token}`) {
       response.writeHead(401, { "Content-Type": "application/json" });
       response.end(JSON.stringify({ error: "No autorizado" }));
+      return;
+    }
+    const path = new URL(request.url ?? "/", "http://agent").pathname;
+    if (path === "/metrics") {
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify(agent.metricsBody ?? metrics("fake")));
       return;
     }
     if (agent.behaviour === "uncertain") {
@@ -142,6 +151,8 @@ describe.skipIf(!baseUrl)("incidents API", () => {
   let tables: typeof import("@/lib/schema");
   let store: typeof import("@/lib/incident-store");
   let routes: typeof import("../src/app/api/[...path]/route");
+  let collectHost: typeof import("@/lib/collector").collectHost;
+  let getHosts: typeof import("@/lib/hosts").getHosts;
 
   async function api(
     method: "GET" | "POST",
@@ -238,6 +249,8 @@ describe.skipIf(!baseUrl)("incidents API", () => {
     tables = await import("@/lib/schema");
     store = await import("@/lib/incident-store");
     routes = await import("../src/app/api/[...path]/route");
+    ({ collectHost } = await import("@/lib/collector"));
+    ({ getHosts } = await import("@/lib/hosts"));
     await db.insert(tables.user).values({
       id: "test-user",
       name: "Test",
@@ -721,6 +734,85 @@ describe.skipIf(!baseUrl)("incidents API", () => {
     expect(
       (await api("GET", `/api/incidents/${group.id}?host=apps`)).status,
     ).toBe(404);
+  });
+
+  it("publishes a pending absence through the collector in the overview and the real episode", async () => {
+    const start = Date.UTC(2026, 10, 26, 10);
+    const incidentId = await openIncident("nas-home", "container:ghost");
+    await db
+      .update(tables.configuration)
+      .set({
+        value: {
+          cpu: 90,
+          memory: 90,
+          disk: 90,
+          temperature: 85,
+          sustainedSeconds: 300,
+          expectedContainers: ["ghost"],
+          initialized: true,
+        },
+      })
+      .where(eq(tables.configuration.hostId, "nas-home"));
+    agent.metricsBody = {
+      timestamp: start / 1000,
+      containersObservedAt: start / 1000,
+      hostname: "nas-home",
+      cpu: 10,
+      memory: { total: 1000, used: 250 },
+      network: { rx: 1, tx: 2 },
+      io: { read: 3, write: 4 },
+      uptime: 1000,
+      disks: [],
+      temperatures: [],
+      containers: [],
+    };
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    await collectHost(host, start);
+
+    const overview = await (
+      await api("GET", "/api/overview?host=nas-home")
+    ).json();
+    expect(overview.watchPending).toEqual([
+      expect.objectContaining({
+        name: "ghost",
+        state: "pending",
+        absentSince: start / 1000,
+        accreditedMs: 0,
+        thresholdMs: 30 * 60_000,
+      }),
+    ]);
+    const alert = overview.alerts.find(
+      (entry: { id: number }) => entry.id === incidentId,
+    );
+    expect(alert).toMatchObject({
+      id: incidentId,
+      key: "container:ghost",
+      resolvedAt: null,
+      inhibitedBy: null,
+      inhibitedReason: "container-absent",
+      observationPending: true,
+      delivery: { channel: "telegram", state: "pending" },
+    });
+
+    const detail = await (
+      await api("GET", `/api/incidents/${incidentId}?host=nas-home`)
+    ).json();
+    expect(detail.incident).toMatchObject({
+      id: incidentId,
+      observationPending: true,
+      inhibitedReason: "container-absent",
+      delivery: { channel: "telegram", state: "pending" },
+    });
+
+    const appsOverview = await (
+      await api("GET", "/api/overview?host=apps")
+    ).json();
+    expect(appsOverview.watchPending).toEqual([]);
+    expect(
+      appsOverview.alerts.some(
+        (entry: { id: number }) => entry.id === incidentId,
+      ),
+    ).toBe(false);
   });
 
   it("closes only the selected host's incident through the store after a confirmed stop", async () => {

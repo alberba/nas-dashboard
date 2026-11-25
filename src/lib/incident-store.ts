@@ -39,7 +39,7 @@ export type IncidentObservation = {
   now?: number;
   /** Caller-provided channel disposition, never chosen inside the transaction. */
   delivery?: IncidentDelivery;
-  closedBy?: "collector" | "lifecycle";
+  closedBy?: "collector" | "lifecycle" | "reconciliation";
   /** Inventory captured only when a `connection` episode is actually created. */
   context?: IncidentInventoryContext | null;
   /** Removes the observation block after valid evidence for a container. */
@@ -60,7 +60,9 @@ export type IncidentObservationResult = {
   inhibitedIncidentIds?: number[];
 };
 
-type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+export type Transaction = Parameters<
+  Parameters<typeof db.transaction>[0]
+>[0];
 
 /** Public inventory list bound: the UI shows the rest as an omitted count. */
 export const INCIDENT_INVENTORY_LIMIT = 50;
@@ -395,6 +397,177 @@ async function inhibitOpenContainers(
 }
 
 /**
+ * Marks an open container episode as waiting for its name to reappear in a
+ * fresh, complete inventory. Only the observation block changes: the episode,
+ * its ID, history and delivery stay untouched (D-06).
+ */
+export async function markContainerObservationPendingIn(
+  tx: Transaction,
+  input: { hostId: string; key: string; reason: string; now?: number },
+): Promise<number | null> {
+  const at = new Date(input.now ?? Date.now());
+  const [open] = await tx
+    .select()
+    .from(incidents)
+    .where(
+      and(
+        eq(incidents.hostId, input.hostId),
+        eq(incidents.key, input.key),
+        isNull(incidents.resolvedAt),
+      ),
+    )
+    .limit(1)
+    .for("update");
+  if (!open) return null;
+  if (
+    open.inhibitedBy === null &&
+    open.inhibitedReason === input.reason &&
+    open.observationPending
+  )
+    return open.id;
+  const seq = open.seq + 1;
+  await tx
+    .update(incidents)
+    .set({
+      seq,
+      inhibitedBy: null,
+      inhibitedReason: input.reason,
+      observationPending: true,
+    })
+    .where(eq(incidents.id, open.id));
+  await tx.insert(incidentEvents).values({
+    incidentId: open.id,
+    seq,
+    kind: "pending",
+    severity: open.severity,
+    title: open.title,
+    detail: input.reason,
+    at,
+  });
+  return open.id;
+}
+
+export type ContainerWatchTransfer = {
+  hostId: string;
+  fromName: string;
+  toName: string;
+  /** Title showing the new reference, already formatted by the caller. */
+  title: string;
+  now?: number;
+  /** True when the confirmed replacement is running (D-08). */
+  running: boolean;
+  /** Close an existing destination episode only when it is the same watch. */
+  mergeDestination: boolean;
+};
+
+export type ContainerWatchTransferResult = {
+  action: "none" | "transferred" | "closed" | "blocked";
+  incidentId?: number;
+  closedIncidentId?: number;
+};
+
+/**
+ * Moves the open episode of a watched name to its proven replacement. The row
+ * keeps its ID, opening date, origin, delivery result and outbox keys; only
+ * the operational key, its fingerprint and the visible title move. A running
+ * replacement closes the episode with the phase 2 closure; a stopped one
+ * resumes the same row. A destination episode is only closed when the caller
+ * proved it is the same watch.
+ */
+export async function transferContainerWatchIn(
+  tx: Transaction,
+  input: ContainerWatchTransfer,
+): Promise<ContainerWatchTransferResult> {
+  const at = new Date(input.now ?? Date.now());
+  const fromKey = `${CONTAINER_PREFIX}${input.fromName}`;
+  const toKey = `${CONTAINER_PREFIX}${input.toName}`;
+  const rows = await tx
+    .select()
+    .from(incidents)
+    .where(
+      and(
+        eq(incidents.hostId, input.hostId),
+        inArray(incidents.key, [fromKey, toKey]),
+        isNull(incidents.resolvedAt),
+      ),
+    )
+    .orderBy(asc(incidents.id))
+    .for("update");
+  const from = rows.find((row) => row.key === fromKey);
+  const destination = rows.find((row) => row.key === toKey);
+  if (!from)
+    return destination
+      ? { action: "blocked", closedIncidentId: destination.id }
+      : { action: "none" };
+  if (destination && !input.mergeDestination)
+    return {
+      action: "blocked",
+      incidentId: from.id,
+      closedIncidentId: destination.id,
+    };
+
+  if (destination)
+    await recordIncidentObservationIn(tx, {
+      hostId: input.hostId,
+      key: toKey,
+      failing: false,
+      now: at.getTime(),
+      closedBy: "collector",
+    });
+
+  const seq = from.seq + 1;
+  await tx
+    .update(incidents)
+    .set({
+      key: toKey,
+      fingerprint: incidentFingerprint(input.hostId, toKey),
+      title: input.title,
+      seq,
+    })
+    .where(eq(incidents.id, from.id));
+  await tx.insert(incidentEvents).values({
+    incidentId: from.id,
+    seq,
+    kind: "reassigned",
+    severity: from.severity,
+    title: input.title,
+    detail: `${fromKey} -> ${toKey}`,
+    at,
+  });
+
+  if (input.running) {
+    await recordIncidentObservationIn(tx, {
+      hostId: input.hostId,
+      key: toKey,
+      failing: false,
+      now: at.getTime(),
+      closedBy: "collector",
+    });
+    return {
+      action: "closed",
+      incidentId: from.id,
+      ...(destination ? { closedIncidentId: destination.id } : {}),
+    };
+  }
+
+  await recordIncidentObservationIn(tx, {
+    hostId: input.hostId,
+    key: toKey,
+    failing: true,
+    severity: from.severity,
+    title: input.title,
+    detail: from.detail,
+    now: at.getTime(),
+    clearObservation: true,
+  });
+  return {
+    action: "transferred",
+    incidentId: from.id,
+    ...(destination ? { closedIncidentId: destination.id } : {}),
+  };
+}
+
+/**
  * Records one health observation for a (hostId, key) condition. The episode
  * transition, its timeline event and the outbox work are written in a single
  * transaction: if the outbox insert fails, neither the episode nor the event
@@ -404,10 +577,21 @@ async function inhibitOpenContainers(
 export async function recordIncidentObservation(
   input: IncidentObservation,
 ): Promise<IncidentObservationResult> {
+  return db.transaction((tx) => recordIncidentObservationIn(tx, input));
+}
+
+/**
+ * Same transition inside a caller-owned transaction, so settings, the
+ * operation result and the episode always commit or roll back together.
+ */
+export async function recordIncidentObservationIn(
+  tx: Transaction,
+  input: IncidentObservation,
+): Promise<IncidentObservationResult> {
   const now = input.now ?? Date.now();
   const at = new Date(now);
 
-  return db.transaction(async (tx) => {
+  {
     const [open] = await tx
       .select()
       .from(incidents)
@@ -430,6 +614,8 @@ export async function recordIncidentObservation(
           resolvedAt: at,
           seq,
           closedBy: input.closedBy ?? "collector",
+          inhibitedBy: null,
+          inhibitedReason: null,
           observationPending: false,
         })
         .where(eq(incidents.id, open.id));
@@ -644,7 +830,7 @@ export async function recordIncidentObservation(
       delivery: "none",
       ...(inhibitedIncidentIds ? { inhibitedIncidentIds } : {}),
     };
-  });
+  }
 }
 
 const deliveryChannels = new Set<PublicDeliveryChannel>([

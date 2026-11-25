@@ -40,6 +40,7 @@ const overview = {
   connected: true,
   interval: 5,
   alerts: [],
+  watchPending: [],
   operations: [],
   history: [],
   settings: {
@@ -430,6 +431,65 @@ test("the stopped section follows the selected host", async ({ page }) => {
   await expect(mainRows(page)).toHaveCount(3);
   await section.locator("summary").click();
   await expect(stoppedRows(page)).toHaveCount(2);
+});
+
+test("an absent name is pending for its host without Docker actions", async ({
+  page,
+}) => {
+  await signIn(page);
+  const hosts = [
+    {
+      id: "nas-home",
+      name: "NAS-HOME",
+      role: "instance",
+      connected: true,
+      lastAt: new Date().toISOString(),
+    },
+    {
+      id: "apps",
+      name: "Apps",
+      role: "apps-server",
+      connected: true,
+      lastAt: new Date().toISOString(),
+    },
+  ];
+  const absentSince = Math.floor(Date.now() / 1000) - 600;
+  const pending = {
+    name: "ghost",
+    state: "pending" as const,
+    absentSince,
+    accreditedMs: 600_000,
+    thresholdMs: 1_800_000,
+  };
+  await page.unroute("**/api/overview?*");
+  await page.route("**/api/hosts", (route) =>
+    route.fulfill({ json: { default: "nas-home", hosts } }),
+  );
+  await page.route("**/api/overview?*", (route) => {
+    const id =
+      new URL(route.request().url()).searchParams.get("host") ?? "nas-home";
+    return route.fulfill({
+      json: {
+        ...overview,
+        host: { id, name: hosts.find((host) => host.id === id)!.name },
+        watchPending: id === "nas-home" ? [pending] : [],
+      },
+    });
+  });
+  await page.goto("/?view=maintenance&tab=status");
+  const row = page.locator('[data-watch-row="ghost"]');
+  await expect(row).toBeVisible();
+  await expect(row).toHaveAttribute("data-watch-state", "pending");
+  await expect(row).toHaveAttribute("data-watch-since", String(absentSince));
+  await expect(row.locator("[data-action]")).toHaveCount(0);
+  await expect(
+    page.locator('[data-container="ghost"]'),
+  ).toHaveCount(0);
+
+  await page.locator('[data-host-option="apps"]').click();
+  await expect(page.locator('[data-watch-row="ghost"]')).toHaveCount(0);
+  await page.locator('[data-host-option="nas-home"]').click();
+  await expect(page.locator('[data-watch-row="ghost"]')).toBeVisible();
 });
 
 test("on a phone the container table becomes compact rows without page scroll", async ({

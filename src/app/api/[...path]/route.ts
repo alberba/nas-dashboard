@@ -14,6 +14,7 @@ import {
   user,
 } from "@/lib/schema";
 import { getSettings, saveSettings } from "@/lib/settings";
+import { pendingWatch } from "@/lib/container-watch";
 import { actionSchema, settingsSchema } from "@/lib/validation";
 import {
   logsResponseSchema,
@@ -370,6 +371,7 @@ async function handle(
           grouped."readAwait", grouped."writeAwait", grouped."utilization"
         FROM series LEFT JOIN grouped USING(at) ORDER BY series.at`);
       const statuses = await hostStatuses(hosts);
+      const settings = await getSettings(host.id);
       return json({
         host: publicHost(host),
         hosts: statuses,
@@ -380,9 +382,10 @@ async function handle(
         interval: active ? 5 : 30,
         alerts: recentAlerts,
         openAlerts: openAlerts.value,
+        watchPending: pendingWatch(settings),
         operations: recentOperations,
         history: history.rows,
-        settings: await getSettings(host.id),
+        settings,
       });
     }
     if (route === "container-history" && !mutation) {

@@ -2,7 +2,14 @@ import { and, asc, desc, eq, gt, inArray, isNull, like } from "drizzle-orm";
 import { db } from "./db";
 import { incidents, operations, samples } from "./schema";
 import { nasForHost, NasInvalidResponse } from "./nas";
-import { getSettings, saveSettings } from "./settings";
+import { getSettings, mutateSettings } from "./settings";
+import {
+  breakWatchContinuity,
+  pendingWatch,
+  reconcileContainers,
+  watchOf,
+  watchRevision,
+} from "./container-watch";
 import { getHosts, type HostConfig } from "./hosts";
 import {
   captureServiceInventory,
@@ -208,6 +215,7 @@ async function collectContainers(
   host: HostConfig,
   metrics: Metrics,
   expected: string[],
+  pending: Set<string>,
   now: number,
 ) {
   const marker = inventoryMarker(metrics);
@@ -254,7 +262,7 @@ async function collectContainers(
     if (!group || !connectionGroupIsFresh(metrics, group, now)) continue;
     const name = row.key.slice(CONTAINER_PREFIX.length);
     const container = metrics.containers.find((item) => item.name === name);
-    // Absence is not evidence: keep the episode pending for 03-02.
+    // Absence keeps the episode pending; the watch reconciliation owns it.
     if (!container) continue;
     if (container.state === "running") {
       await condition(host, row.key, false, "", "", now, 0, "warning", {
@@ -290,14 +298,16 @@ async function collectContainers(
     const key = CONTAINER_PREFIX + name;
     // A previous blocked episode is confirmed above; the normal 30-second
     // window only applies to names that were healthy before the outage.
-    if (inhibitedKeys.has(key)) continue;
+    if (inhibitedKeys.has(key) || pending.has(name)) continue;
+    const container = metrics.containers.find((item) => item.name === name);
+    // A name missing from the list never opens an episode (D-06): absence is
+    // only evidence for the durable watch window. A present but stopped
+    // container keeps the existing 30-second failure threshold (D-05).
+    if (!container) continue;
     await condition(
       host,
       key,
-      !metrics.containers.some(
-        (container) =>
-          container.name === name && container.state === "running",
-      ),
+      container.state !== "running",
       `Servicio detenido en ${host.name}: ${name}`,
       "El servicio estaba previsto en ejecución y no está disponible.",
       now,
@@ -307,7 +317,10 @@ async function collectContainers(
 }
 
 export async function collectHost(host: HostConfig, now = Date.now()) {
-  const settings = await getSettings(host.id);
+  const settingsBefore = await getSettings(host.id);
+  // Read the intention before the Docker call: a stop, removal or threshold
+  // edit that lands meanwhile wins over this stale reading (T-03-05).
+  const revision = watchRevision(settingsBefore);
   let metrics: Metrics;
   try {
     metrics = await nasForHost<Metrics>(host, "/metrics");
@@ -318,12 +331,14 @@ export async function collectHost(host: HostConfig, now = Date.now()) {
     // evidence must never satisfy a duration threshold.
     if (error instanceof NasInvalidResponse) {
       forgetHost(host);
+      await breakWatchContinuity(host.id).catch(() => {});
       return;
     }
     // A transport failure ends the container windows immediately, even before
     // the 60-second outage threshold is reached (D-03).
     forgetContainers(host);
     forgetInventoryMark(host);
+    await breakWatchContinuity(host.id).catch(() => {});
     const [planned] = await db
       .select()
       .from(operations)
@@ -371,13 +386,25 @@ export async function collectHost(host: HostConfig, now = Date.now()) {
       at: new Date(metrics.timestamp * 1000),
       data: metrics,
     });
-  if (!settings.initialized) {
-    settings.expectedContainers = metrics.containers
-      .filter((container) => container.state === "running")
-      .map((container) => container.name);
-    settings.initialized = true;
-    await saveSettings(host.id, settings);
-  }
+  if (!settingsBefore.initialized)
+    await mutateSettings(host.id, (current) => {
+      if (current.initialized) return current;
+      const watch = watchOf(current);
+      watch.revision += 1;
+      return {
+        ...current,
+        expectedContainers: metrics.containers
+          .filter((container) => container.state === "running")
+          .map((container) => container.name),
+        initialized: true,
+        watch,
+      };
+    });
+  // Only a fresh, complete list can accredit absence or move a watch. The
+  // revision captured before the fetch prevents a stale list overwriting the
+  // operator's most recent intention.
+  await reconcileContainers({ host, metrics, now, revision });
+  const settings = await getSettings(host.id);
   // A null CPU measurement or an empty temperature list is absence of
   // evidence, not a recovery. Leave those episodes exactly as they were.
   if (metrics.cpu !== null) {
@@ -433,7 +460,16 @@ export async function collectHost(host: HostConfig, now = Date.now()) {
   } else {
     forget(host, "temperature");
   }
-  await collectContainers(host, metrics, settings.expectedContainers, now);
+  const pendingNames = new Set(
+    pendingWatch(settings).map((pending) => pending.name),
+  );
+  await collectContainers(
+    host,
+    metrics,
+    settings.expectedContainers,
+    pendingNames,
+    now,
+  );
   await collectSnapshotAlerts(host, now);
   const pending = await db
     .select()

@@ -831,7 +831,11 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
     const start = Date.UTC(2026, 10, 25, 10);
     const host = getHosts().find((entry) => entry.id === "nas-home")!;
     await setSettings("nas-home", { expectedContainers: ["nas-service"] });
-    nas.metrics = metricsSnapshot({ containers: [] });
+    // Absence never opens an episode (D-06); a present but stopped container
+    // keeps the existing 30-second failure threshold (D-05).
+    nas.metrics = metricsSnapshot({
+      containers: [containerOf("nas-service", "exited")],
+    });
 
     await collectHost(host, start);
     await collectHost(host, start + 31_000);
@@ -848,6 +852,278 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
       status: "suppressed",
     });
     expect(current.outbox[0].result).toMatchObject({ reason: "policy_silent" });
+  });
+
+  it("accredits an absent name only across consecutive fresh complete lists", async () => {
+    const start = Date.UTC(2026, 9, 25, 11);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    await setSettings("nas-home", {
+      cpu: 200,
+      memory: 200,
+      disk: 100,
+      temperature: 200,
+      sustainedSeconds: 0,
+      expectedContainers: ["gone"],
+    });
+    const { currentWatchWorkerId } = await import("@/lib/container-watch");
+    const at = (seconds: number) =>
+      metricsSnapshot({
+        timestamp: start / 1000 + seconds,
+        containersObservedAt: start / 1000 + seconds,
+        containers: [containerOf("other", "running")],
+      });
+    const watchState = async () => {
+      const [row] = await db
+        .select()
+        .from(tables.configuration)
+        .where(eq(tables.configuration.hostId, "nas-home"));
+      return row.value.watch!;
+    };
+
+    nas.metrics = at(0);
+    await collectHost(host, start);
+    let current = await state();
+    expect(current.incidents).toHaveLength(0);
+    let watch = await watchState();
+    expect(watch.entries.gone).toMatchObject({
+      absentSince: start / 1000,
+      observedAt: start / 1000,
+      accreditedMs: 0,
+    });
+
+    // Repeating the same Docker list is not a new observation.
+    nas.metrics = at(0);
+    await collectHost(host, start + 10_000);
+    expect((await watchState()).entries.gone.accreditedMs).toBe(0);
+
+    nas.metrics = at(30);
+    await collectHost(host, start + 30_000);
+    expect((await watchState()).entries.gone.accreditedMs).toBe(30_000);
+
+    // A genuinely empty list is complete evidence and keeps accrediting.
+    nas.metrics = metricsSnapshot({
+      timestamp: start / 1000 + 60,
+      containersObservedAt: start / 1000 + 60,
+      containers: [],
+    });
+    await collectHost(host, start + 60_000);
+    expect((await watchState()).entries.gone.accreditedMs).toBe(60_000);
+
+    // An older agent has no list date: it never adds absence time.
+    nas.metrics = metricsSnapshot({
+      timestamp: start / 1000 + 90,
+      containers: [],
+    });
+    await collectHost(host, start + 90_000);
+    expect((await watchState()).entries.gone.accreditedMs).toBe(60_000);
+
+    // A contract failure breaks the chain without losing accredited time.
+    nas.rawMetrics = '{"timestamp":';
+    await collectHost(host, start + 100_000);
+    nas.rawMetrics = null;
+    nas.metrics = at(150);
+    await collectHost(host, start + 150_000);
+    expect((await watchState()).entries.gone.accreditedMs).toBe(60_000);
+
+    // A worker restart also starts a new chain from its first fresh list: the
+    // durable worker marker no longer matches the interval that preceded it.
+    const [row] = await db
+      .select()
+      .from(tables.configuration)
+      .where(eq(tables.configuration.hostId, "nas-home"));
+    await db
+      .update(tables.configuration)
+      .set({
+        value: {
+          ...row.value,
+          watch: { ...row.value.watch!, workerId: "restarted-worker" },
+        },
+      })
+      .where(eq(tables.configuration.hostId, "nas-home"));
+    nas.metrics = at(180);
+    await collectHost(host, start + 180_000);
+    watch = await watchState();
+    expect(watch.entries.gone.accreditedMs).toBe(60_000);
+    expect(watch.workerId).toBe(currentWatchWorkerId());
+    expect(current.incidents).toHaveLength(0);
+  });
+
+  it("retires an absent name after thirty accredited minutes and closes its episode", async () => {
+    const start = Date.UTC(2026, 9, 25, 12);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    const { WATCH_THRESHOLD_MS, currentWatchWorkerId } = await import(
+      "@/lib/container-watch"
+    );
+    const incidentId = await openContainer("nas-home", "gone", start - 60_000);
+    const lastMark = start / 1000 - 30;
+    await setSettings("nas-home", {
+      cpu: 200,
+      memory: 200,
+      disk: 100,
+      temperature: 200,
+      sustainedSeconds: 0,
+      expectedContainers: ["gone"],
+      watch: {
+        revision: 1,
+        workerId: currentWatchWorkerId(),
+        lastInventoryAt: lastMark,
+        chainAt: lastMark,
+        entries: {
+          gone: {
+            identity: {
+              containerId: "d".repeat(64),
+              composeProject: null,
+              composeService: null,
+            },
+            absentSince: (start - 30 * 60_000) / 1000,
+            observedAt: lastMark,
+            accreditedMs: WATCH_THRESHOLD_MS - 30_000,
+          },
+        },
+        identities: {},
+      },
+    });
+    nas.metrics = metricsSnapshot({
+      timestamp: start / 1000,
+      containersObservedAt: start / 1000,
+      containers: [containerOf("other", "running")],
+    });
+
+    await collectHost(host, start);
+
+    const rows = await db.select().from(tables.incidents);
+    const closed = rows.find((row) => row.id === incidentId)!;
+    expect(closed).toMatchObject({
+      id: incidentId,
+      key: "container:gone",
+      resolvedAt: expect.any(Date),
+      closedBy: "reconciliation",
+    });
+    expect(
+      (await db.select().from(tables.incidentEvents)).filter(
+        (event) => event.incidentId === incidentId,
+      ),
+    ).toMatchObject([
+      { kind: "opened" },
+      { kind: "closed", seq: 2 },
+    ]);
+    const [row] = await db
+      .select()
+      .from(tables.configuration)
+      .where(eq(tables.configuration.hostId, "nas-home"));
+    expect(row.value.expectedContainers).toEqual([]);
+    expect(row.value.watch!.entries.gone).toBeUndefined();
+    // The original delivery is preserved: no recovery message is created.
+    expect(
+      (await db.select().from(tables.notificationOutbox)).filter(
+        (notice) => notice.incidentId === incidentId,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("keeps the watch when the name reappears before the window expires", async () => {
+    const start = Date.UTC(2026, 9, 25, 13);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    const { currentWatchWorkerId } = await import("@/lib/container-watch");
+    const lastMark = start / 1000 - 30;
+    await setSettings("nas-home", {
+      cpu: 200,
+      memory: 200,
+      disk: 100,
+      temperature: 200,
+      sustainedSeconds: 0,
+      expectedContainers: ["gone"],
+      watch: {
+        revision: 1,
+        workerId: currentWatchWorkerId(),
+        lastInventoryAt: lastMark,
+        chainAt: lastMark,
+        entries: {
+          gone: {
+            identity: {
+              containerId: "e".repeat(64),
+              composeProject: "media-stack",
+              composeService: "gone",
+            },
+            absentSince: lastMark,
+            observedAt: lastMark,
+            accreditedMs: 10 * 60_000,
+          },
+        },
+        identities: {},
+      },
+    });
+    nas.metrics = metricsSnapshot({
+      timestamp: start / 1000,
+      containersObservedAt: start / 1000,
+      containers: [containerOf("gone", "running")],
+    });
+
+    await collectHost(host, start);
+
+    expect(await db.select().from(tables.incidents)).toHaveLength(0);
+    const [row] = await db
+      .select()
+      .from(tables.configuration)
+      .where(eq(tables.configuration.hostId, "nas-home"));
+    expect(row.value.expectedContainers).toEqual(["gone"]);
+    expect(row.value.watch!.entries.gone).toBeUndefined();
+    expect(row.value.watch!.identities.gone).toMatchObject({
+      containerId: "c".repeat(64),
+    });
+  });
+
+  it("ignores a repeated or older Docker list for the watch window", async () => {
+    const start = Date.UTC(2026, 9, 25, 14);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    const { WATCH_THRESHOLD_MS, currentWatchWorkerId } = await import(
+      "@/lib/container-watch"
+    );
+    const lastMark = start / 1000;
+    await setSettings("nas-home", {
+      cpu: 200,
+      memory: 200,
+      disk: 100,
+      temperature: 200,
+      sustainedSeconds: 0,
+      expectedContainers: ["gone"],
+      watch: {
+        revision: 1,
+        workerId: currentWatchWorkerId(),
+        lastInventoryAt: lastMark,
+        chainAt: lastMark,
+        entries: {
+          gone: {
+            identity: {
+              containerId: "f".repeat(64),
+              composeProject: null,
+              composeService: null,
+            },
+            absentSince: lastMark,
+            observedAt: lastMark,
+            accreditedMs: WATCH_THRESHOLD_MS - 30_000,
+          },
+        },
+        identities: {},
+      },
+    });
+    nas.metrics = metricsSnapshot({
+      timestamp: start / 1000,
+      containersObservedAt: lastMark - 10,
+      containers: [],
+    });
+
+    await collectHost(host, start + 30_000);
+
+    const [row] = await db
+      .select()
+      .from(tables.configuration)
+      .where(eq(tables.configuration.hostId, "nas-home"));
+    expect(row.value.expectedContainers).toEqual(["gone"]);
+    expect(row.value.watch!.entries.gone.accreditedMs).toBe(
+      WATCH_THRESHOLD_MS - 30_000,
+    );
+    expect(await db.select().from(tables.incidents)).toHaveLength(0);
   });
 
   it("ignores an invalid maintenance payload without resolving its episodes", async () => {
@@ -1492,12 +1768,15 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
       inhibitedReason: null,
       observationPending: false,
     });
+    // The absent name leaves the outage block but stays open and pending: the
+    // inventory reconciliation owns it from now on (D-06).
     expect(
       current.incidents.find((row) => row.id === absentId),
     ).toMatchObject({
       resolvedAt: null,
-      seq: 2,
-      inhibitedBy: group.id,
+      seq: 3,
+      inhibitedBy: null,
+      inhibitedReason: "container-absent",
       observationPending: true,
     });
     expect(
