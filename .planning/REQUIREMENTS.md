@@ -17,14 +17,14 @@ Alcance de este milestone: auditar el ruido, sustituir los emisores por una entr
 
 ### Incidencias y entrega única
 
-- [ ] **INCD-01**: Cada condición vigilada produce una incidencia con identidad estable por host y clave que sobrevive a reinicios del worker
-- [ ] **INCD-02**: Una incidencia abierta no genera un segundo mensaje mientras su estado no cambie
-- [ ] **INCD-03**: Una incidencia resuelta no envía mensaje nuevo: actualiza el mensaje original o se cuenta en el resumen
-- [ ] **INCD-04**: La severidad se recalcula en cada evaluación y el cambio se refleja en la incidencia y en el mensaje
-- [ ] **INCD-05**: Todo envío pasa por un outbox transaccional; un fallo entre la decisión y el envío no pierde el aviso
-- [ ] **INCD-06**: Solo el worker con el lock de recolección envía, y un reintento no duplica el mensaje
-- [ ] **INCD-07**: Un 429 se reintenta respetando `retry_after`; 400/403/404 quedan fallidos de forma permanente y visible
-- [ ] **INCD-08**: El operador ve en el hub el estado de entrega de cada incidencia (enviado, fallido, suprimido y motivo)
+- [x] **INCD-01**: Cada condición vigilada produce una incidencia con identidad estable por host y clave que sobrevive a reinicios del worker
+- [x] **INCD-02**: Una incidencia abierta no genera un segundo mensaje mientras su estado no cambie
+- [x] **INCD-03**: Una incidencia resuelta no envía mensaje nuevo: actualiza el mensaje original o se cuenta en el resumen
+- [x] **INCD-04**: La severidad se recalcula en cada evaluación y el cambio se refleja en la incidencia y en el mensaje
+- [x] **INCD-05**: Todo envío pasa por un outbox transaccional; un fallo entre la decisión y el envío no pierde el aviso
+- [x] **INCD-06**: Solo el worker con el lock de recolección envía, y un reintento no duplica el mensaje
+- [x] **INCD-07**: Un 429 se reintenta respetando `retry_after`; 400/403/404 quedan fallidos de forma permanente y visible
+- [x] **INCD-08**: El operador ve en el hub el estado de entrega de cada incidencia (enviado, fallido, suprimido y motivo)
 - [ ] **INCD-09**: Una caída de host se agrupa en una incidencia de servicios e inhibe las de contenedor durante la caída
 - [ ] **INCD-10**: `expectedContainers` se reconcilia con el inventario real y no deja incidencias fantasma
 
@@ -39,9 +39,9 @@ Alcance de este milestone: auditar el ruido, sustituir los emisores por una entr
 
 ### Bot de Telegram
 
-- [ ] **BOT-01**: El operador recibe los avisos en el chat configurado desde el bot del hub
+- [x] **BOT-01**: El operador recibe los avisos en el chat configurado desde el bot del hub
 - [ ] **BOT-02**: El bot ignora cualquier update de un usuario o chat fuera de la allowlist
-- [ ] **BOT-03**: Cada mensaje incluye un botón que abre la vista correspondiente del hub autenticada
+- [x] **BOT-03**: Cada mensaje incluye un botón que abre la vista correspondiente del hub autenticada
 - [ ] **BOT-04**: El operador puede abrir la incidencia, silenciarla 1 h o 24 h y reconocerla desde los botones, y el estado persiste
 - [ ] **BOT-05**: El operador puede consultar "por qué me llegó esto" desde el propio mensaje
 - [ ] **BOT-06**: Un callback repetido o caducado no ejecuta dos veces la acción ni rompe el bot
@@ -54,14 +54,14 @@ Alcance de este milestone: auditar el ruido, sustituir los emisores por una entr
 
 - [ ] **SEC-01**: Toda ruta destructiva exige verificación reciente en el servidor (stop, restart, update, purge, empty-trash, clean-images, reconnect-apps, host-command, merge de Renovate)
 - [ ] **SEC-02**: La lista de acciones protegidas vive en un único módulo y una ruta nueva no puede olvidarla sin que falle un test
-- [ ] **SEC-03**: El arranque rechaza credenciales de ejemplo y la falta de configuración obligatoria, y el contenedor no se declara sano
+- [x] **SEC-03**: El arranque rechaza credenciales de ejemplo y la falta de configuración obligatoria, y el contenedor no se declara sano
 - [ ] **SEC-04**: Las respuestas incluyen CSP conservadora y HSTS, y las mutaciones tienen límite de cuerpo
 - [ ] **SEC-05**: La rotación conjunta del token del bot (hub y `media-stack`) está documentada y probada
 - [ ] **SEC-06**: El fallback de copia de `media-stack` solo envía `backup-failed`, solo si el ingest no confirma, y se marca con origen propio
 
 ### Contratos y operación
 
-- [ ] **CONT-01**: Métricas, mantenimiento y despliegues se validan en runtime en el borde del hub, y un payload inválido no resuelve incidencias
+- [x] **CONT-01**: Métricas, mantenimiento y despliegues se validan en runtime en el borde del hub, y un payload inválido no resuelve incidencias
 - [ ] **CONT-02**: El ingest de `media-stack` valida HMAC, ventana de 5 minutos e idempotencia por evento
 - [ ] **CONT-03**: Agente y worker tienen healthcheck, y el worker puede reportar que el resumen no salió
 - [ ] **CONT-04**: Los contenedores auxiliares huérfanos del agente se recogen y los fallos de limpieza son visibles
@@ -108,18 +108,18 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AUDT-03 | Phase 1 | Complete |
 | AUDT-04 | Phase 1 | Complete |
 | AUDT-05 | Phase 1 | Complete |
-| INCD-01 | Phase 2 | Pending |
-| INCD-02 | Phase 2 | Pending |
-| INCD-03 | Phase 2 | Pending |
-| INCD-04 | Phase 2 | Pending |
-| INCD-05 | Phase 2 | Pending |
-| INCD-06 | Phase 2 | Pending |
-| INCD-07 | Phase 2 | Pending |
-| INCD-08 | Phase 2 | Pending |
-| BOT-01 | Phase 2 | Pending |
-| BOT-03 | Phase 2 | Pending |
-| SEC-03 | Phase 2 | Pending |
-| CONT-01 | Phase 2 | Pending |
+| INCD-01 | Phase 2 | Complete |
+| INCD-02 | Phase 2 | Complete |
+| INCD-03 | Phase 2 | Complete |
+| INCD-04 | Phase 2 | Complete |
+| INCD-05 | Phase 2 | Complete |
+| INCD-06 | Phase 2 | Complete |
+| INCD-07 | Phase 2 | Complete |
+| INCD-08 | Phase 2 | Complete |
+| BOT-01 | Phase 2 | Complete |
+| BOT-03 | Phase 2 | Complete |
+| SEC-03 | Phase 2 | Complete |
+| CONT-01 | Phase 2 | Complete |
 | INCD-09 | Phase 3 | Pending |
 | INCD-10 | Phase 3 | Pending |
 | CONT-04 | Phase 3 | Pending |

@@ -25,18 +25,18 @@ Saber en segundos qué está pasando en los dos servidores y poder actuar sobre 
 - ✓ Renovate: lectura de PR y merge verificado; progreso de despliegue en seis pasos — existente
 - ✓ PWA instalable con notificaciones en móvil y CI completo (tipos, lint, Vitest, agente Python, build, Playwright) — existente
 - ✓ Auditoría del volumen de avisos, mapa de política y objetivo de ruido — fase 01 (AUDT-01 a AUDT-05)
+- ✓ Incidencias persistentes con entrega única, outbox transaccional y estado de entrega visible — fase 02 (INCD-01 a INCD-08)
+- ✓ Avisos del bot del hub en Telegram con enlace autenticado a la incidencia — fase 02 (BOT-01 y BOT-03)
+- ✓ Validación de configuración obligatoria y rechazo de credenciales de ejemplo al arrancar — fase 02 (SEC-03)
+- ✓ Validación en runtime de métricas, mantenimiento y despliegues antes de evaluar incidencias — fase 02 (CONT-01)
 
 ### Active
 
-- [ ] Auditar el ruido de Telegram con datos reales: qué mensajes llegan, desde qué job y con qué frecuencia
-- [ ] Una sola notificación por incidencia, sin aviso de recuperación ni reenvíos mientras el estado no cambie
 - [ ] Resumen diario para lo no urgente, con lo crítico entregado al momento
-- [ ] Bot de Telegram interactivo: botones para abrir vistas del hub y ejecutar acciones con autorización y verificación reciente
+- [ ] Reconocimiento y acciones desde Telegram con autorización y verificación reciente
 - [ ] Exigir verificación reciente en el servidor para todas las acciones destructivas, no solo para algunas
-- [ ] Rechazar credenciales de ejemplo al arrancar y documentar la rotación de secretos
+- [ ] Documentar y probar la rotación conjunta del token de Telegram
 - [ ] CSP y HSTS, más límites de cuerpo y de tamaño de respuesta en el hub
-- [ ] Validar la configuración obligatoria al arranque del hub y del worker antes de declarar el contenedor sano
-- [ ] Validar en runtime los contratos Python↔TS (métricas, mantenimiento, despliegues) en vez de confiar en la forma
 - [ ] Rollups y caché del histórico para que 30 días de muestras no dominen la carga de PostgreSQL
 - [ ] Healthchecks de agente y worker, reaper de contenedores auxiliares y `expectedContainers` reconciliado
 
@@ -50,11 +50,11 @@ Saber en segundos qué está pasando en los dos servidores y poder actuar sobre 
 
 ## Context
 
-- Dos repositorios: este (el hub) y `media-stack` (Compose, scripts y servicios multimedia), que hoy es quien envía los mensajes a Telegram. Las fases de notificaciones pueden tocar ambos, con commits y CI separados.
+- Dos repositorios: este (el hub) y `media-stack` (Compose, scripts y servicios multimedia), que mantiene sus emisores de Telegram hasta la fase 8. El hub ya entrega sus propios avisos al chat configurado. Las fases de notificaciones pueden tocar ambos, con commits y CI separados.
 - Despliegue: Compose en un servidor Oracle con `db`, `migrate`, `app` y `worker`; agentes en el NAS y en el servidor de apps, unidos por Tailscale. Un solo `app` y un solo `worker`.
 - Stack muy reciente: Next.js 16, React 19, TypeScript 7, Effect 4, PostgreSQL 18, Python 3.14. El adaptador de TypeScript 6 para ESLint es el punto más frágil de las actualizaciones.
 - El detalle por archivo está en `.planning/codebase/`; `CONCERNS.md` enumera los huecos de seguridad, rendimiento y cobertura de tests.
-- El ruido de avisos no está medido: no existe un histórico agregado de qué se envió, cuándo ni por qué.
+- La fase 1 midió el volumen histórico de Telegram. El volumen histórico de Web Push quedó sin medir. La fase 2 registra el resultado y el motivo de entrega por incidencia.
 - Acceso del usuario al NAS por SSH (`100.124.98.51`, usuario `alberba`) para leer journals y logs de los servicios implicados.
 
 ## Constraints
@@ -70,7 +70,10 @@ Saber en segundos qué está pasando en los dos servidores y poder actuar sobre 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
 | Auditar el ruido antes de decidir el alcance de notificaciones | El export de Telegram aporta una línea base de 1,25 mensajes/día en E4 | Fase 01 aprobada con 9 claves de aviso inmediato, 9 para el resumen, 4 silenciosas y un objetivo de mediana diaria de hasta 1 aviso proactivo fuera del resumen en 14 días |
-| Un mensaje por incidencia, sin aviso de recuperación | El volumen por evento es la queja principal | — Pending |
+| Un mensaje por incidencia, sin aviso de recuperación | El volumen por evento es la queja principal | Fase 02 validada en Telegram y Web Push |
+| Registrar la entrega incierta sin segundo envío automático | Un envío pudo llegar aunque el worker perdiera la confirmación | Fase 02 muestra el motivo. El respaldo push para críticas requiere un fallo definitivo confirmado. |
+| Migrar en silencio las incidencias abiertas | El histórico se conserva sin volver a avisar al activar el bot | Fase 02 validada sobre una copia restaurada de producción |
+| Actualizar en silencio un push existente cuando el hub esté visible | Una escalada debe reflejarse sin volver a interrumpir | Fase 02 validada en iOS con el aviso presente y descartado |
 | Resumen diario para lo no urgente | Evita interrumpir por informativo sin perderlo | — Pending |
 | Telegram con acciones inline | El usuario quiere resolver desde el móvil, no solo enterarse | — Pending |
 | Auditar con datos reales del NAS y de media-stack | Sin una cifra de partida no hay criterio de éxito | Telegram medido. El push histórico queda sin medir en ausencia del CSV de `alerts`. |
@@ -93,4 +96,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-11-24 after initialization*
+*Last updated: 2026-11-25 after Phase 2*

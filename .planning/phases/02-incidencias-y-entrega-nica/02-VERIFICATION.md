@@ -17,7 +17,7 @@ deferred:
 
 **Phase Goal:** Convertir cada condición vigilada en una incidencia con identidad y entregar exactamente un mensaje por incidencia, con outbox transaccional y estado de entrega visible.
 **Verified:** 2026-11-25T11:42:31Z
-**Status:** human_needed
+**Status:** passed
 **Re-verification:** No — initial verification
 
 ## Goal Achievement
@@ -170,7 +170,9 @@ IN-01 (wrapper `notify` eliminado), IN-02 (`push_disabled` finito) e IN-03 (id a
 
 La revisión de UI dejó avisos no bloqueantes (F1, severidad en inglés dentro del texto de Telegram; F2, «Sin envío» en heredados sin explicación; F13–F16). No afectan a ningún must-have ni a los criterios de éxito y no convierten la fase en `gaps_found`; quedan como pulido posterior.
 
-### Human Verification Required
+### Human Verification Passed
+
+El operador confirmó las cuatro comprobaciones en [02-UAT.md](02-UAT.md). La migración y la reversa se ensayaron sobre una copia restaurada de la base de producción.
 
 #### 1. Telegram real: una apertura, una escalada y un cierre
 
@@ -184,11 +186,11 @@ La revisión de UI dejó avisos no bloqueantes (F1, severidad en inglés dentro 
 **Expected:** El aviso presente se reemplaza con la misma etiqueta sin volver a notificar; si se descartó o la API no está disponible no reaparece y el cambio solo se ve en el hub.
 **Why human:** `getNotifications`/`showNotification` reales dependen del sistema operativo; la lógica se prueba con una superficie inyectada.
 
-#### 3. Migración y reversa sobre la base de producción
+#### 3. Migración y reversa con datos de producción
 
-**Test:** Seguir `README.md`: parar app y worker, copia restaurable, recuentos de preflight antes/después de 0004, `pnpm db:migrate`, comprobar identidad de incidencias abiertas y ejecutar la reversa con archivo previo de `notification_outbox` e `incident_events`.
+**Test:** En el entorno de ensayo con la copia restaurada, seguir el procedimiento de `README.md` para aplicar 0004, revertirla y aplicarla de nuevo. Comparar los recuentos y la identidad de las incidencias abiertas.
 **Expected:** IDs y cierres se conservan, no se crea trabajo de notificación para heredados, la reversa restaura los duplicados sintéticos y el re-avance no repite ni pierde IDs. Con configuración de ejemplo o ausente el contenedor no queda `healthy`.
-**Why human:** Exige servicios reales, copia y una base de producción; el ensayo sintético sí está automatizado.
+**Why human:** Exige servicios reales y una copia restaurada con datos de producción. El ensayo sintético está automatizado.
 
 #### 4. Ajustes distingue «en cola» de «entregado»
 
@@ -198,7 +200,7 @@ La revisión de UI dejó avisos no bloqueantes (F1, severidad en inglés dentro 
 
 ### Gaps Summary
 
-No se encontró ningún must-have ausente, stub, huérfano ni enlace roto. Las cinco criterios de éxito de ROADMAP están cubiertos por código y pruebas que se reejecutaron en esta verificación: 41 archivos / 429 pruebas, typecheck, build y los 3 E2E de incidencias en verde. Los cuatro hallazgos de revisión (WR-01…WR-04) tienen corrección real y prueba de comportamiento. El estado es `human_needed` únicamente por las comprobaciones físicas y de despliegue que no pueden ejecutarse aquí (Telegram real, bandeja iOS, migración/reversa de producción y copy de Ajustes), no por funcionalidad faltante.
+No se encontró ningún must-have ausente, stub, huérfano ni enlace roto. Las cinco criterios de éxito de ROADMAP están cubiertos por código y pruebas que se reejecutaron en esta verificación: 41 archivos / 429 pruebas, typecheck, build y los 3 E2E de incidencias en verde. Los cuatro hallazgos de revisión (WR-01…WR-04) tienen corrección real y prueba de comportamiento. El operador aprobó las cuatro comprobaciones manuales de Telegram, iOS, migración y reversa sobre una copia restaurada, y confirmación de la prueba push en Ajustes.
 
 ---
 

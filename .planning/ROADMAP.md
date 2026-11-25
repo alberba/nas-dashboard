@@ -15,7 +15,7 @@ Solo la fase 8 toca `media-stack` con commits; la fase 1 lo lee sin modificar y 
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Auditoría del ruido** - Medir mensajes, recuperaciones, duplicados y horas antes de fijar la política. (completed 2026-11-24)
-- [ ] **Phase 2: Incidencias y entrega única** - Una incidencia con identidad y exactamente un mensaje, con outbox y estado de entrega.
+- [x] **Phase 2: Incidencias y entrega única** - Una incidencia con identidad y exactamente un mensaje, con outbox y estado de entrega. (completed 2026-11-25)
 - [ ] **Phase 3: Agrupación, inventario y ayudantes** - Una caída de host es una incidencia, sin fantasmas ni ayudantes huérfanos.
 - [ ] **Phase 4: Resumen diario** - Lo no urgente llega una vez al día, sin duplicarse ni perderse en los cambios de hora.
 - [ ] **Phase 5: Bot de lectura y reconocimiento** - Abrir, silenciar y reconocer desde el mensaje, con allowlist y tokens de un solo uso.
@@ -62,7 +62,7 @@ Plans:
   3. Un fallo entre la decisión y el envío no pierde el aviso, un reintento no lo duplica, un 429 espera `retry_after` y un 400/403/404 queda fallido de forma visible.
   4. El operador ve en el hub el estado de entrega de cada incidencia (enviado, fallido, suprimido y motivo) y llega a la vista correspondiente desde el botón del mensaje.
   5. El hub y el worker no se declaran sanos con credenciales de ejemplo o configuración obligatoria ausente, y un payload de agente inválido no abre ni resuelve una incidencia.
-**Plans**: 5/5 plans executed
+**Plans**: 5/5 plans complete
 
 Plans:
 **Wave 1**
@@ -213,7 +213,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Auditoría del ruido | 3/3 | Complete    | 2026-11-24 |
-| 2. Incidencias y entrega única | 5/5 | In Progress | - |
+| 2. Incidencias y entrega única | 5/5 | Complete    | 2026-11-25 |
 | 3. Agrupación, inventario y ayudantes | 0/3 | Not started | - |
 | 4. Resumen diario | 0/3 | Not started | - |
 | 5. Bot de lectura y reconocimiento | 0/3 | Not started | - |
