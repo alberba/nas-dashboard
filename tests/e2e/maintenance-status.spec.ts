@@ -311,6 +311,36 @@ test("the cleaning cell distinguishes a persistent failure from a confirmed host
   await expect(cell(page, "cleanup")).toContainText("Sin pendientes");
 });
 
+test("an unproven cleanup state stays distinct from a failure", async ({
+  page,
+}) => {
+  await open(page, (id) =>
+    snapshot(nasRole(id) as Role, {
+      helperCleanup:
+        id === "apps"
+          ? {
+              available: true,
+              status: "clean",
+              checkedAt: new Date().toISOString(),
+              pending: 0,
+              persistent: 0,
+            }
+          : {
+              available: true,
+              status: "indeterminate",
+              checkedAt: null,
+              pending: 1,
+              persistent: 0,
+            },
+    }),
+  );
+  await expect(cell(page, "cleanup")).toHaveAttribute(
+    "data-state",
+    "indeterminate",
+  );
+  await expect(cell(page, "cleanup")).toContainText("sin confirmar");
+});
+
 test("on a phone the strip is two columns and the page does not scroll sideways", async ({
   page,
 }) => {

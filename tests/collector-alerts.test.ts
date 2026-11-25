@@ -2461,6 +2461,20 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
     expect(
       current.outbox.filter((notice) => notice.status === "pending"),
     ).toHaveLength(0);
+
+    // The closed episode remains readable in Avisos with its digest policy.
+    const alerts = await store.projectIncidents(
+      await db.select().from(tables.incidents),
+    );
+    expect(alerts[0]).toMatchObject({
+      key: "helper-cleanup",
+      resolvedAt: expect.any(String),
+      delivery: {
+        channel: "digest",
+        state: "suppressed",
+        reason: "digest_pending",
+      },
+    });
   });
 
   it("does not let an older cleanup check close the episode", async () => {
@@ -2514,11 +2528,36 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
     });
   });
 
+  it("isolates the cleanup episode by host", async () => {
+    const start = Date.UTC(2027, 1, 16, 10);
+    nas.maintenance = helperCleanup({
+      checkedAt: "2027-02-16T10:00:00Z",
+    });
+    apps.maintenance = maintenanceSnapshot({
+      helperCleanup: {
+        available: true,
+        status: "clean",
+        checkedAt: "2027-02-16T10:00:00Z",
+        pending: 0,
+        persistent: 0,
+      },
+    });
+
+    await collect(start);
+
+    const current = await state();
+    const cleanup = current.incidents.filter(
+      (row) => row.key === "helper-cleanup",
+    );
+    expect(cleanup).toHaveLength(1);
+    expect(cleanup[0].hostId).toBe("nas-home");
+  });
+
   it("keeps the episode when the agent has no cleanup section", async () => {
     const host = getHosts().find((entry) => entry.id === "nas-home")!;
-    const start = Date.UTC(2027, 1, 15, 10);
+    const start = Date.UTC(2027, 1, 17, 10);
     nas.maintenance = helperCleanup({
-      checkedAt: "2026-11-14T15:00:00Z",
+      checkedAt: "2027-02-17T10:00:00Z",
     });
 
     await collectHost(host, start);

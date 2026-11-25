@@ -646,6 +646,34 @@ describe("helper cleanup alerts", () => {
     expect(indeterminate).toBeUndefined();
   });
 
+  it("keeps a known persistent failure while the inventory is indeterminate", () => {
+    const known = signal(
+      maintenanceAlertSignals(
+        cleanup({
+          status: "indeterminate",
+          pending: 1,
+          persistent: 1,
+        }),
+        "NAS-HOME",
+      ),
+      "helper-cleanup",
+    );
+    expect(known).toMatchObject({ failing: true });
+
+    const first = signal(
+      maintenanceAlertSignals(
+        cleanup({
+          status: "indeterminate",
+          pending: 1,
+          persistent: 0,
+        }),
+        "NAS-HOME",
+      ),
+      "helper-cleanup",
+    );
+    expect(first).toBeUndefined();
+  });
+
   it("keeps a first failure and an incomplete inventory out of the incident", () => {
     const scattered = signal(
       maintenanceAlertSignals(

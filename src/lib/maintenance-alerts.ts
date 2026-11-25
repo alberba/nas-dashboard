@@ -173,11 +173,13 @@ export function maintenanceAlertSignals(
         : null;
     if (fresh && pending !== null) {
       if (
-        cleanup.status === "persistent" &&
         pending > 0 &&
         typeof cleanup.persistent === "number" &&
         cleanup.persistent > 0
       ) {
+        // Two real failed attempts are known even when the last Docker list
+        // failed: the indeterminate status stays visible, but the episode is
+        // not lost and no healthy signal is invented.
         signals.push({
           key: "helper-cleanup",
           failing: true,
