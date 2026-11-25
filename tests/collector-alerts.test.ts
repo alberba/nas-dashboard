@@ -1230,6 +1230,40 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
     expect(pendingWatch(settings)).toEqual([]);
   });
 
+  it("transfers the watch when the replacement appears at the absence threshold", async () => {
+    const start = Date.UTC(2026, 9, 25, 14, 10);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    const { WATCH_THRESHOLD_MS } = await import("@/lib/container-watch");
+    const identity = {
+      containerId: "1".repeat(64),
+      composeProject: null,
+      composeService: null,
+    };
+    const incidentId = await openContainer(host.id, "old", start - WATCH_THRESHOLD_MS);
+    const mark = (start - 10_000) / 1000;
+    await setWatchSettings(host.id, ["old"], { old: identity }, {
+      old: {
+        identity,
+        absentSince: (start - WATCH_THRESHOLD_MS) / 1000,
+        observedAt: mark,
+        accreditedMs: WATCH_THRESHOLD_MS - 10_000,
+      },
+    }, mark);
+    nas.metrics = metricsSnapshot({
+      timestamp: start / 1000,
+      containersObservedAt: start / 1000,
+      containers: [{ ...containerOf("new", "exited"), id: identity.containerId }],
+    });
+
+    await collectHost(host, start);
+
+    const { getSettings } = await import("@/lib/settings");
+    expect((await getSettings(host.id)).expectedContainers).toEqual(["new"]);
+    expect((await state()).incidents).toMatchObject([
+      { id: incidentId, key: "container:new", resolvedAt: null },
+    ]);
+  });
+
   it("moves the watch and the episode to a new name with the same Docker ID", async () => {
     const start = Date.UTC(2026, 9, 25, 15);
     const host = getHosts().find((entry) => entry.id === "nas-home")!;

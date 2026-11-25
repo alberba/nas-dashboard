@@ -321,22 +321,6 @@ export async function reconcileContainers(input: {
       }
     }
 
-    for (const [name, entry] of Object.entries(watch.entries)) {
-      if (!expected.includes(name) || entry.accreditedMs < WATCH_THRESHOLD_MS)
-        continue;
-      expected.splice(expected.indexOf(name), 1);
-      delete watch.entries[name];
-      delete watch.identities[name];
-      changed = true;
-      await recordIncidentObservationIn(tx, {
-        hostId: input.host.id,
-        key: containerPrefix + name,
-        failing: false,
-        now: input.now,
-        closedBy: "reconciliation",
-      });
-    }
-
     for (const transfer of planTransfers(
       expected,
       watch.entries,
@@ -359,6 +343,22 @@ export async function reconcileContainers(input: {
         now: input.now,
         running: transfer.container.state === "running",
         mergeDestination: true,
+      });
+    }
+
+    for (const [name, entry] of Object.entries(watch.entries)) {
+      if (!expected.includes(name) || entry.accreditedMs < WATCH_THRESHOLD_MS)
+        continue;
+      expected.splice(expected.indexOf(name), 1);
+      delete watch.entries[name];
+      delete watch.identities[name];
+      changed = true;
+      await recordIncidentObservationIn(tx, {
+        hostId: input.host.id,
+        key: containerPrefix + name,
+        failing: false,
+        now: input.now,
+        closedBy: "reconciliation",
       });
     }
 
