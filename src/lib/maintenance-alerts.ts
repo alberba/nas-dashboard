@@ -78,29 +78,39 @@ export function maintenanceAlertSignals(
   if (!degraded.has("disks") && record(disks) && disks.available === true) {
     const devices = Array.isArray(disks.devices) ? disks.devices : [];
     if (devices.length) {
+      const status = (disk: unknown) =>
+        record(disk) && typeof disk.status === "string" ? disk.status : null;
       const unhealthy = devices.filter(
-        (disk) => record(disk) && (disk.status === "watch" || disk.status === "fail"),
+        (disk) =>
+          status(disk) === "watch" || status(disk) === "fail",
       );
       const failing = unhealthy.length > 0;
-      const critical = unhealthy.some(
-        (disk) => record(disk) && disk.status === "fail",
-      );
-      signals.push({
-        key: "disk-health",
-        failing,
-        title: failing
-          ? `Disco ${critical ? "con fallo" : "a vigilar"} en ${hostName}`
-          : "Discos recuperados",
-        detail: failing
-          ? names(
-              unhealthy.map(
-                (disk) =>
-                  `${text(record(disk) ? disk.device : null) ?? "disco"}: ${record(disk) ? String(disk.status) : "unknown"}`,
-              ),
-            )
-          : "",
-        severity: critical ? "critical" : "warning",
+      const critical = unhealthy.some((disk) => status(disk) === "fail");
+      // A disk that only reports an unknown status carries no evidence. Do not
+      // turn that silence into a healthy transition; only a fully known set
+      // can resolve an open disk episode.
+      const hasUnknown = devices.some((disk) => {
+        const value = status(disk);
+        return value !== "ok" && value !== "watch" && value !== "fail";
       });
+      if (failing || !hasUnknown) {
+        signals.push({
+          key: "disk-health",
+          failing,
+          title: failing
+            ? `Disco ${critical ? "con fallo" : "a vigilar"} en ${hostName}`
+            : "Discos recuperados",
+          detail: failing
+            ? names(
+                unhealthy.map(
+                  (disk) =>
+                    `${record(disk) && text(disk.device) ? text(disk.device) : "disco"}: ${status(disk) ?? "unknown"}`,
+                ),
+              )
+            : "",
+          severity: critical ? "critical" : "warning",
+        });
+      }
     }
   }
 
@@ -170,11 +180,23 @@ export function deploymentAlertSignals(
     follower.available !== false &&
     !degraded.has("follower");
 
-  if (followerReadable && snapshot.available !== false && !degraded.has("checkout") && !degraded.has("git")) {
-    const retained = Array.isArray(snapshot.retained)
-      ? snapshot.retained.filter((entry) => record(entry) && text(entry.release))
-      : [];
-    const failing = retained.length > 0;
+  const retained = Array.isArray(snapshot.retained) ? snapshot.retained : null;
+  const retainedValid =
+    retained !== null &&
+    retained.every((entry) => record(entry) && Boolean(text(entry.release)));
+
+  if (
+    retained !== null &&
+    retainedValid &&
+    followerReadable &&
+    snapshot.available !== false &&
+    !degraded.has("checkout") &&
+    !degraded.has("git")
+  ) {
+    const retainedReleases = retained.filter(
+      (entry) => record(entry) && text(entry.release),
+    );
+    const failing = retainedReleases.length > 0;
     signals.push({
       key: "release-retained",
       failing,
@@ -183,7 +205,7 @@ export function deploymentAlertSignals(
         : "Releases retenidas resueltas",
       detail: failing
         ? names(
-            retained.map(
+            retainedReleases.map(
               (entry) =>
                 `${text(record(entry) ? entry.release : null) ?? "?"} (${text(record(entry) ? entry.reason : null) ?? "retenida"})`,
             ),
@@ -196,41 +218,52 @@ export function deploymentAlertSignals(
   if (followerReadable) {
     const history = Array.isArray(snapshot.history)
       ? snapshot.history.filter(record)
-      : [];
-    const latest = history[0];
-    const marker = record(follower) && record(follower.failed) ? follower.failed : null;
+      : null;
+    const latest = history?.[0];
+    const marker =
+      record(follower) && record(follower.failed) ? follower.failed : null;
     const installedRelease =
       record(follower) && record(follower.installed)
         ? text(follower.installed.release)
         : null;
-    let failing = false;
+    let failing: boolean | null = null;
     let release: string | null = null;
-    if (latest && latest.outcome === "rolled-back") {
+    if (history && latest && latest.outcome === "rolled-back") {
       failing = true;
       release = text(latest.release);
     } else if (marker) {
-      const failedAt = text(marker.since) ? Date.parse(text(marker.since)!) : NaN;
-      const recovered = history.some((entry) => {
-        if (entry.outcome !== "success") return false;
-        if (!Number.isFinite(failedAt)) return true;
-        const at = text(entry.at) ? Date.parse(text(entry.at)!) : NaN;
-        return Number.isFinite(at) && at >= failedAt;
-      });
+      const since = text(marker.since);
+      const failedAt = since ? Date.parse(since) : NaN;
+      const recovered = history
+        ? history.some((entry) => {
+            if (entry.outcome !== "success") return false;
+            if (!Number.isFinite(failedAt)) return true;
+            const at = text(entry.at) ? Date.parse(text(entry.at)!) : NaN;
+            return Number.isFinite(at) && at >= failedAt;
+          })
+        : false;
       failing = !recovered;
       release = text(marker.release);
+    } else if (history && history.length > 0) {
+      // Positive evidence: the newest known deployment finished successfully.
+      failing = false;
     }
-    // media-stack keeps failed-release.json after moving on. A strictly newer
-    // installed release supersedes that attempt, even if history was pruned.
-    if (release && newerRelease(installedRelease, release)) failing = false;
-    signals.push({
-      key: "deploy-failed",
-      failing,
-      title: failing
-        ? `Despliegue fallido en ${hostName}`
-        : "Despliegue recuperado",
-      detail: failing && release ? `Release ${release}.` : "",
-      severity: "critical",
-    });
+    // An absent or empty history is not evidence of health: without a failure
+    // marker or a recorded success, leave the episode untouched.
+    if (failing !== null) {
+      // media-stack keeps failed-release.json after moving on. A strictly newer
+      // installed release supersedes that attempt, even if history was pruned.
+      if (release && newerRelease(installedRelease, release)) failing = false;
+      signals.push({
+        key: "deploy-failed",
+        failing,
+        title: failing
+          ? `Despliegue fallido en ${hostName}`
+          : "Despliegue recuperado",
+        detail: failing && release ? `Release ${release}.` : "",
+        severity: "critical",
+      });
+    }
   }
 
   return signals;

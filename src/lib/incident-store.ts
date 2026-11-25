@@ -73,7 +73,15 @@ async function suppressPending(
 ) {
   await tx
     .update(notificationOutbox)
-    .set({ status: "suppressed", updatedAt: at, result: suppressed(reason, at) })
+    .set({
+      status: "suppressed",
+      updatedAt: at,
+      result: suppressed(reason, at),
+      // A preempted claim must not be usable by a dispatcher that already read
+      // the row but has not started the request yet.
+      claimToken: null,
+      leaseUntil: null,
+    })
     .where(
       and(
         eq(notificationOutbox.incidentId, incidentId),
@@ -102,7 +110,7 @@ async function closeEpisode(
   if (!first) return "none";
 
   if (
-    first.status === "pending" ||
+    (first.status === "pending" && !first.attemptStartedAt) ||
     (first.status === "claimed" && !first.attemptStartedAt)
   ) {
     await suppressPending(tx, open.id, "resolved_before_send", at);
@@ -165,7 +173,7 @@ async function changeSeverity(
   }
 
   if (
-    first.status === "pending" ||
+    (first.status === "pending" && !first.attemptStartedAt) ||
     ((first.status === "claimed" || first.status === "suppressed") &&
       !first.attemptStartedAt &&
       !first.messageId)
@@ -179,6 +187,11 @@ async function changeSeverity(
           revision: seq,
           result: null,
           updatedAt: at,
+          // Replace the pending opening before its send starts: any claim
+          // already handed out is no longer valid.
+          claimToken: null,
+          leaseUntil: null,
+          attemptStartedAt: null,
         })
         .where(eq(notificationOutbox.id, first.id));
       return "queued";
@@ -186,10 +199,13 @@ async function changeSeverity(
     await tx
       .update(notificationOutbox)
       .set({
+        channel: delivery?.channel ?? first.channel,
         status: "suppressed",
         revision: seq,
         updatedAt: at,
         result: suppressed(delivery?.reason ?? "policy_silent", at),
+        claimToken: null,
+        leaseUntil: null,
       })
       .where(eq(notificationOutbox.id, first.id));
     return "none";

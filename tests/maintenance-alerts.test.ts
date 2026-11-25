@@ -4,6 +4,10 @@ import {
   maintenanceAlertSignals,
   type AlertSignal,
 } from "@/lib/maintenance-alerts";
+import {
+  notificationPolicy,
+  pushWarningsEnabled,
+} from "@/lib/notification-policy";
 import type { DeploymentsSnapshot } from "@/lib/deployments";
 import type { MaintenanceSnapshot } from "@/lib/maintenance";
 
@@ -173,6 +177,53 @@ describe("maintenance alert signals", () => {
     expect(signal(signals, "disk-health")).toBeUndefined();
   });
 
+  it("keeps the disk condition when a carrier reports an unknown status", () => {
+    const base = maintenance().disks.devices[0];
+    const mixed = maintenanceAlertSignals(
+      maintenance({
+        disks: {
+          available: true,
+          devices: [
+            { ...base, status: "ok" },
+            { ...base, device: "sdb", status: "unknown", issues: ["smart_unavailable"] },
+          ],
+        },
+      }),
+      "NAS-HOME",
+    );
+    expect(signal(mixed, "disk-health")).toBeUndefined();
+
+    const allUnknown = maintenanceAlertSignals(
+      maintenance({
+        disks: {
+          available: true,
+          devices: [
+            { ...base, status: "unknown", issues: ["smart_unavailable"] },
+          ],
+        },
+      }),
+      "NAS-HOME",
+    );
+    expect(signal(allUnknown, "disk-health")).toBeUndefined();
+
+    const failing = maintenanceAlertSignals(
+      maintenance({
+        disks: {
+          available: true,
+          devices: [
+            { ...base, status: "ok" },
+            { ...base, device: "sdb", status: "watch", issues: ["wear"] },
+          ],
+        },
+      }),
+      "NAS-HOME",
+    );
+    expect(signal(failing, "disk-health")).toMatchObject({
+      failing: true,
+      severity: "warning",
+    });
+  });
+
   it("opens a reboot alert only while the host reports it is pending", () => {
     const pending = signal(
       maintenanceAlertSignals(
@@ -288,6 +339,42 @@ describe("deployment alert signals", () => {
     expect(signal(signals, "release-retained")).toBeUndefined();
   });
 
+  it("does not claim retention from a missing or malformed retained list", () => {
+    const missing = deploymentAlertSignals(
+      deployments({
+        retained: undefined as unknown as DeploymentsSnapshot["retained"],
+      }),
+      "NAS-HOME",
+    );
+    expect(signal(missing, "release-retained")).toBeUndefined();
+
+    const malformed = deploymentAlertSignals(
+      deployments({
+        retained: [
+          { release: 42 } as unknown as DeploymentsSnapshot["retained"][number],
+        ],
+      }),
+      "NAS-HOME",
+    );
+    expect(signal(malformed, "release-retained")).toBeUndefined();
+  });
+
+  it("does not claim health from an empty or missing deployment history", () => {
+    const empty = deploymentAlertSignals(
+      deployments({ history: [] }),
+      "NAS-HOME",
+    );
+    expect(signal(empty, "deploy-failed")).toBeUndefined();
+
+    const missing = deploymentAlertSignals(
+      deployments({
+        history: undefined as unknown as DeploymentsSnapshot["history"],
+      }),
+      "NAS-HOME",
+    );
+    expect(signal(missing, "deploy-failed")).toBeUndefined();
+  });
+
   it("keeps a failed deployment open until a later successful one", () => {
     const failed = deployments({
       history: [
@@ -389,5 +476,117 @@ describe("deployment alert signals", () => {
     );
     expect(signal(signals, "deploy-failed")).toBeUndefined();
     expect(signal(signals, "release-retained")).toBeUndefined();
+  });
+});
+
+describe("notification policy", () => {
+  it("keeps the audited immediate keys and the disk escalation", () => {
+    for (const key of [
+      "connection",
+      "temperature",
+      "backup-failed",
+      "stack-unit-failed",
+      "deploy-failed",
+    ]) {
+      expect(notificationPolicy(key, "critical", { pushWarnings: false })).toMatchObject({
+        channel: "telegram",
+        reason: "policy_immediate",
+        digest: false,
+        immediate: true,
+      });
+    }
+    expect(
+      notificationPolicy("disk-health", "warning", { pushWarnings: false }),
+    ).toMatchObject({
+      channel: "digest",
+      reason: "digest_pending",
+      digest: true,
+      immediate: false,
+    });
+    expect(
+      notificationPolicy("disk-health", "critical", { pushWarnings: false }),
+    ).toMatchObject({
+      channel: "telegram",
+      reason: "policy_immediate",
+      digest: false,
+      immediate: true,
+    });
+  });
+
+  it("sends the audited digest keys to the digest", () => {
+    for (const key of [
+      "cpu",
+      "memory",
+      "disk",
+      "reboot-pending",
+      "release-retained",
+    ]) {
+      expect(
+        notificationPolicy(key, "warning", { pushWarnings: false }),
+      ).toMatchObject({
+        channel: "digest",
+        reason: "digest_pending",
+        digest: true,
+        immediate: false,
+      });
+    }
+  });
+
+  it("keeps the container family silent at any severity", () => {
+    expect(
+      notificationPolicy("container:radarr", "critical", {
+        pushWarnings: true,
+      }),
+    ).toMatchObject({
+      channel: "silent",
+      reason: "policy_silent",
+      digest: false,
+      immediate: false,
+    });
+  });
+
+  it("replaces only eligible warnings with push when PUSH_WARNINGS is enabled", () => {
+    expect(
+      notificationPolicy("cpu", "warning", { pushWarnings: false }),
+    ).toMatchObject({ channel: "digest" });
+    expect(
+      notificationPolicy("cpu", "warning", { pushWarnings: true }),
+    ).toMatchObject({
+      channel: "push",
+      reason: "policy_immediate",
+      digest: true,
+      immediate: true,
+    });
+    expect(
+      notificationPolicy("disk-health", "warning", { pushWarnings: true }),
+    ).toMatchObject({ channel: "push" });
+    expect(
+      notificationPolicy("connection", "critical", { pushWarnings: true }),
+    ).toMatchObject({ channel: "telegram" });
+    expect(
+      notificationPolicy("container:radarr", "warning", {
+        pushWarnings: true,
+      }),
+    ).toMatchObject({ channel: "silent" });
+  });
+
+  it("reads the opt-in from PUSH_WARNINGS with a false default", () => {
+    expect(pushWarningsEnabled(undefined)).toBe(false);
+    expect(pushWarningsEnabled("")).toBe(false);
+    expect(pushWarningsEnabled("false")).toBe(false);
+    expect(pushWarningsEnabled("0")).toBe(false);
+    expect(pushWarningsEnabled("true")).toBe(true);
+    expect(pushWarningsEnabled("1")).toBe(true);
+
+    const previous = process.env.PUSH_WARNINGS;
+    delete process.env.PUSH_WARNINGS;
+    try {
+      expect(notificationPolicy("cpu", "warning")).toMatchObject({
+        channel: "digest",
+      });
+    } finally {
+      if (previous === undefined) delete process.env.PUSH_WARNINGS;
+      else process.env.PUSH_WARNINGS = previous;
+    }
   });
 });

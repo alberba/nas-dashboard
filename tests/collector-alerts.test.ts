@@ -1,5 +1,6 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { eq } from "drizzle-orm";
 import { describe, expect, it, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import {
   createTestDatabase,
@@ -105,6 +106,7 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
   let db: typeof import("@/lib/db").db;
   let pool: typeof import("@/lib/db").pool;
   let tables: typeof import("@/lib/schema");
+  let store: typeof import("@/lib/incident-store");
 
   async function collect(now: number) {
     await collectAll(getHosts(), now);
@@ -162,6 +164,7 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
     ({ collectAll, collectHost } = await import("@/lib/collector"));
     ({ getHosts } = await import("@/lib/hosts"));
     tables = await import("@/lib/schema");
+    store = await import("@/lib/incident-store");
   });
 
   afterAll(async () => {
@@ -200,6 +203,22 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
       failedUnits: {
         stack: [{ name: "media-stack-upgrade.service", description: null }],
         other: [{ name: "logrotate.service", description: "Rotate logs" }],
+      },
+    });
+  }
+
+  function diskMaintenance(status: "ok" | "watch" | "fail") {
+    const base = maintenanceSnapshot();
+    return maintenanceSnapshot({
+      disks: {
+        available: true,
+        devices: [
+          {
+            ...base.disks.devices[0],
+            status,
+            issues: status === "ok" ? [] : ["smart"],
+          },
+        ],
       },
     });
   }
@@ -525,7 +544,7 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
 
     await collectHost(host, start);
     await collectHost(host, start + 31_000);
-    let current = await state();
+    const current = await state();
     expect(await db.select().from(tables.samples)).toHaveLength(2);
     expect(current.incidents).toHaveLength(1);
     expect(current.incidents[0]).toMatchObject({
@@ -639,5 +658,364 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
       severity: "critical",
     });
     expect(current.outbox).toHaveLength(1);
+  });
+
+  it("escalates disk-health from watch to fail in the same episode", async () => {
+    const start = Date.UTC(2026, 10, 22, 10);
+    nas.maintenance = diskMaintenance("watch");
+
+    await collect(start);
+    let current = await state();
+    expect(current.incidents).toHaveLength(1);
+    const incident = current.incidents[0];
+    expect(incident).toMatchObject({
+      key: "disk-health",
+      severity: "warning",
+      seq: 1,
+      resolvedAt: null,
+    });
+    expect(current.outbox).toHaveLength(1);
+    expect(current.outbox[0]).toMatchObject({
+      incidentId: incident.id,
+      channel: "digest",
+      status: "suppressed",
+      revision: 1,
+    });
+    expect(current.outbox[0].result).toMatchObject({ reason: "digest_pending" });
+
+    nas.maintenance = diskMaintenance("fail");
+    await collect(start + 61_000);
+    current = await state();
+    expect(current.incidents).toHaveLength(1);
+    expect(current.incidents[0]).toMatchObject({
+      id: incident.id,
+      severity: "critical",
+      seq: 2,
+      resolvedAt: null,
+    });
+    expect(current.events.find((event) => event.seq === 2)).toMatchObject({
+      kind: "severity",
+      severity: "critical",
+    });
+    expect(current.outbox).toHaveLength(1);
+    expect(current.outbox[0]).toMatchObject({
+      incidentId: incident.id,
+      channel: "telegram",
+      status: "pending",
+      revision: 2,
+      result: null,
+    });
+    expect(current.outbox[0].claimToken).toBeNull();
+    expect(current.outbox[0].leaseUntil).toBeNull();
+  });
+
+  it("cancels a pending immediate opening when disk-health drops to watch before the send", async () => {
+    const start = Date.UTC(2026, 10, 23, 10);
+    nas.maintenance = diskMaintenance("fail");
+
+    await collect(start);
+    let current = await state();
+    const incident = current.incidents[0];
+    expect(incident).toMatchObject({
+      key: "disk-health",
+      severity: "critical",
+      seq: 1,
+    });
+    expect(current.outbox[0]).toMatchObject({
+      channel: "telegram",
+      status: "pending",
+    });
+
+    nas.maintenance = diskMaintenance("watch");
+    await collect(start + 61_000);
+    current = await state();
+    expect(current.incidents).toHaveLength(1);
+    expect(current.incidents[0]).toMatchObject({
+      id: incident.id,
+      severity: "warning",
+      seq: 2,
+    });
+    expect(current.outbox).toHaveLength(1);
+    expect(current.outbox[0]).toMatchObject({
+      incidentId: incident.id,
+      channel: "digest",
+      status: "suppressed",
+      revision: 2,
+    });
+    expect(current.outbox[0].result).toMatchObject({ reason: "digest_pending" });
+  });
+
+  it("uses push for eligible warnings and keeps a committed push channel", async () => {
+    const start = Date.UTC(2026, 10, 24, 10);
+    const previous = process.env.PUSH_WARNINGS;
+    process.env.PUSH_WARNINGS = "true";
+    try {
+      nas.maintenance = diskMaintenance("watch");
+      await collect(start);
+      let current = await state();
+      const incident = current.incidents.find(
+        (row) => row.key === "disk-health",
+      )!;
+      expect(incident).toMatchObject({ severity: "warning", seq: 1 });
+      expect(current.outbox).toHaveLength(1);
+      const noticeId = current.outbox[0].id;
+      expect(current.outbox[0]).toMatchObject({
+        incidentId: incident.id,
+        channel: "push",
+        status: "pending",
+      });
+
+      await db
+        .update(tables.notificationOutbox)
+        .set({
+          status: "sent",
+          attempts: 1,
+          result: {
+            state: "sent",
+            reason: null,
+            at: new Date(start + 1_000).toISOString(),
+          },
+        })
+        .where(eq(tables.notificationOutbox.id, noticeId));
+
+      nas.maintenance = diskMaintenance("fail");
+      await collect(start + 61_000);
+      current = await state();
+      expect(current.incidents[0]).toMatchObject({
+        id: incident.id,
+        severity: "critical",
+        seq: 2,
+      });
+      expect(current.outbox).toHaveLength(1);
+      expect(current.outbox[0]).toMatchObject({
+        id: noticeId,
+        channel: "push",
+        status: "sent",
+      });
+      expect(current.outbox.some((row) => row.channel === "telegram")).toBe(
+        false,
+      );
+    } finally {
+      if (previous === undefined) delete process.env.PUSH_WARNINGS;
+      else process.env.PUSH_WARNINGS = previous;
+    }
+  });
+
+  it("keeps a container condition visible without delivery", async () => {
+    const start = Date.UTC(2026, 10, 25, 10);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    await setSettings("nas-home", { expectedContainers: ["nas-service"] });
+    nas.metrics = metricsSnapshot({ containers: [] });
+
+    await collectHost(host, start);
+    await collectHost(host, start + 31_000);
+    const current = await state();
+    expect(current.incidents).toHaveLength(1);
+    expect(current.incidents[0]).toMatchObject({
+      key: "container:nas-service",
+      severity: "warning",
+      seq: 1,
+    });
+    expect(current.outbox).toHaveLength(1);
+    expect(current.outbox[0]).toMatchObject({
+      channel: "silent",
+      status: "suppressed",
+    });
+    expect(current.outbox[0].result).toMatchObject({ reason: "policy_silent" });
+  });
+
+  it("ignores an invalid maintenance payload without resolving its episodes", async () => {
+    const start = Date.UTC(2026, 10, 26, 10);
+    nas.maintenance = maintenanceSnapshot({
+      backup: { status: "failed", at: "2026-11-13T03:00:00Z" },
+    });
+    await collect(start);
+    let current = await state();
+    const incident = current.incidents.find(
+      (row) => row.key === "backup-failed",
+    )!;
+    expect(incident).toBeTruthy();
+    const events = current.events.length;
+    const outbox = current.outbox.length;
+
+    nas.maintenance = {
+      ...maintenanceSnapshot(),
+      role: "unexpected-role",
+      timestamp: "not-a-number",
+    };
+    await collect(start + 61_000);
+    current = await state();
+    expect(current.incidents).toHaveLength(1);
+    expect(current.incidents[0]).toMatchObject({
+      id: incident.id,
+      resolvedAt: null,
+      seq: 1,
+    });
+    expect(current.events).toHaveLength(events);
+    expect(current.outbox).toHaveLength(outbox);
+  });
+
+  it("ignores an invalid deployments payload without resolving its episodes", async () => {
+    const start = Date.UTC(2026, 10, 27, 10);
+    nas.deployments = failingDeployments();
+    await collect(start);
+    let current = await state();
+    const incident = current.incidents.find(
+      (row) => row.key === "deploy-failed",
+    )!;
+    expect(incident).toBeTruthy();
+    const events = current.events.length;
+    const outbox = current.outbox.length;
+
+    nas.deployments = { ...deploymentsSnapshot(), history: "not-a-list" };
+    await collect(start + 61_000);
+    current = await state();
+    expect(current.incidents.find((row) => row.id === incident.id)).toMatchObject(
+      { resolvedAt: null, seq: 1 },
+    );
+    expect(current.events).toHaveLength(events);
+    expect(current.outbox).toHaveLength(outbox);
+  });
+
+  it("leaves a degraded section intact while an independent reading resolves its own condition", async () => {
+    const start = Date.UTC(2026, 10, 28, 10);
+    nas.maintenance = maintenanceSnapshot({
+      backup: { status: "failed", at: "2026-11-13T03:00:00Z" },
+      failedUnits: {
+        stack: [{ name: "media-stack-upgrade.service", description: null }],
+        other: [],
+      },
+    });
+    await collect(start);
+    let current = await state();
+    expect(current.incidents.map((row) => row.key).sort()).toEqual([
+      "backup-failed",
+      "stack-unit-failed",
+    ]);
+    const backup = current.incidents.find(
+      (row) => row.key === "backup-failed",
+    )!;
+    const stack = current.incidents.find(
+      (row) => row.key === "stack-unit-failed",
+    )!;
+
+    nas.maintenance = maintenanceSnapshot({
+      backup: { status: "ok", at: "2026-11-13T03:00:00Z" },
+      failedUnits: {
+        stack: [{ name: "media-stack-upgrade.service", description: null }],
+        other: [],
+      },
+      degraded: ["failedUnits"],
+    });
+    await collect(start + 61_000);
+    current = await state();
+    expect(current.incidents.find((row) => row.id === backup.id)).toMatchObject(
+      { resolvedAt: expect.any(Date), seq: 2 },
+    );
+    expect(current.incidents.find((row) => row.id === stack.id)).toMatchObject({
+      resolvedAt: null,
+      seq: 1,
+    });
+    expect(
+      current.events.filter((event) => event.incidentId === stack.id),
+    ).toHaveLength(1);
+  });
+
+  it("does not resolve a retained release when the snapshot omits the list", async () => {
+    const start = Date.UTC(2026, 10, 29, 10);
+    nas.deployments = deploymentsSnapshot({
+      retained: [
+        {
+          release: "v2.5.0",
+          reason: "missing-configuration",
+          blockedBy: null,
+          breaking: false,
+          manualSteps: [],
+          missingSettings: ["NEW_SETTING"],
+          secretSettings: [],
+          services: [],
+          sourceCommit: null,
+          at: null,
+        },
+      ],
+    });
+    await collect(start);
+    let current = await state();
+    const incident = current.incidents.find(
+      (row) => row.key === "release-retained",
+    )!;
+    expect(incident).toBeTruthy();
+
+    const withoutRetained: Record<string, unknown> = {
+      ...deploymentsSnapshot(),
+    };
+    delete withoutRetained.retained;
+    nas.deployments = withoutRetained;
+    await collect(start + 61_000);
+    current = await state();
+    expect(current.incidents.find((row) => row.id === incident.id)).toMatchObject(
+      { resolvedAt: null, seq: 1 },
+    );
+  });
+
+  it("does not resolve a failed deployment from an empty history", async () => {
+    const start = Date.UTC(2026, 10, 30, 10);
+    nas.deployments = failingDeployments();
+    await collect(start);
+    let current = await state();
+    const incident = current.incidents.find(
+      (row) => row.key === "deploy-failed",
+    )!;
+    expect(incident).toBeTruthy();
+
+    nas.deployments = deploymentsSnapshot({ history: [] });
+    await collect(start + 61_000);
+    current = await state();
+    expect(current.incidents.find((row) => row.id === incident.id)).toMatchObject(
+      { resolvedAt: null, seq: 1 },
+    );
+  });
+
+  it("persists legacy_open when a pre-migration episode is revalidated", async () => {
+    const start = Date.UTC(2026, 10, 31, 10);
+    const [legacy] = await db
+      .insert(tables.incidents)
+      .values({
+        hostId: "nas-home",
+        key: "backup-failed",
+        title: "Copia fallida legada",
+        detail: "",
+        severity: "warning",
+        at: new Date(start - 86_400_000),
+        fingerprint: store.incidentFingerprint("nas-home", "backup-failed"),
+        seq: 0,
+        origin: "legacy",
+      })
+      .returning();
+    await db.insert(tables.notificationOutbox).values({
+      key: `incident:${legacy.id}:open`,
+      incidentId: legacy.id,
+      kind: "incident-open",
+      channel: "telegram",
+      status: "pending",
+      revision: 0,
+    });
+    nas.maintenance = maintenanceSnapshot({
+      backup: { status: "failed", at: "2026-11-13T03:00:00Z" },
+    });
+
+    await collect(start);
+
+    const [notice] = await db
+      .select()
+      .from(tables.notificationOutbox)
+      .where(eq(tables.notificationOutbox.incidentId, legacy.id));
+    expect(notice).toMatchObject({ status: "suppressed", channel: "telegram" });
+    expect(notice.result).toMatchObject({ reason: "legacy_open" });
+    const [row] = await db
+      .select()
+      .from(tables.incidents)
+      .where(eq(tables.incidents.id, legacy.id));
+    expect(row).toMatchObject({ seq: 1, resolvedAt: null });
   });
 });

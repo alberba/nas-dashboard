@@ -9,6 +9,10 @@ import {
   type IncidentDelivery,
 } from "./incident-store";
 import {
+  notificationPolicy,
+  pushWarningsEnabled,
+} from "./notification-policy";
+import {
   deploymentAlertSignals,
   maintenanceAlertSignals,
 } from "./maintenance-alerts";
@@ -26,14 +30,17 @@ function scoped(host: HostConfig, key: string) {
 }
 
 /**
- * Provisional disposition for the collection path. Wave 2 replaces it with the
- * audited severity/delivery map before the outbox dispatcher is enabled; the
- * store never chooses a channel on its own.
+ * Audited disposition for the collection path. Severity alone is not enough:
+ * `disk-health` escalates from digest to immediate and `container:<name>` is
+ * silent at every severity.
  */
-function deliveryFor(severity: string): IncidentDelivery {
-  return severity === "critical"
-    ? { channel: "telegram", reason: "policy_immediate" }
-    : { channel: "digest", reason: "digest_pending" };
+function deliveryFor(key: string, severity: string): IncidentDelivery {
+  const decision = notificationPolicy(
+    key,
+    severity === "critical" ? "critical" : "warning",
+    { pushWarnings: pushWarningsEnabled() },
+  );
+  return { channel: decision.channel, reason: decision.reason };
 }
 
 async function condition(
@@ -67,7 +74,7 @@ async function condition(
       title,
       detail,
       now,
-      delivery: deliveryFor(severity),
+      delivery: deliveryFor(key, severity),
       closedBy: "collector",
     });
   }

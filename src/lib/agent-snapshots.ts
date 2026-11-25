@@ -17,6 +17,8 @@ const positive = finite.positive();
 const nullableFinite = finite.nullable();
 const nullableNonNegative = nonNegative.nullable();
 const nullableText = z.string().nullable();
+const role = z.enum(["instance", "apps-server"]);
+const degraded = z.array(z.string());
 const epoch = finite.positive();
 
 const cpuBreakdown = z.looseObject({
@@ -164,6 +166,241 @@ export const metricsSnapshotSchema = z.looseObject({
   containers: z.array(container),
 });
 
+const followerState = z.enum(["idle", "deploying", "failed", "unknown"]);
+
+const installedRelease = z.looseObject({
+  release: z.string().min(1),
+  commit: nullableText,
+  bootstrap: z.boolean(),
+  installedAt: nullableText,
+});
+
+const pendingRelease = z.looseObject({
+  release: z.string().min(1),
+  status: nullableText,
+  previousRelease: nullableText,
+  changed: z.array(z.string()),
+  since: nullableText,
+});
+
+const failedRelease = z.looseObject({
+  release: z.string().min(1),
+  since: nullableText,
+});
+
+const follower = z.looseObject({
+  available: z.boolean(),
+  state: followerState,
+  installed: installedRelease.nullable(),
+  pending: pendingRelease.nullable(),
+  failed: failedRelease.nullable(),
+});
+
+const maintenancePin = z.looseObject({
+  service: z.string(),
+  image: z.string(),
+  version: nullableText,
+  digest: nullableText,
+});
+
+const maintenancePendingUpdate = z.looseObject({
+  service: z.string(),
+  status: nullableText,
+  candidate: nullableText,
+  candidateRef: nullableText,
+  since: nullableText,
+});
+
+const maintenanceReview = z.looseObject({
+  names: z.array(z.string()),
+  from: nullableText,
+  to: nullableText,
+  semver: nullableText,
+  cves: z.number().int().nonnegative(),
+  newSevere: z.number().int().nonnegative(),
+  verifiedAt: nullableText,
+  reason: nullableText,
+});
+
+const maintenanceDisk = z.looseObject({
+  device: z.string(),
+  model: nullableText,
+  serial: nullableText,
+  kind: z.enum(["sata", "nvme", "other"]),
+  size: nullableNonNegative,
+  temperature: nullableFinite,
+  reallocatedSectors: z.number().int().nullable(),
+  wear: z.number().int().nullable(),
+  status: z.enum(["ok", "watch", "fail", "unknown"]),
+  issues: z.array(z.string()),
+});
+
+const maintenanceContainer = z.looseObject({
+  id: z.string(),
+  name: z.string(),
+  image: nullableText,
+  version: nullableText,
+  tag: nullableText,
+  url: nullableText,
+  canUpdate: z.boolean(),
+  updateAvailable: z.boolean().nullable(),
+  checkedAt: nullableNonNegative,
+});
+
+const maintenanceUnit = z.looseObject({
+  name: z.string(),
+  kind: z.enum(["follower", "security", "backup", "automation"]),
+  service: nullableText,
+  timer: nullableText,
+  activeState: nullableText,
+  subState: nullableText,
+  unitFileState: nullableText,
+  result: nullableText,
+  state: z.enum(["active", "paused", "inactive", "failed"]),
+  paused: z.boolean(),
+  lastRun: nullableText,
+  nextRun: nullableText,
+});
+
+const failedUnit = z.looseObject({
+  name: z.string(),
+  description: nullableText,
+});
+
+const dockerUsage = z.looseObject({
+  available: z.boolean(),
+  images: z.looseObject({
+    count: z.number().int().nonnegative(),
+    size: nonNegative,
+    reclaimable: nonNegative,
+  }),
+  containers: z.looseObject({
+    count: z.number().int().nonnegative(),
+    size: nonNegative,
+  }),
+  volumes: z.looseObject({
+    count: z.number().int().nonnegative(),
+    size: nonNegative,
+  }),
+  buildCache: z.looseObject({
+    count: z.number().int().nonnegative(),
+    size: nonNegative,
+  }),
+  total: nonNegative,
+  reclaimable: nonNegative,
+});
+
+/** `GET /maintenance`: the read-only host maintenance snapshot. */
+export const maintenanceSnapshotSchema = z.looseObject({
+  timestamp: epoch,
+  role,
+  follower,
+  security: z.looseObject({
+    pins: z.array(maintenancePin),
+    pending: maintenancePendingUpdate.nullable(),
+    review: z.array(maintenanceReview),
+  }),
+  backup: z.looseObject({
+    status: z.enum(["ok", "failed", "unknown"]),
+    at: nullableText,
+  }),
+  disks: z.looseObject({
+    available: z.boolean(),
+    devices: z.array(maintenanceDisk),
+  }),
+  /** Optional: agents before this section leave it undefined. */
+  containers: z
+    .looseObject({
+      available: z.boolean(),
+      items: z.array(maintenanceContainer),
+    })
+    .optional(),
+  units: z.array(maintenanceUnit),
+  failedUnits: z.looseObject({
+    stack: z.array(failedUnit),
+    other: z.array(failedUnit),
+  }),
+  reboot: z.looseObject({
+    available: z.boolean(),
+    required: z.boolean().nullable(),
+  }),
+  docker: dockerUsage,
+  degraded,
+});
+
+const blockerFile = z.looseObject({
+  status: z.string(),
+  path: z.string(),
+  from: nullableText,
+});
+
+const blocker = z.looseObject({
+  code: z.enum([
+    "release-recovery-pending",
+    "security-recovery-pending",
+    "checkout-unavailable",
+    "dirty-checkout",
+    "missing-configuration",
+  ]),
+  release: nullableText,
+  files: z.array(blockerFile),
+  missingSettings: z.array(z.string()),
+});
+
+const historyEntry = z.looseObject({
+  release: z.string().min(1),
+  outcome: z.enum(["success", "rolled-back"]),
+  at: nullableText,
+  previousRelease: nullableText,
+  services: z.array(z.string()),
+});
+
+const retainedEntry = z.looseObject({
+  release: z.string().min(1),
+  reason: z.enum([
+    "release-recovery-pending",
+    "security-recovery-pending",
+    "checkout-unavailable",
+    "dirty-checkout",
+    "missing-manifest",
+    "invalid-manifest",
+    "missing-configuration",
+    "previously-failed",
+    "blocked-by-previous-release",
+  ]),
+  blockedBy: nullableText,
+  breaking: z.boolean(),
+  manualSteps: z.array(z.string()),
+  missingSettings: z.array(z.string()),
+  // Agent versions before #24 did not emit this list. Defaulting it preserves
+  // the older shape without turning any observation into a healthy signal.
+  secretSettings: z.array(z.string()).default([]),
+  services: z.array(z.string()),
+  sourceCommit: nullableText,
+  at: nullableText,
+});
+
+const journalEntry = z.looseObject({
+  at: z.string(),
+  unit: z.string(),
+  priority: z.number().int(),
+  level: z.enum(["error", "warning", "info", "debug"]),
+  message: z.string(),
+});
+
+/** `GET /deployments?lines=…`: the read-only deployment snapshot. */
+export const deploymentsSnapshotSchema = z.looseObject({
+  timestamp: epoch,
+  role,
+  available: z.boolean(),
+  follower,
+  blocker: blocker.nullable(),
+  history: z.array(historyEntry),
+  retained: z.array(retainedEntry),
+  journal: z.looseObject({ entries: z.array(journalEntry) }),
+  degraded,
+});
+
 /**
  * Selects the decoder from the GET method and pathname. Unknown paths keep the
  * previous untyped behaviour; only the snapshots the hub evaluates are
@@ -177,5 +414,7 @@ export function agentSnapshotSchema(path: string): z.ZodType | undefined {
     return undefined;
   }
   if (pathname === "/metrics") return metricsSnapshotSchema;
+  if (pathname === "/maintenance") return maintenanceSnapshotSchema;
+  if (pathname === "/deployments") return deploymentsSnapshotSchema;
   return undefined;
 }
