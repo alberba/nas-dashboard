@@ -18,7 +18,7 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
-import type { HostStatus, Overview } from "@/lib/types";
+import type { Alert, HostStatus, Overview } from "@/lib/types";
 import { FileBrowser, type ActionRequest } from "./file-browser";
 import {
   HostScopeContext,
@@ -79,6 +79,13 @@ export function Dashboard({ name }: { name: string }) {
     scope: string | null;
     data: Overview;
   } | null>(null);
+  /** Point lookup for a linked episode outside the 100 recent. */
+  const [incidentDetail, setIncidentDetail] = useState<{
+    host: string;
+    id: number;
+    data: Alert | null;
+    missing: boolean;
+  } | null>(null);
   const [directory, setDirectory] = useState<{
     primary: string | null;
     hosts: HostStatus[];
@@ -127,6 +134,12 @@ export function Dashboard({ name }: { name: string }) {
     return () => window.removeEventListener("resize", center);
   }, [view]);
 
+  /** Rebuild the known internal route so a session expiry keeps the episode. */
+  const signInAgain = useCallback(() => {
+    router.replace(routeHref(readRoute(window.location.search)));
+    router.refresh();
+  }, [router]);
+
   const refresh = useCallback(
     async (signal?: AbortSignal) => {
       const current = () =>
@@ -137,8 +150,7 @@ export function Dashboard({ name }: { name: string }) {
           { signal },
         );
         if (response.status === 401) {
-          router.replace("/");
-          router.refresh();
+          signInAgain();
           return;
         }
         const result = await response.json();
@@ -169,7 +181,7 @@ export function Dashboard({ name }: { name: string }) {
           );
       }
     },
-    [range, router, scope, go],
+    [range, scope, go, signInAgain],
   );
 
   useEffect(() => {
@@ -256,6 +268,55 @@ export function Dashboard({ name }: { name: string }) {
   const primary =
     directory.primary ??
     (snapshot?.scope === null ? (snapshot.data.host?.id ?? null) : null);
+  const requestedIncident = view === "alerts" ? route.incident : undefined;
+  const incidentHost =
+    requestedIncident === undefined
+      ? undefined
+      : (route.host ?? primary ?? undefined);
+  useEffect(() => {
+    const targetId = requestedIncident;
+    const targetHost = incidentHost;
+    if (targetId === undefined || !targetHost) {
+      queueMicrotask(() => setIncidentDetail(null));
+      return;
+    }
+    const controller = new AbortController();
+    async function load() {
+      try {
+        const response = await fetch(
+          `/api/incidents/${targetId}?host=${encodeURIComponent(targetHost!)}`,
+          { signal: controller.signal },
+        );
+        if (response.status === 401) {
+          signInAgain();
+          return;
+        }
+        const result = (await response.json().catch(() => null)) as {
+          incident?: Alert;
+        } | null;
+        if (controller.signal.aborted) return;
+        if (response.status === 404)
+          setIncidentDetail({
+            host: targetHost!,
+            id: targetId!,
+            data: null,
+            missing: true,
+          });
+        else if (response.ok && result?.incident)
+          setIncidentDetail({
+            host: targetHost!,
+            id: targetId!,
+            data: result.incident,
+            missing: false,
+          });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError")
+          return;
+      }
+    }
+    void load();
+    return () => controller.abort();
+  }, [requestedIncident, incidentHost, signInAgain]);
   const sameHost = (a: string | null, b: string | null) =>
     a === b || (a ?? primary) === (b ?? primary);
   /** Never render one host's data while another host is selected. */
@@ -634,7 +695,24 @@ export function Dashboard({ name }: { name: string }) {
               {view === "settings" && data && (
                 <Settings value={data.settings} refresh={refresh} />
               )}
-              {view === "alerts" && data && <AlertsView data={data} />}
+              {view === "alerts" && data && (
+                <AlertsView
+                  data={data}
+                  requested={requestedIncident}
+                  incident={
+                    incidentDetail &&
+                    incidentDetail.id === requestedIncident
+                      ? incidentDetail.data
+                      : null
+                  }
+                  incidentHost={incidentDetail?.host ?? incidentHost}
+                  incidentMissing={Boolean(
+                    incidentDetail &&
+                      incidentDetail.id === requestedIncident &&
+                      incidentDetail.missing,
+                  )}
+                />
+              )}
               <footer className="page-footer">
                 <span>
                   hub<span className="accent">.</span>

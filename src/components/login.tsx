@@ -5,7 +5,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 
-export function Login({ setup }: { setup: boolean }) {
+export function Login({
+  setup,
+  next = "/",
+}: {
+  setup: boolean;
+  next?: string;
+}) {
   const router = useRouter();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -38,7 +44,7 @@ export function Login({ setup }: { setup: boolean }) {
       });
       if (result.error)
         throw new Error(result.error.message ?? "No se pudo iniciar sesión");
-      router.replace("/");
+      router.replace(next);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo conectar");
@@ -52,7 +58,7 @@ export function Login({ setup }: { setup: boolean }) {
       const result = await authClient.signIn.passkey();
       if (result.error)
         throw new Error(result.error.message ?? "No se pudo usar la passkey");
-      router.replace("/");
+      router.replace(next);
       router.refresh();
     } catch (err) {
       setError(

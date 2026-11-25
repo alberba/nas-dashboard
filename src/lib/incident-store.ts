@@ -1,7 +1,19 @@
 import { createHash } from "node:crypto";
 import { and, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { db } from "./db";
-import { incidentEvents, incidents, notificationOutbox } from "./schema";
+import {
+  incidentEvents,
+  incidents,
+  notificationOutbox,
+  type NotificationOutcome,
+} from "./schema";
+import type {
+  Alert,
+  PublicDelivery,
+  PublicDeliveryChannel,
+  PublicDeliveryReason,
+  PublicDeliveryState,
+} from "./types";
 
 /** How the caller wants the first notice of a new episode delivered. */
 export type IncidentDeliveryChannel = "telegram" | "push" | "digest" | "silent";
@@ -405,6 +417,135 @@ export async function recordIncidentObservation(
       ),
     });
     return { action: "opened", incidentId: created.id, seq: 1, delivery: "none" };
+  });
+}
+
+const deliveryChannels = new Set<PublicDeliveryChannel>([
+  "telegram",
+  "push",
+  "digest",
+  "silent",
+]);
+
+/**
+ * The only reasons the hub publishes. Provider messages, endpoints and raw
+ * errors are mapped into these values instead of being forwarded.
+ */
+const finiteReasons: Record<string, PublicDeliveryReason> = {
+  legacy_open: "legacy_open",
+  digest_pending: "digest_pending",
+  policy_silent: "policy_silent",
+  telegram_disabled: "telegram_disabled",
+  push_disabled: "telegram_disabled",
+  resolved_before_send: "policy_silent",
+  owner_required: "policy_silent",
+  no_subscriptions: "policy_silent",
+  superseded_by_later_seq: "policy_silent",
+};
+
+function publicChannel(value: string | null): PublicDeliveryChannel | null {
+  return value && deliveryChannels.has(value as PublicDeliveryChannel)
+    ? (value as PublicDeliveryChannel)
+    : null;
+}
+
+function publicState(
+  state: string,
+  result: NotificationOutcome | null,
+): PublicDeliveryState {
+  if (result?.state) return result.state;
+  if (state === "claimed" || state === "pending") return "pending";
+  if (state === "sent" || state === "failed") return state;
+  if (state === "suppressed" || state === "uncertain") return state;
+  return "none";
+}
+
+function publicReason(
+  state: PublicDeliveryState,
+  reason: string | null,
+): PublicDeliveryReason | null {
+  if (state === "pending" || state === "sent" || state === "none")
+    return null;
+  if (state === "uncertain") return "uncertain";
+  if (state === "failed") return "permanent_rejection";
+  return finiteReasons[reason ?? ""] ?? "policy_silent";
+}
+
+type OutboxJob = typeof notificationOutbox.$inferSelect;
+
+function deliveryOf(job: OutboxJob, result: NotificationOutcome | null) {
+  const state = publicState(job.status, result);
+  return {
+    channel: publicChannel(job.channel),
+    state,
+    reason: publicReason(state, result?.reason ?? null),
+  } satisfies PublicDelivery;
+}
+
+const emptyDelivery: PublicDelivery = {
+  channel: null,
+  state: "none",
+  reason: null,
+};
+
+/**
+ * Shared public projection for the overview list and the point lookup. It
+ * keeps the initial result, the push fallback and the last edit separate and
+ * never exposes claim tokens, Telegram destinations or provider bodies.
+ */
+export async function projectIncidents(
+  rows: (typeof incidents.$inferSelect)[],
+): Promise<Alert[]> {
+  if (!rows.length) return [];
+  const jobs = await db
+    .select()
+    .from(notificationOutbox)
+    .where(
+      inArray(
+        notificationOutbox.incidentId,
+        rows.map((row) => row.id),
+      ),
+    );
+  const byIncident = new Map<number, OutboxJob[]>();
+  for (const job of jobs) {
+    if (job.incidentId === null) continue;
+    const group = byIncident.get(job.incidentId);
+    if (group) group.push(job);
+    else byIncident.set(job.incidentId, [job]);
+  }
+
+  return rows.map((row) => {
+    const group = byIncident.get(row.id) ?? [];
+    const opening = group.find((job) => job.kind === "incident-open");
+    const edits = group
+      .filter((job) => job.kind === "incident-edit")
+      .sort((a, b) => b.revision - a.revision || b.id - a.id);
+    const latestEdit = edits[0];
+    const fallback = opening?.fallbackResult;
+    return {
+      id: row.id,
+      hostId: row.hostId,
+      key: row.key,
+      title: row.title,
+      detail: row.detail,
+      severity: row.severity,
+      at: row.at.toISOString(),
+      resolvedAt: row.resolvedAt ? row.resolvedAt.toISOString() : null,
+      seq: row.seq,
+      delivery: opening
+        ? deliveryOf(opening, opening.result ?? null)
+        : emptyDelivery,
+      fallback: fallback
+        ? {
+            channel: "push" as const,
+            state: fallback.state,
+            reason: publicReason(fallback.state, fallback.reason),
+          }
+        : null,
+      lastUpdate: latestEdit
+        ? deliveryOf(latestEdit, latestEdit.editResult ?? null)
+        : null,
+    } satisfies Alert;
   });
 }
 

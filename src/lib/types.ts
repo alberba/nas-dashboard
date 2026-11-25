@@ -156,6 +156,31 @@ export type TrashEntry = {
   deletedAt: number;
   expiresAt: number;
 };
+/**
+ * Delivery information that the hub is allowed to publish. The channel is the
+ * public route (never an endpoint), and the reason belongs to a finite set so
+ * provider bodies, tokens and transport destinations can never leak.
+ */
+export type PublicDeliveryChannel = "telegram" | "push" | "digest" | "silent";
+export type PublicDeliveryState =
+  | "pending"
+  | "sent"
+  | "failed"
+  | "suppressed"
+  | "uncertain"
+  | "none";
+export type PublicDeliveryReason =
+  | "legacy_open"
+  | "digest_pending"
+  | "policy_silent"
+  | "telegram_disabled"
+  | "permanent_rejection"
+  | "uncertain";
+export type PublicDelivery = {
+  channel: PublicDeliveryChannel | null;
+  state: PublicDeliveryState;
+  reason: PublicDeliveryReason | null;
+};
 export type Alert = {
   id: number;
   hostId: string;
@@ -165,6 +190,14 @@ export type Alert = {
   severity: string;
   at: string;
   resolvedAt: string | null;
+  /** Monotonic episode revision, used by the local push refresh (D-05). */
+  seq: number;
+  /** Initial notice result. */
+  delivery: PublicDelivery;
+  /** Push fallback result, when the critical fallback was attempted. */
+  fallback: PublicDelivery | null;
+  /** Latest edit result for the confirmed Telegram message, if any. */
+  lastUpdate: PublicDelivery | null;
 };
 export type Operation = {
   id: string;

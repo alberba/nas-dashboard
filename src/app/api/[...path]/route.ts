@@ -41,6 +41,10 @@ import { saveDeploymentSettings } from "@/lib/deployment-settings";
 import { hostStatuses } from "@/lib/host-status";
 import { maintenanceForHost } from "@/lib/maintenance";
 import { runHostCommand } from "@/lib/host-commands";
+import {
+  projectIncidents,
+  recordIncidentObservation,
+} from "@/lib/incident-store";
 import { notify } from "@/lib/push";
 import {
   fetchRenovatePullRequests,
@@ -217,6 +221,44 @@ async function handle(
       );
       return json(await eventsForHost(host));
     }
+    const incidentRoute = /^incidents\/([^/]+)$/.exec(route);
+    if (incidentRoute && !mutation) {
+      // A point lookup needs both an explicit configured host and a safe id;
+      // a missing pair is not enough to fall back to another host's episode.
+      const hostParam = request.nextUrl.searchParams.get("host");
+      if (!hostParam) return json({ error: "No encontrado" }, 404);
+      const id = z
+        .string()
+        .regex(/^[1-9]\d{0,9}$/)
+        .safeParse(incidentRoute[1]);
+      if (!id.success) return json({ error: "No encontrado" }, 404);
+      const incidentId = Number(id.data);
+      if (!Number.isSafeInteger(incidentId))
+        return json({ error: "No encontrado" }, 404);
+      const hosts = getHosts();
+      const host = resolveHost(hosts, hostParam);
+      const [row] = await db
+        .select()
+        .from(alerts)
+        .where(
+          and(eq(alerts.id, incidentId), eq(alerts.hostId, host.id)),
+        )
+        .limit(1);
+      if (!row) return json({ error: "No encontrado" }, 404);
+      const projected = await projectIncidents([row]);
+      const [open] = await db
+        .select({ value: count() })
+        .from(alerts)
+        .where(
+          and(eq(alerts.hostId, host.id), isNull(alerts.resolvedAt)),
+        );
+      return json({
+        host: publicHost(host),
+        incident: projected[0] ?? null,
+        alerts: projected,
+        openAlerts: open.value,
+      });
+    }
     if (route === "deployments/settings" && request.method === "POST") {
       return await saveDeploymentSettings({
         request,
@@ -274,12 +316,14 @@ async function handle(
         .where(eq(samples.hostId, host.id))
         .orderBy(desc(samples.at))
         .limit(1);
-      const recentAlerts = await db
-        .select()
-        .from(alerts)
-        .where(eq(alerts.hostId, host.id))
-        .orderBy(desc(alerts.at))
-        .limit(100);
+      const recentAlerts = await projectIncidents(
+        await db
+          .select()
+          .from(alerts)
+          .where(eq(alerts.hostId, host.id))
+          .orderBy(desc(alerts.at))
+          .limit(100),
+      );
       const [openAlerts] = await db
         .select({ value: count() })
         .from(alerts)
@@ -513,16 +557,20 @@ async function handle(
             if (body.action !== "stop") settings.expectedContainers.push(name);
             await saveSettings(host.id, settings);
             if (body.action === "stop")
-              await db
-                .update(alerts)
-                .set({ resolvedAt: new Date() })
-                .where(
-                  and(
-                    eq(alerts.hostId, host.id),
-                    eq(alerts.key, "container:" + name),
-                    sql`${alerts.resolvedAt} IS NULL`,
-                  ),
+              // The store owns the closure transaction: seq, timeline event and
+              // outbox stay coherent for this host and key only.
+              await recordIncidentObservation({
+                hostId: host.id,
+                key: "container:" + name,
+                failing: false,
+                now: Date.now(),
+                closedBy: "lifecycle",
+              }).catch((error) => {
+                console.error(
+                  "No se pudo cerrar la incidencia del contenedor",
+                  error instanceof Error ? error.name : "unknown",
                 );
+              });
           }
         }
         return json({ ok: true, status, result });
