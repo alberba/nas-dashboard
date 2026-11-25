@@ -882,7 +882,7 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
 
     nas.metrics = at(0);
     await collectHost(host, start);
-    let current = await state();
+    const current = await state();
     expect(current.incidents).toHaveLength(0);
     let watch = await watchState();
     expect(watch.entries.gone).toMatchObject({

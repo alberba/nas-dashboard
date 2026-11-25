@@ -84,18 +84,3 @@ export async function mutateSettings(
     return next;
   });
 }
-
-/**
- * Last-resort writer kept for callers that already own a complete document.
- * Production writers must use `mutateSettings` so a concurrent change is not
- * overwritten with an old copy.
- */
-export async function saveSettings(hostId: string, value: Settings) {
-  await db
-    .insert(configuration)
-    .values({ hostId, id: "settings", value })
-    .onConflictDoUpdate({
-      target: [configuration.hostId, configuration.id],
-      set: { value },
-    });
-}

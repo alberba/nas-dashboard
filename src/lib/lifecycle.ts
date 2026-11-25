@@ -6,10 +6,12 @@ import {
   resolveHost,
   type HostConfig,
 } from "./hosts";
-import { recordIncidentObservation } from "./incident-store";
+import { recordIncidentObservationIn } from "./incident-store";
 import { nasForHost, NasRejected } from "./nas";
 import { operations, samples } from "./schema";
-import { getSettings, saveSettings } from "./settings";
+import { mutateSettings } from "./settings";
+import { identityOf, watchOf } from "./container-watch";
+import type { Container, ContainerIdentity } from "./types";
 import { guardSensitiveAction } from "./verification-api";
 import {
   verificationStore,
@@ -55,26 +57,80 @@ function response(operation: typeof operations.$inferSelect, result?: RemovalRes
   });
 }
 
+export type ContainerOperationAction =
+  | "start"
+  | "restart"
+  | "stop"
+  | "remove-container";
+
 /**
- * Runs only after the agent confirmed the removal on this host. The episode
- * closure (seq, timeline, pending-outbox cancellation or edit) shares the
- * store transaction used by the collector; the other host is never touched.
+ * Shared idempotent close-out of a confirmed container operation. The row
+ * lock, the operation result, the watching intention and the episode closure
+ * commit in one transaction, so the collector and the API can never apply the
+ * same operation twice or leave one half behind. A repeated confirmation
+ * returns without touching the result or the history.
  */
-async function forgetExpectedContainer(hostId: string, name: string) {
-  const settings = await getSettings(hostId);
-  if (settings.expectedContainers.includes(name)) {
-    settings.expectedContainers = settings.expectedContainers.filter(
-      (container) => container !== name,
-    );
-    await saveSettings(hostId, settings);
-  }
-  await recordIncidentObservation({
-    hostId,
-    key: "container:" + name,
-    failing: false,
-    now: Date.now(),
-    closedBy: "lifecycle",
+export async function finalizeContainerOperation(input: {
+  hostId: string;
+  hostName: string;
+  operationId: string;
+  action: ContainerOperationAction;
+  name: string;
+  containerId?: string | null;
+  container?: Container | null;
+  identity?: ContainerIdentity | null;
+  detail: string;
+  now?: number;
+}): Promise<{
+  applied: boolean;
+  operation?: typeof operations.$inferSelect;
+}> {
+  const at = new Date(input.now ?? Date.now());
+  let applied = false;
+  let operation: typeof operations.$inferSelect | undefined;
+  await mutateSettings(input.hostId, async (current, tx) => {
+    const [locked] = await tx
+      .select()
+      .from(operations)
+      .where(eq(operations.id, input.operationId))
+      .for("update");
+    operation = locked;
+    if (!locked || locked.hostId !== input.hostId) return current;
+    if (locked.status === "success") return current;
+    const [updated] = await tx
+      .update(operations)
+      .set({ status: "success", detail: input.detail })
+      .where(eq(operations.id, input.operationId))
+      .returning();
+    operation = updated;
+    applied = true;
+    const watch = watchOf(current);
+    const expected = [...current.expectedContainers];
+    const identity =
+      input.identity ?? (input.container ? identityOf(input.container) : null);
+    if (input.action === "start" || input.action === "restart") {
+      if (!expected.includes(input.name)) expected.push(input.name);
+      delete watch.entries[input.name];
+      if (identity) watch.identities[input.name] = identity;
+    } else {
+      const index = expected.indexOf(input.name);
+      if (index >= 0) expected.splice(index, 1);
+      delete watch.entries[input.name];
+      delete watch.identities[input.name];
+      // Only the selected host and key are touched; the episode closure keeps
+      // its phase 2 transition, delivery result and outbox.
+      await recordIncidentObservationIn(tx, {
+        hostId: input.hostId,
+        key: "container:" + input.name,
+        failing: false,
+        now: at.getTime(),
+        closedBy: "lifecycle",
+      });
+    }
+    watch.revision += 1;
+    return { ...current, expectedContainers: expected, watch };
   });
+  return { applied, operation };
 }
 
 /**
@@ -170,12 +226,21 @@ export async function removeContainer({
     const detail = result.recreateOnCompose
       ? "Contenedor eliminado sin volúmenes. El proyecto Compose lo recreará al levantar sus servicios."
       : "Contenedor eliminado sin volúmenes.";
-    const [operation] = await db
-      .update(operations)
-      .set({ status: "success", detail })
-      .where(eq(operations.id, operationId))
-      .returning();
-    await forgetExpectedContainer(host.id, input.confirmation).catch(() => {});
+    const finalized = await finalizeContainerOperation({
+      hostId: host.id,
+      hostName: host.name,
+      operationId,
+      action: "remove-container",
+      name: input.confirmation,
+      containerId: input.id,
+      detail,
+    });
+    const [operation] = finalized.operation
+      ? [finalized.operation]
+      : await db
+          .select()
+          .from(operations)
+          .where(eq(operations.id, operationId));
     return response(operation, result);
   } catch (error) {
     if (error instanceof NasRejected && error.status < 500) {

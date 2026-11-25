@@ -13,7 +13,7 @@ import {
   subscriptions,
   user,
 } from "@/lib/schema";
-import { getSettings, saveSettings } from "@/lib/settings";
+import { getSettings, mutateSettings } from "@/lib/settings";
 import { pendingWatch } from "@/lib/container-watch";
 import { actionSchema, settingsSchema } from "@/lib/validation";
 import {
@@ -25,7 +25,10 @@ import {
   handlePasswordVerification,
   handleVerificationStatus,
 } from "@/lib/verification-api";
-import { removeContainer } from "@/lib/lifecycle";
+import {
+  finalizeContainerOperation,
+  removeContainer,
+} from "@/lib/lifecycle";
 import { verificationStore } from "@/lib/verification";
 import { nasForHost, NasRejected, CONTAINER_UPDATE_TIMEOUT_MS } from "@/lib/nas";
 import {
@@ -43,10 +46,7 @@ import { saveDeploymentSettings } from "@/lib/deployment-settings";
 import { hostStatuses } from "@/lib/host-status";
 import { maintenanceForHost } from "@/lib/maintenance";
 import { runHostCommand } from "@/lib/host-commands";
-import {
-  projectIncidents,
-  recordIncidentObservation,
-} from "@/lib/incident-store";
+import { projectIncidents } from "@/lib/incident-store";
 import {
   fetchRenovatePullRequests,
   githubConfig,
@@ -56,7 +56,7 @@ import {
 } from "@/lib/github";
 import { deployProgressForHost } from "@/lib/deploy-progress";
 import { mergeRenovatePullRequest } from "@/lib/renovate-merge";
-import type { Metrics, RenovateContainer } from "@/lib/types";
+import type { Metrics, RenovateContainer, Settings } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 const json = (value: unknown, status = 200) =>
@@ -71,6 +71,12 @@ const ranges = {
   "7d": [604800, 900],
   "30d": [2592000, 3600],
 } as const;
+
+/** Public settings never expose the internal inventory watch metadata. */
+function publicSettings(settings: Settings) {
+  const { watch: _watch, ...visible } = settings;
+  return visible;
+}
 
 function requestHost(value: unknown): string | null {
   if (value && typeof value === "object" && "host" in value) {
@@ -385,7 +391,7 @@ async function handle(
         watchPending: pendingWatch(settings),
         operations: recentOperations,
         history: history.rows,
-        settings,
+        settings: publicSettings(settings),
       });
     }
     if (route === "container-history" && !mutation) {
@@ -535,50 +541,62 @@ async function handle(
             ? CONTAINER_UPDATE_TIMEOUT_MS
             : undefined,
         );
-        const status = body.action === "reboot" ? "pending" : "success";
+        if (body.action === "reboot") {
+          await db
+            .update(operations)
+            .set({
+              status: "pending",
+              detail:
+                "Reinicio solicitado; esperando que el host vuelva a responder.",
+            })
+            .where(eq(operations.id, operationId));
+          return json({ ok: true, status: "pending", result });
+        }
+        if (
+          (body.action === "start" ||
+            body.action === "stop" ||
+            body.action === "restart") &&
+          "id" in body
+        ) {
+          const metrics = latest[0].data as Metrics;
+          const container = metrics.containers.find(
+            (c) => c.id === body.id,
+          );
+          if (container) {
+            // The shared close-out locks the operation and the settings row,
+            // applies the watching intention and closes the episode once.
+            await finalizeContainerOperation({
+              hostId: host.id,
+              hostName: host.name,
+              operationId,
+              action: body.action,
+              name: container.name,
+              containerId: body.id,
+              container,
+              detail: "Operación completada y comprobada.",
+            });
+            return json({ ok: true, status: "success", result });
+          }
+          await db
+            .update(operations)
+            .set({
+              status: "success",
+              detail: "Operación completada y comprobada.",
+            })
+            .where(eq(operations.id, operationId));
+          return json({ ok: true, status: "success", result });
+        }
         await db
           .update(operations)
           .set({
-            status,
+            status: "success",
             detail:
-              status === "pending"
-                ? "Reinicio solicitado; esperando que el host vuelva a responder."
-                : body.action === "update-container"
-                  ? "Contenedor actualizado: imagen descargada y servicio recreado."
-                  : "Operación completada y comprobada.",
+              body.action === "update-container"
+                ? "Contenedor actualizado: imagen descargada y servicio recreado."
+                : "Operación completada y comprobada.",
           })
           .where(eq(operations.id, operationId));
-        if (
-          ["start", "stop", "restart"].includes(body.action) &&
-          "id" in body
-        ) {
-          const settings = await getSettings(host.id);
-          const metrics = latest[0].data as Metrics;
-          const name = metrics.containers.find((c) => c.id === body.id)?.name;
-          if (name) {
-            settings.expectedContainers = settings.expectedContainers.filter(
-              (n) => n !== name,
-            );
-            if (body.action !== "stop") settings.expectedContainers.push(name);
-            await saveSettings(host.id, settings);
-            if (body.action === "stop")
-              // The store owns the closure transaction: seq, timeline event and
-              // outbox stay coherent for this host and key only.
-              await recordIncidentObservation({
-                hostId: host.id,
-                key: "container:" + name,
-                failing: false,
-                now: Date.now(),
-                closedBy: "lifecycle",
-              }).catch((error) => {
-                console.error(
-                  "No se pudo cerrar la incidencia del contenedor",
-                  error instanceof Error ? error.name : "unknown",
-                );
-              });
-          }
-        }
-        return json({ ok: true, status, result });
+        return json({ ok: true, status: "success", result });
       } catch (error) {
         if (error instanceof NasRejected && error.status < 500) {
           await db
@@ -655,23 +673,30 @@ async function handle(
       );
       return json({
         host: publicHost(host),
-        settings: await getSettings(host.id),
+        settings: publicSettings(await getSettings(host.id)),
       });
     }
     if (route === "settings" && mutation) {
       const raw = await request.json();
-      const input = settingsSchema.parse(raw);
       const host = resolveHost(
         getHosts(),
         request.nextUrl.searchParams.get("host") ?? requestHost(raw),
       );
-      await saveSettings(host.id, {
-        ...(await getSettings(host.id)),
-        ...input,
-      });
+      // `host` may travel in the body, but the watch metadata never does:
+      // the schema is strict and only thresholds reach the settings row.
+      const input = settingsSchema.parse(
+        raw && typeof raw === "object"
+          ? Object.fromEntries(
+              Object.entries(raw as Record<string, unknown>).filter(
+                ([key]) => key !== "host",
+              ),
+            )
+          : raw,
+      );
+      await mutateSettings(host.id, (current) => ({ ...current, ...input }));
       return json({
         host: publicHost(host),
-        settings: await getSettings(host.id),
+        settings: publicSettings(await getSettings(host.id)),
       });
     }
     if (route === "push" && !mutation)

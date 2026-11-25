@@ -23,6 +23,10 @@ import {
   pushWarningsEnabled,
 } from "./notification-policy";
 import {
+  finalizeContainerOperation,
+  type ContainerOperationAction,
+} from "./lifecycle";
+import {
   deploymentAlertSignals,
   maintenanceAlertSignals,
 } from "./maintenance-alerts";
@@ -482,38 +486,64 @@ export async function collectHost(host: HostConfig, now = Date.now()) {
     .where(
       and(eq(operations.hostId, host.id), eq(operations.status, "pending")),
     );
+  const marker = inventoryMarker(metrics);
+  const watch = watchOf(settings);
   for (const operation of pending) {
-    if (
-      operation.action === "reboot" &&
-      operation.bootAt &&
-      metrics.timestamp * 1000 - metrics.uptime * 1000 >
-        operation.bootAt.getTime() + 5000
-    ) {
-      await db
-        .update(operations)
-        .set({
-          status: "success",
-          detail: "El host ha vuelto a responder después del reinicio.",
-        })
-        .where(eq(operations.id, operation.id));
-    } else if (["start", "stop", "restart"].includes(operation.action)) {
-      const container = metrics.containers.find(
-        (item) => item.id === operation.target,
-      );
-      const expected =
-        operation.action === "stop"
-          ? container?.state !== "running"
-          : container?.state === "running";
-      if (container && expected && operation.action !== "restart") {
+    if (operation.action === "reboot") {
+      if (
+        operation.bootAt &&
+        metrics.timestamp * 1000 - metrics.uptime * 1000 >
+          operation.bootAt.getTime() + 5000
+      )
         await db
           .update(operations)
           .set({
             status: "success",
-            detail: "Estado comprobado tras recuperar la conexión.",
+            detail: "El host ha vuelto a responder después del reinicio.",
           })
           .where(eq(operations.id, operation.id));
-      }
+      continue;
     }
+    if (
+      !["start", "stop", "restart", "remove-container"].includes(
+        operation.action,
+      )
+    )
+      continue;
+    // Only a complete Docker list observed after the operation was recorded
+    // can confirm it: a cached list from before is not evidence.
+    const fresh = marker !== null && marker * 1000 > operation.at.getTime();
+    if (!fresh) continue;
+    const container = metrics.containers.find(
+      (item) => item.id === operation.target,
+    );
+    const confirmed =
+      operation.action === "remove-container"
+        ? !container
+        : operation.action === "stop"
+          ? Boolean(container && container.state !== "running")
+          : container?.state === "running";
+    if (!confirmed) continue;
+    const name =
+      container?.name ??
+      Object.entries(watch.identities).find(
+        ([, identity]) => identity.containerId === operation.target,
+      )?.[0];
+    if (!name) continue;
+    await finalizeContainerOperation({
+      hostId: host.id,
+      hostName: host.name,
+      operationId: operation.id,
+      action: operation.action as ContainerOperationAction,
+      name,
+      containerId: operation.target,
+      container: container ?? null,
+      detail:
+        operation.action === "remove-container"
+          ? "El inventario posterior confirma que el contenedor ya no existe."
+          : "Estado comprobado en el inventario posterior.",
+      now,
+    });
   }
 }
 

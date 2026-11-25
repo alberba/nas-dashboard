@@ -32,13 +32,16 @@ export const actionSchema = z.discriminatedUnion("action", [
     confirmation: z.literal("VACIAR PAPELERA"),
   }),
 ]);
-export const settingsSchema = z.object({
-  cpu: z.number().min(50).max(100),
-  memory: z.number().min(50).max(100),
-  disk: z.number().min(50).max(99),
-  temperature: z.number().min(40).max(110),
-  sustainedSeconds: z.number().int().min(30).max(1800),
-});
+/** Thresholds only: internal watch metadata is never accepted from the body. */
+export const settingsSchema = z
+  .object({
+    cpu: z.number().min(50).max(100),
+    memory: z.number().min(50).max(100),
+    disk: z.number().min(50).max(99),
+    temperature: z.number().min(40).max(110),
+    sustainedSeconds: z.number().int().min(30).max(1800),
+  })
+  .strict();
 export function sampleInterval(hasVisibleTab: boolean) {
   return hasVisibleTab ? 5000 : 30000;
 }

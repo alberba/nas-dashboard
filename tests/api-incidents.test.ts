@@ -185,6 +185,54 @@ describe.skipIf(!baseUrl)("incidents API", () => {
     });
   }
 
+  async function setSettingsValue(
+    hostId: string,
+    overrides: Record<string, unknown>,
+  ) {
+    const [row] = await db
+      .select()
+      .from(tables.configuration)
+      .where(eq(tables.configuration.hostId, hostId));
+    await db
+      .update(tables.configuration)
+      .set({ value: { ...row.value, ...overrides } })
+      .where(eq(tables.configuration.hostId, hostId));
+  }
+
+  function pendingOperation(
+    action: string,
+    target: string,
+    at: Date,
+    hostId = "nas-home",
+  ) {
+    return db
+      .insert(tables.operations)
+      .values({
+        id: crypto.randomUUID(),
+        hostId,
+        userId: "test-user",
+        action,
+        target,
+        status: "pending",
+        at,
+      })
+      .returning();
+  }
+
+  function freshMetrics(
+    start: number,
+    containers: unknown[],
+    marker = start,
+  ) {
+    const base = metrics("nas-home");
+    return {
+      ...base,
+      timestamp: start / 1000,
+      containersObservedAt: marker / 1000,
+      containers,
+    };
+  }
+
   async function openIncident(hostId: string, key = containerKey) {
     const opened = await store.recordIncidentObservation({
       hostId,
@@ -892,6 +940,408 @@ describe.skipIf(!baseUrl)("incidents API", () => {
         (notice) => notice.incidentId === incidentId,
       ),
     ).toHaveLength(1);
+  });
+
+  it("rejects internal watch metadata and keeps the watch while saving thresholds", async () => {
+    const watch = {
+      revision: 4,
+      workerId: "test-worker",
+      lastInventoryAt: 100,
+      chainAt: 100,
+      entries: {},
+      identities: {},
+    };
+    await setSettingsValue("nas-home", {
+      expectedContainers: ["sonarr"],
+      watch,
+    });
+    const rejected = await api("POST", "/api/settings?host=nas-home", {
+      body: {
+        cpu: 70,
+        memory: 75,
+        disk: 80,
+        temperature: 90,
+        sustainedSeconds: 60,
+        watch: { revision: 999 },
+      },
+      headers: { Origin: "http://localhost:3000" },
+    });
+    expect(rejected.status).toBe(400);
+
+    const accepted = await api("POST", "/api/settings?host=nas-home", {
+      body: {
+        cpu: 70,
+        memory: 75,
+        disk: 80,
+        temperature: 90,
+        sustainedSeconds: 60,
+      },
+      headers: { Origin: "http://localhost:3000" },
+    });
+    expect(accepted.status).toBe(200);
+    const body = await accepted.json();
+    expect(body.settings).toMatchObject({
+      cpu: 70,
+      memory: 75,
+      expectedContainers: ["sonarr"],
+    });
+    expect(body.settings.watch).toBeUndefined();
+    const [stored] = await db
+      .select()
+      .from(tables.configuration)
+      .where(eq(tables.configuration.hostId, "nas-home"));
+    expect(stored.value.watch).toMatchObject({ revision: 4 });
+    const [appsRow] = await db
+      .select()
+      .from(tables.configuration)
+      .where(eq(tables.configuration.hostId, "apps"));
+    expect(appsRow.value.cpu).toBe(90);
+  });
+
+  it("preserves a concurrent threshold edit and the watch reconciliation", async () => {
+    const start = Date.UTC(2026, 10, 26, 12);
+    const { currentWatchWorkerId } = await import("@/lib/container-watch");
+    await setSettingsValue("nas-home", {
+      expectedContainers: ["sonarr"],
+      watch: {
+        revision: 1,
+        workerId: currentWatchWorkerId(),
+        lastInventoryAt: (start - 30_000) / 1000,
+        chainAt: (start - 30_000) / 1000,
+        entries: {
+          sonarr: {
+            identity: {
+              containerId,
+              composeProject: "media-stack",
+              composeService: "sonarr",
+            },
+            absentSince: (start - 60_000) / 1000,
+            observedAt: (start - 30_000) / 1000,
+            accreditedMs: 0,
+          },
+        },
+        identities: {
+          sonarr: {
+            containerId,
+            composeProject: "media-stack",
+            composeService: "sonarr",
+          },
+        },
+      },
+    });
+    agent.metricsBody = freshMetrics(start, []);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+
+    const [saved] = await Promise.all([
+      api("POST", "/api/settings?host=nas-home", {
+        body: {
+          cpu: 71,
+          memory: 72,
+          disk: 73,
+          temperature: 74,
+          sustainedSeconds: 75,
+        },
+        headers: { Origin: "http://localhost:3000" },
+      }),
+      collectHost(host, start),
+    ]);
+    expect(saved.status).toBe(200);
+
+    const [row] = await db
+      .select()
+      .from(tables.configuration)
+      .where(eq(tables.configuration.hostId, "nas-home"));
+    expect(row.value.cpu).toBe(71);
+    expect(row.value.memory).toBe(72);
+    expect(row.value.expectedContainers).toEqual(["sonarr"]);
+    expect(row.value.watch!.entries.sonarr).toMatchObject({
+      accreditedMs: 30_000,
+    });
+  });
+
+  it("ignores a collector reading started before a confirmed stop", async () => {
+    const start = Date.UTC(2026, 10, 26, 13);
+    const { reconcileContainers, watchRevision } = await import(
+      "@/lib/container-watch"
+    );
+    const { getSettings } = await import("@/lib/settings");
+    const incidentId = await openIncident("nas-home");
+    const revision = watchRevision(await getSettings("nas-home"));
+
+    const response = await api("POST", "/api/action?host=nas-home", {
+      body: { action: "stop", id: containerId },
+      headers: {
+        Origin: "http://localhost:3000",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+    });
+    expect(response.status).toBe(200);
+
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    await reconcileContainers({
+      host,
+      metrics: freshMetrics(start, [metrics("nas-home").containers[0]]) as never,
+      now: start,
+      revision,
+    });
+
+    const settings = await getSettings("nas-home");
+    expect(settings.expectedContainers).toEqual([]);
+    const [incident] = await db
+      .select()
+      .from(tables.incidents)
+      .where(eq(tables.incidents.id, incidentId));
+    expect(incident).toMatchObject({
+      resolvedAt: expect.any(Date),
+      closedBy: "lifecycle",
+    });
+    expect(
+      (await db.select().from(tables.incidents)).filter(
+        (row) => row.key === "container:sonarr" && row.resolvedAt === null,
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("promotes a lost start response once from a later fresh inventory", async () => {
+    const start = Date.UTC(2026, 10, 26, 14);
+    const [operation] = await pendingOperation(
+      "start",
+      containerId,
+      new Date(start),
+    );
+    await setSettingsValue("nas-home", {
+      expectedContainers: [],
+      watch: undefined,
+    });
+    agent.metricsBody = freshMetrics(start + 30_000, [
+      metrics("nas-home").containers[0],
+    ]);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+
+    await collectHost(host, start + 30_000);
+
+    const [row] = await db
+      .select()
+      .from(tables.configuration)
+      .where(eq(tables.configuration.hostId, "nas-home"));
+    expect(row.value.expectedContainers).toEqual(["sonarr"]);
+    expect(row.value.watch!.identities.sonarr).toMatchObject({
+      containerId,
+      composeProject: "media-stack",
+      composeService: "sonarr",
+    });
+    const [updated] = await db
+      .select()
+      .from(tables.operations)
+      .where(eq(tables.operations.id, operation.id));
+    expect(updated).toMatchObject({
+      status: "success",
+      detail: "Estado comprobado en el inventario posterior.",
+    });
+  });
+
+  it("adds the confirmed identity on start and clears a pending window on restart", async () => {
+    const start = Date.UTC(2026, 10, 26, 17);
+    const { currentWatchWorkerId } = await import("@/lib/container-watch");
+    await setSettingsValue("nas-home", {
+      expectedContainers: [],
+      watch: undefined,
+    });
+    const started = await api("POST", "/api/action?host=nas-home", {
+      body: { action: "start", id: containerId },
+      headers: {
+        Origin: "http://localhost:3000",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+    });
+    expect(started.status).toBe(200);
+    let [row] = await db
+      .select()
+      .from(tables.configuration)
+      .where(eq(tables.configuration.hostId, "nas-home"));
+    expect(row.value.expectedContainers).toEqual(["sonarr"]);
+    expect(row.value.watch!.identities.sonarr).toMatchObject({
+      containerId,
+      composeProject: "media-stack",
+      composeService: "sonarr",
+    });
+
+    await setSettingsValue("nas-home", {
+      expectedContainers: ["sonarr"],
+      watch: {
+        revision: 2,
+        workerId: currentWatchWorkerId(),
+        lastInventoryAt: start / 1000 - 30,
+        chainAt: start / 1000 - 30,
+        entries: {
+          sonarr: {
+            identity: {
+              containerId,
+              composeProject: "media-stack",
+              composeService: "sonarr",
+            },
+            absentSince: start / 1000 - 60,
+            observedAt: start / 1000 - 30,
+            accreditedMs: 60_000,
+          },
+        },
+        identities: {
+          sonarr: {
+            containerId,
+            composeProject: "media-stack",
+            composeService: "sonarr",
+          },
+        },
+      },
+    });
+    const restarted = await api("POST", "/api/action?host=nas-home", {
+      body: { action: "restart", id: containerId },
+      headers: {
+        Origin: "http://localhost:3000",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+    });
+    expect(restarted.status).toBe(200);
+    [row] = await db
+      .select()
+      .from(tables.configuration)
+      .where(eq(tables.configuration.hostId, "nas-home"));
+    expect(row.value.expectedContainers).toEqual(["sonarr"]);
+    expect(row.value.watch!.entries.sonarr).toBeUndefined();
+    expect(row.value.watch!.revision).toBe(3);
+  });
+
+  it("waits for a post-operation list before confirming a lost stop and closes once", async () => {
+    const start = Date.UTC(2026, 10, 26, 15);
+    const incidentId = await openIncident("nas-home");
+    const [operation] = await pendingOperation(
+      "stop",
+      containerId,
+      new Date(start),
+    );
+    const stopped = {
+      ...metrics("nas-home").containers[0],
+      state: "exited",
+      status: "Exited (0)",
+      exitCode: 0,
+    };
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+
+    // A cached list from before the operation cannot confirm it.
+    agent.metricsBody = freshMetrics(start - 10_000, [stopped]);
+    await collectHost(host, start + 10_000);
+    let [row] = await db
+      .select()
+      .from(tables.configuration)
+      .where(eq(tables.configuration.hostId, "nas-home"));
+    expect(row.value.expectedContainers).toEqual(["sonarr"]);
+    let [incident] = await db
+      .select()
+      .from(tables.incidents)
+      .where(eq(tables.incidents.id, incidentId));
+    expect(incident.resolvedAt).toBeNull();
+    let [current] = await db
+      .select()
+      .from(tables.operations)
+      .where(eq(tables.operations.id, operation.id));
+    expect(current.status).toBe("pending");
+
+    agent.metricsBody = freshMetrics(start + 30_000, [stopped]);
+    await collectHost(host, start + 30_000);
+    [row] = await db
+      .select()
+      .from(tables.configuration)
+      .where(eq(tables.configuration.hostId, "nas-home"));
+    expect(row.value.expectedContainers).toEqual([]);
+    [incident] = await db
+      .select()
+      .from(tables.incidents)
+      .where(eq(tables.incidents.id, incidentId));
+    expect(incident).toMatchObject({
+      resolvedAt: expect.any(Date),
+      closedBy: "lifecycle",
+    });
+    const eventsAfter = (
+      await db.select().from(tables.incidentEvents)
+    ).filter((event) => event.incidentId === incidentId);
+    expect(
+      eventsAfter.filter((event) => event.kind === "closed"),
+    ).toHaveLength(1);
+
+    // Repeating the confirmation neither changes the result nor closes again.
+    agent.metricsBody = freshMetrics(start + 60_000, [stopped]);
+    await collectHost(host, start + 60_000);
+    const eventsRepeated = (
+      await db.select().from(tables.incidentEvents)
+    ).filter((event) => event.incidentId === incidentId);
+    expect(eventsRepeated).toHaveLength(eventsAfter.length);
+    [current] = await db
+      .select()
+      .from(tables.operations)
+      .where(eq(tables.operations.id, operation.id));
+    expect(current).toMatchObject({
+      status: "success",
+      detail: "Estado comprobado en el inventario posterior.",
+    });
+  });
+
+  it("keeps a removal unconfirmed until the inventory proves the absence", async () => {
+    const start = Date.UTC(2026, 10, 26, 16);
+    const incidentId = await openIncident("nas-home");
+    const [operation] = await pendingOperation(
+      "remove-container",
+      containerId,
+      new Date(start),
+    );
+    const stopped = {
+      ...metrics("nas-home").containers[0],
+      state: "exited",
+      status: "Exited (0)",
+      exitCode: 0,
+    };
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+
+    agent.metricsBody = freshMetrics(start + 10_000, [stopped]);
+    await collectHost(host, start + 10_000);
+    let [row] = await db
+      .select()
+      .from(tables.configuration)
+      .where(eq(tables.configuration.hostId, "nas-home"));
+    expect(row.value.expectedContainers).toEqual(["sonarr"]);
+    let [incident] = await db
+      .select()
+      .from(tables.incidents)
+      .where(eq(tables.incidents.id, incidentId));
+    expect(incident.resolvedAt).toBeNull();
+    let [current] = await db
+      .select()
+      .from(tables.operations)
+      .where(eq(tables.operations.id, operation.id));
+    expect(current.status).toBe("pending");
+
+    agent.metricsBody = freshMetrics(start + 30_000, []);
+    await collectHost(host, start + 30_000);
+    [row] = await db
+      .select()
+      .from(tables.configuration)
+      .where(eq(tables.configuration.hostId, "nas-home"));
+    expect(row.value.expectedContainers).toEqual([]);
+    [incident] = await db
+      .select()
+      .from(tables.incidents)
+      .where(eq(tables.incidents.id, incidentId));
+    expect(incident).toMatchObject({
+      resolvedAt: expect.any(Date),
+      closedBy: "lifecycle",
+    });
+    [current] = await db
+      .select()
+      .from(tables.operations)
+      .where(eq(tables.operations.id, operation.id));
+    expect(current).toMatchObject({
+      status: "success",
+      detail: "El inventario posterior confirma que el contenedor ya no existe.",
+    });
   });
 
   it("closes only the selected host's incident through the store after a confirmed stop", async () => {
