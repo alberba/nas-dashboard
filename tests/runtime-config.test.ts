@@ -1,10 +1,12 @@
 import { spawn } from "node:child_process";
+import { createECDH } from "node:crypto";
 import {
   mkdtempSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,6 +19,9 @@ import {
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const tsxBin = path.join(repoRoot, "node_modules", ".bin", "tsx");
 const preflightScript = path.join(repoRoot, "scripts", "check-runtime-config.ts");
+const workerScript = path.join(repoRoot, "src", "worker.ts");
+
+const telegramToken = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi";
 
 const CONFIG_KEYS = [
   "DATABASE_URL",
@@ -93,6 +98,24 @@ function dotenv(values: Record<string, string>): string {
     .join("\n")}\n`;
 }
 
+function without(
+  record: Record<string, string>,
+  key: string,
+): Record<string, string> {
+  const copy = { ...record };
+  delete copy[key];
+  return copy;
+}
+
+function vapidPair(): { publicKey: string; privateKey: string } {
+  const ecdh = createECDH("prime256v1");
+  ecdh.generateKeys();
+  return {
+    publicKey: ecdh.getPublicKey().toString("base64url"),
+    privateKey: ecdh.getPrivateKey().toString("base64url"),
+  };
+}
+
 function cleanEnv(
   overrides: Record<string, string> = {},
 ): NodeJS.ProcessEnv {
@@ -160,6 +183,31 @@ async function runPreflight(
   }
 }
 
+/**
+ * Opens a real TCP port that stands in for PostgreSQL. A worker that validates
+ * its configuration first never connects to it, which is the observable
+ * contract: the port would record a connection if `pool.connect` ran.
+ */
+async function withDatabaseProbe<T>(
+  run: (databaseUrl: string, connections: () => number) => Promise<T>,
+): Promise<T> {
+  let connections = 0;
+  const server = createServer((socket) => {
+    connections += 1;
+    socket.destroy();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address() as AddressInfo;
+  try {
+    return await run(
+      `postgresql://hub:top-secret-password@127.0.0.1:${address.port}/hub`,
+      () => connections,
+    );
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
 describe("readRuntimeConfig", () => {
   it("accepts the CI environment without Telegram or VAPID", () => {
     const config = readRuntimeConfig({ ...ciEnv });
@@ -170,6 +218,9 @@ describe("readRuntimeConfig", () => {
     expect(config.trustedOrigins).toEqual(["http://localhost:3000"]);
     expect(config.hosts).toHaveLength(1);
     expect(config.hosts[0]).toMatchObject({ id: "nas-home", role: "instance" });
+    expect(config.telegram).toBeNull();
+    expect(config.vapid).toBeNull();
+    expect(config.pushWarnings).toBe(false);
   });
 
   it("accepts a multi-host NAS_HOSTS list", () => {
@@ -354,6 +405,187 @@ describe("readRuntimeConfig", () => {
   });
 });
 
+describe("optional delivery channels", () => {
+  it("keeps Telegram disabled when the whole group is omitted", () => {
+    const config = readRuntimeConfig(
+      env({ TELEGRAM_BOT_TOKEN: undefined, TELEGRAM_CHAT_ID: undefined }),
+    );
+    expect(config.telegram).toBeNull();
+  });
+
+  it("accepts a complete Telegram group with a signed numeric chat", () => {
+    const config = readRuntimeConfig(
+      env({
+        TELEGRAM_BOT_TOKEN: telegramToken,
+        TELEGRAM_CHAT_ID: "-1001234567890",
+      }),
+    );
+    expect(config.telegram).toEqual({
+      botToken: telegramToken,
+      chatId: "-1001234567890",
+    });
+  });
+
+  it("rejects a partial Telegram group", () => {
+    expect(
+      issuesOf({
+        TELEGRAM_BOT_TOKEN: undefined,
+        TELEGRAM_CHAT_ID: "-1001234567890",
+      }),
+    ).toContainEqual({
+      variable: "TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID",
+      reason: "incomplete_pair",
+    });
+    expect(
+      issuesOf({
+        TELEGRAM_BOT_TOKEN: telegramToken,
+        TELEGRAM_CHAT_ID: undefined,
+      }),
+    ).toContainEqual({
+      variable: "TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID",
+      reason: "incomplete_pair",
+    });
+  });
+
+  it("rejects a non-numeric Telegram chat", () => {
+    expect(
+      issuesOf({
+        TELEGRAM_BOT_TOKEN: telegramToken,
+        TELEGRAM_CHAT_ID: "@channel",
+      }),
+    ).toContainEqual({ variable: "TELEGRAM_CHAT_ID", reason: "invalid" });
+  });
+
+  it("rejects a Telegram bot token without the provider shape", () => {
+    expect(
+      issuesOf({
+        TELEGRAM_BOT_TOKEN: "not-a-bot-token",
+        TELEGRAM_CHAT_ID: "-1001234567890",
+      }),
+    ).toContainEqual({ variable: "TELEGRAM_BOT_TOKEN", reason: "invalid" });
+  });
+
+  it("rejects an example Telegram bot token", () => {
+    expect(
+      issuesOf({
+        TELEGRAM_BOT_TOKEN:
+          "123456:replace-with-the-token-from-botfather-0000000000",
+        TELEGRAM_CHAT_ID: "-1001234567890",
+      }),
+    ).toContainEqual({ variable: "TELEGRAM_BOT_TOKEN", reason: "example" });
+  });
+
+  it("keeps VAPID disabled when both keys and push warnings are off", () => {
+    const config = readRuntimeConfig(
+      env({ VAPID_PUBLIC_KEY: undefined, VAPID_PRIVATE_KEY: undefined }),
+    );
+    expect(config.vapid).toBeNull();
+    expect(config.pushWarnings).toBe(false);
+  });
+
+  it("requires VAPID when PUSH_WARNINGS is enabled", () => {
+    expect(
+      issuesOf({
+        PUSH_WARNINGS: "true",
+        VAPID_PUBLIC_KEY: undefined,
+        VAPID_PRIVATE_KEY: undefined,
+      }),
+    ).toContainEqual({
+      variable: "VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY",
+      reason: "required_with_push_warnings",
+    });
+  });
+
+  it("accepts a coherent VAPID pair with PUSH_WARNINGS=true", () => {
+    const pair = vapidPair();
+    const config = readRuntimeConfig(
+      env({
+        PUSH_WARNINGS: "true",
+        VAPID_PUBLIC_KEY: pair.publicKey,
+        VAPID_PRIVATE_KEY: pair.privateKey,
+      }),
+    );
+    expect(config.pushWarnings).toBe(true);
+    expect(config.vapid).toEqual(pair);
+  });
+
+  it("rejects a partial VAPID pair", () => {
+    const pair = vapidPair();
+    expect(
+      issuesOf({
+        VAPID_PUBLIC_KEY: pair.publicKey,
+        VAPID_PRIVATE_KEY: undefined,
+      }),
+    ).toContainEqual({
+      variable: "VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY",
+      reason: "incomplete_pair",
+    });
+  });
+
+  it("rejects a mismatched VAPID pair", () => {
+    const first = vapidPair();
+    const second = vapidPair();
+    expect(
+      issuesOf({
+        VAPID_PUBLIC_KEY: first.publicKey,
+        VAPID_PRIVATE_KEY: second.privateKey,
+      }),
+    ).toContainEqual({
+      variable: "VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY",
+      reason: "incoherent_pair",
+    });
+  });
+
+  it("rejects a malformed VAPID public key", () => {
+    expect(
+      issuesOf({
+        VAPID_PUBLIC_KEY: "not-a-vapid-key",
+        VAPID_PRIVATE_KEY: vapidPair().privateKey,
+      }),
+    ).toContainEqual({ variable: "VAPID_PUBLIC_KEY", reason: "invalid" });
+  });
+
+  it("only accepts true and false for PUSH_WARNINGS", () => {
+    const pair = vapidPair();
+    expect(
+      readRuntimeConfig(
+        env({
+          PUSH_WARNINGS: "true",
+          VAPID_PUBLIC_KEY: pair.publicKey,
+          VAPID_PRIVATE_KEY: pair.privateKey,
+        }),
+      ).pushWarnings,
+    ).toBe(true);
+    expect(
+      readRuntimeConfig(env({ PUSH_WARNINGS: "false" })).pushWarnings,
+    ).toBe(false);
+    expect(
+      readRuntimeConfig(env({ PUSH_WARNINGS: undefined })).pushWarnings,
+    ).toBe(false);
+    for (const value of ["1", "0", "yes", "on", "enabled"]) {
+      expect(issuesOf({ PUSH_WARNINGS: value })).toContainEqual({
+        variable: "PUSH_WARNINGS",
+        reason: "invalid",
+      });
+    }
+  });
+
+  it("never prints channel credentials or keys", () => {
+    const pair = vapidPair();
+    const error = errorFor({
+      TELEGRAM_BOT_TOKEN: telegramToken,
+      TELEGRAM_CHAT_ID: "not-numeric-secret-chat",
+      VAPID_PUBLIC_KEY: pair.publicKey,
+      VAPID_PRIVATE_KEY: pair.privateKey,
+    });
+    expect(error.message).toContain("TELEGRAM_CHAT_ID");
+    expect(error.message).not.toContain(telegramToken);
+    expect(error.message).not.toContain("not-numeric-secret-chat");
+    expect(error.message).not.toContain(pair.publicKey);
+    expect(error.message).not.toContain(pair.privateKey);
+  });
+});
+
 describe("check-runtime-config preflight", () => {
   it("accepts a configuration supplied only by .env.local", async () => {
     const result = await runPreflight({ ".env.local": dotenv(fileEnv) });
@@ -442,6 +674,26 @@ describe("check-runtime-config preflight", () => {
     expect(output).not.toContain("top-secret-password");
   });
 
+  it("rejects a partial Telegram group", async () => {
+    const result = await runPreflight({
+      ".env.local": dotenv({ ...fileEnv, TELEGRAM_BOT_TOKEN: telegramToken }),
+    });
+    expect(result.code).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain(
+      "TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID",
+    );
+  });
+
+  it("rejects PUSH_WARNINGS=true without VAPID", async () => {
+    const result = await runPreflight({
+      ".env.local": dotenv({ ...fileEnv, PUSH_WARNINGS: "true" }),
+    });
+    expect(result.code).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain(
+      "VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY",
+    );
+  });
+
   it("fails pnpm start before Next starts when the environment is invalid", async () => {
     const result = await runProcess("pnpm", ["start"], {
       cwd: repoRoot,
@@ -481,5 +733,67 @@ describe("check-runtime-config preflight", () => {
     );
     expect(start.trimEnd().endsWith("next start")).toBe(true);
     expect(packageJson.scripts.build).toBe("next build");
+  });
+});
+
+describe("worker startup", () => {
+  it("stops before the database when required configuration is missing", async () => {
+    await withDatabaseProbe(async (databaseUrl, connections) => {
+      const result = await runProcess(tsxBin, [workerScript], {
+        cwd: repoRoot,
+        env: cleanEnv({
+          ...without(ciEnv, "SETUP_TOKEN"),
+          DATABASE_URL: databaseUrl,
+          BETTER_AUTH_SECRET: "worker-secret-that-must-not-leak-32-chars",
+        }),
+        timeoutMs: 20_000,
+      });
+      const output = `${result.stdout}\n${result.stderr}`;
+      expect(result.code).not.toBe(0);
+      expect(output).toContain("SETUP_TOKEN");
+      expect(output).not.toContain("top-secret-password");
+      expect(output).not.toContain("worker-secret-that-must-not-leak");
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(connections()).toBe(0);
+    });
+  });
+
+  it("stops before the database on a partial Telegram group", async () => {
+    await withDatabaseProbe(async (databaseUrl, connections) => {
+      const result = await runProcess(tsxBin, [workerScript], {
+        cwd: repoRoot,
+        env: cleanEnv({
+          ...ciEnv,
+          DATABASE_URL: databaseUrl,
+          TELEGRAM_BOT_TOKEN: telegramToken,
+        }),
+        timeoutMs: 20_000,
+      });
+      const output = `${result.stdout}\n${result.stderr}`;
+      expect(result.code).not.toBe(0);
+      expect(output).toContain("TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID");
+      expect(output).not.toContain(telegramToken);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(connections()).toBe(0);
+    });
+  });
+
+  it("stops before the database when PUSH_WARNINGS requires VAPID", async () => {
+    await withDatabaseProbe(async (databaseUrl, connections) => {
+      const result = await runProcess(tsxBin, [workerScript], {
+        cwd: repoRoot,
+        env: cleanEnv({
+          ...ciEnv,
+          DATABASE_URL: databaseUrl,
+          PUSH_WARNINGS: "true",
+        }),
+        timeoutMs: 20_000,
+      });
+      const output = `${result.stdout}\n${result.stderr}`;
+      expect(result.code).not.toBe(0);
+      expect(output).toContain("VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY");
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(connections()).toBe(0);
+    });
   });
 });

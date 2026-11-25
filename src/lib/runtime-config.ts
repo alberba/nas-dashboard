@@ -1,3 +1,4 @@
+import { createECDH } from "node:crypto";
 import { HostConfigError, parseHosts, type HostConfig } from "./hosts";
 
 /** Finite reasons a startup configuration can be rejected. */
@@ -6,7 +7,9 @@ export type RuntimeConfigIssueReason =
   | "example"
   | "invalid"
   | "insecure"
-  | "incomplete_pair";
+  | "incomplete_pair"
+  | "incoherent_pair"
+  | "required_with_push_warnings";
 
 export type RuntimeConfigIssue = {
   /** Environment variable or pair that carries the problem. */
@@ -30,6 +33,16 @@ export class RuntimeConfigError extends Error {
   }
 }
 
+export type TelegramConfig = {
+  botToken: string;
+  chatId: string;
+};
+
+export type VapidConfig = {
+  publicKey: string;
+  privateKey: string;
+};
+
 export type RuntimeConfig = {
   databaseUrl: string;
   betterAuthSecret: string;
@@ -37,6 +50,11 @@ export type RuntimeConfig = {
   setupToken: string;
   trustedOrigins: string[];
   hosts: HostConfig[];
+  /** The Telegram group is optional, but it is either fully present or absent. */
+  telegram: TelegramConfig | null;
+  /** VAPID is optional unless `PUSH_WARNINGS` is enabled. */
+  vapid: VapidConfig | null;
+  pushWarnings: boolean;
 };
 
 const EXAMPLE_MARKERS = [
@@ -265,10 +283,117 @@ function hosts(
 }
 
 /**
- * Reads and validates the startup configuration from an injectable
- * environment. `parseHosts` stays the single owner of the host list so the
- * legacy single-agent pair keeps working unchanged.
+ * Reads the optional Telegram group. Both values or neither: an operator who
+ * disables the channel omits the whole group instead of leaving a half
+ * configuration that would fail on the first send.
  */
+function telegram(
+  env: Record<string, string | undefined>,
+  issues: IssueList,
+): TelegramConfig | null {
+  const botToken = env.TELEGRAM_BOT_TOKEN?.trim();
+  const chatId = env.TELEGRAM_CHAT_ID?.trim();
+  if (!botToken && !chatId) return null;
+  if (!botToken || !chatId) {
+    issues.add("TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID", "incomplete_pair");
+    return null;
+  }
+  if (isExampleValue(botToken)) {
+    issues.add("TELEGRAM_BOT_TOKEN", "example");
+    return null;
+  }
+  // Bot API tokens are `<numeric bot id>:<provider secret>`.
+  if (!/^\d{5,12}:[A-Za-z0-9_-]{30,}$/.test(botToken)) {
+    issues.add("TELEGRAM_BOT_TOKEN", "invalid");
+    return null;
+  }
+  // Supergroups and channels use negative numeric identifiers.
+  if (!/^-?[1-9]\d{0,19}$/.test(chatId)) {
+    issues.add("TELEGRAM_CHAT_ID", "invalid");
+    return null;
+  }
+  return { botToken, chatId };
+}
+
+function pushWarningsEnabled(
+  env: Record<string, string | undefined>,
+  issues: IssueList,
+): boolean {
+  const raw = env.PUSH_WARNINGS?.trim();
+  if (!raw) return false;
+  const normalized = raw.toLowerCase();
+  if (normalized === "true") return true;
+  if (normalized === "false") return false;
+  issues.add("PUSH_WARNINGS", "invalid");
+  return false;
+}
+
+function decodeBase64Url(value: string): Buffer | undefined {
+  if (!/^[A-Za-z0-9_-]+={0,2}$/.test(value)) return undefined;
+  try {
+    return Buffer.from(value, "base64url");
+  } catch {
+    return undefined;
+  }
+}
+
+/** A VAPID public key is the uncompressed P-256 point derived from its secret. */
+function coherentVapidPair(publicKey: Buffer, privateKey: Buffer): boolean {
+  try {
+    const ecdh = createECDH("prime256v1");
+    ecdh.setPrivateKey(privateKey);
+    return ecdh.getPublicKey().equals(publicKey);
+  } catch {
+    return false;
+  }
+}
+
+function vapid(
+  env: Record<string, string | undefined>,
+  pushWarnings: boolean,
+  issues: IssueList,
+): VapidConfig | null {
+  const publicKey = env.VAPID_PUBLIC_KEY?.trim();
+  const privateKey = env.VAPID_PRIVATE_KEY?.trim();
+  if (!publicKey && !privateKey) {
+    if (pushWarnings) {
+      issues.add(
+        "VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY",
+        "required_with_push_warnings",
+      );
+    }
+    return null;
+  }
+  if (!publicKey || !privateKey) {
+    issues.add("VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY", "incomplete_pair");
+    return null;
+  }
+  if (isExampleValue(publicKey) || isExampleValue(privateKey)) {
+    issues.add("VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY", "example");
+    return null;
+  }
+  const decodedPublic = decodeBase64Url(publicKey);
+  const decodedPrivate = decodeBase64Url(privateKey);
+  if (
+    !decodedPublic ||
+    decodedPublic.length !== 65 ||
+    decodedPublic[0] !== 0x04
+  ) {
+    issues.add("VAPID_PUBLIC_KEY", "invalid");
+    return null;
+  }
+  if (!decodedPrivate || decodedPrivate.length !== 32) {
+    issues.add("VAPID_PRIVATE_KEY", "invalid");
+    return null;
+  }
+  if (!coherentVapidPair(decodedPublic, decodedPrivate)) {
+    issues.add("VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY", "incoherent_pair");
+    return null;
+  }
+  return { publicKey, privateKey };
+}
+
+
 export function readRuntimeConfig(
   env: Record<string, string | undefined> = process.env,
 ): RuntimeConfig {
@@ -287,6 +412,9 @@ export function readRuntimeConfig(
 
   const origins = trustedOrigins(env, betterAuthUrl, issues);
   const parsedHosts = hosts(env, issues);
+  const pushWarnings = pushWarningsEnabled(env, issues);
+  const telegramConfig = telegram(env, issues);
+  const vapidConfig = vapid(env, pushWarnings, issues);
   if (issues.length > 0) throw new RuntimeConfigError(issues.list());
 
   return {
@@ -296,5 +424,8 @@ export function readRuntimeConfig(
     setupToken: setupToken!,
     trustedOrigins: origins,
     hosts: parsedHosts,
+    telegram: telegramConfig,
+    vapid: vapidConfig,
+    pushWarnings,
   };
 }

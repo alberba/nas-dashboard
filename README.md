@@ -96,6 +96,45 @@ Configura Nginx Proxy Manager para dirigir el dominio HTTPS a `APP_SERVER_TAILSC
 
 Para el alta inicial, abre el dominio con `/#setup=VALOR_DE_SETUP_TOKEN`. El navegador retira el fragmento al cargarlo y el token deja de permitir altas tras crear la primera cuenta. Introduce tu correo y contraseña en la interfaz; después añade las passkeys desde Ajustes.
 
+### Validación de configuración al arrancar
+
+`pnpm start` ejecuta `scripts/check-runtime-config.ts` antes de `next start`. El preflight carga el mismo entorno que usa Next en producción mediante `@next/env`: primero el entorno del proceso y después `.env.production.local`, `.env.local`, `.env.production` y `.env`, en ese orden. Si falta una variable obligatoria, se conserva un valor de ejemplo o un grupo opcional queda incompleto, el proceso termina con error y `next start` no llega a ejecutarse. `pnpm build` no ejecuta esta comprobación: la imagen se compila con un secreto de build separado y el secreto real solo se exige al arrancar. La sonda de Compose sigue consultando `/api/setup`; el preflight no la sustituye.
+
+Variables obligatorias: `DATABASE_URL` (PostgreSQL, con usuario, contraseña y base), `BETTER_AUTH_SECRET` y `SETUP_TOKEN` (mínimo 32 caracteres y distintos de los valores de ejemplo), `BETTER_AUTH_URL` (HTTPS, o HTTP solo en loopback para desarrollo, sin usuario, contraseña, ruta, consulta ni fragmento) y `NAS_HOSTS` o la pareja `NAS_AGENT_URL`/`AGENT_TOKEN`. `TRUSTED_ORIGINS` es opcional; si se define, cada origen se valida con las mismas reglas.
+
+Telegram es opcional: define `TELEGRAM_BOT_TOKEN` y `TELEGRAM_CHAT_ID` juntos o deja ambos sin definir. El chat debe ser numérico (admite signo negativo para supergrupos). `PUSH_WARNINGS` solo acepta `true` o `false` y vale `false` por omisión; si se activa, `VAPID_PUBLIC_KEY` y `VAPID_PRIVATE_KEY` son obligatorias y deben formar un par coherente. Los diagnósticos nombran la variable y un motivo finito, nunca su valor.
+
+### Despliegue conjunto de la fase 2
+
+La fase 2 se despliega como una unidad después de completar la ola 5. No actives Telegram ni `PUSH_WARNINGS` por olas, y no cambies ni actives los emisores de `media-stack` en esta fase.
+
+1. **Para la app y el worker antiguos.** El código anterior consulta `alerts` por nombre; un worker vivo durante la migración puede escribir con el esquema a medias. Detén ambos servicios antes de migrar.
+2. **Guarda una copia restaurable.** Base completa (o los esquemas `public` y `drizzle`) y el `.env` del servidor. Conserva también `drizzle.__drizzle_migrations`: la reversa depende de su última entrada.
+3. **Mide el preflight de solo lectura.** Antes de 0004, sobre `alerts`:
+
+   ```sql
+   SELECT count(*) FROM alerts;
+   SELECT count(*) FROM alerts WHERE "resolvedAt" IS NULL;
+   SELECT "hostId", key, count(*)
+   FROM alerts
+   WHERE "resolvedAt" IS NULL
+   GROUP BY "hostId", key
+   HAVING count(*) > 1;
+   SELECT max(id) FROM alerts;
+   ```
+
+   Anota los recuentos. Después de 0004, repite las consultas sobre `incidents` y comprueba que `notification_outbox` e `incident_events` están vacías. El ensayo de 02-01 (`HUB_REQUIRE_TEST_DB=1 pnpm test tests/migrations.test.ts`) ejecuta 0003 → 0004 → reversa → 0004 en PostgreSQL 18 y es la referencia de los recuentos esperados.
+4. **Migra y arranca.** Ejecuta `pnpm db:migrate` y después arranca las versiones nuevas de `app` y `worker`. El preflight de configuración se ejecuta en cada arranque.
+5. **Activa los canales juntos.** Cuando la ola 5 esté desplegada, define el grupo de Telegram completo y, si quieres push para avisos no urgentes, el par VAPID con `PUSH_WARNINGS=true`. Recrea `app` y `worker` para que ambos lean la misma configuración.
+
+**Reversa.** Detén `app` y `worker`. Si hubo actividad después de 0004, archiva antes las filas nuevas de `notification_outbox` (resultados, chat, `message_id`, lease y revisión) y de `incident_events` (timeline): la reversa elimina esas tablas y no las exporta. Después ejecuta:
+
+```sh
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/rollback/0004_incidents.sql
+```
+
+El script comprueba que 0004 es el último avance del journal, elimina el índice parcial, restaura solo los cierres sintéticos de la migración y conserva los cierres válidos y los identificadores. Arranca entonces la versión anterior. Si necesitas recuperar también la actividad posterior a 0004 (outbox, eventos y marcas de entrega), restaura la copia completa tomada antes de migrar en lugar de confiar solo en el script; la copia es la única que conserva esos datos. Para volver a avanzar, aplica de nuevo `pnpm db:migrate` con la versión nueva: los identificadores se conservan y los duplicados se vuelven a deduplicar.
+
 ## Entrada privada alternativa
 
 Puedes publicar `127.0.0.1:4324` mediante Tailscale Serve. Añade la URL HTTPS resultante a `TRUSTED_ORIGINS`, separada por una coma, y recrea la aplicación. Better Auth admite los dominios exactos configurados. Las passkeys pertenecen al dominio principal; en el dominio alternativo utiliza correo y contraseña.

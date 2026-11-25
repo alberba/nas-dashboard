@@ -1,7 +1,7 @@
 import { and, gt, lt } from "drizzle-orm";
 import { db, pool } from "./lib/db";
 import { alerts, operations, presence, samples } from "./lib/schema";
-import { getHosts } from "./lib/hosts";
+import { readRuntimeConfig, RuntimeConfigError } from "./lib/runtime-config";
 import { collectAll } from "./lib/collector";
 import { sampleInterval } from "./lib/validation";
 
@@ -10,7 +10,11 @@ let lastCleanup = 0;
 let stopping = false;
 
 async function main() {
-  const hosts = getHosts();
+  // Validate the whole environment before the pool is used: a worker with an
+  // unusable configuration must never take the collection lock or query the
+  // database.
+  const config = readRuntimeConfig();
+  const hosts = config.hosts;
   const lock = await pool.connect();
   const result = await lock.query("SELECT pg_try_advisory_lock(734921)");
   if (!result.rows[0].pg_try_advisory_lock)
@@ -56,7 +60,13 @@ process.on("SIGTERM", () => {
 process.on("SIGINT", () => {
   stopping = true;
 });
-main().catch(() => {
-  console.error("No se pudo iniciar el recolector");
+main().catch(async (error) => {
+  if (error instanceof RuntimeConfigError) {
+    // The message names variables and finite reasons, never their values.
+    console.error(error.message);
+  } else {
+    console.error("No se pudo iniciar el recolector");
+  }
   process.exitCode = 1;
+  await pool.end().catch(() => {});
 });
