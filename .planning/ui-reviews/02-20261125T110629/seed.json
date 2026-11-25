@@ -1,0 +1,13 @@
+{
+  "targetId": 217,
+  "legacyId": 218,
+  "recentIds": {
+    "backup-failed": 110,
+    "disk-health": 111,
+    "container:bazarr": 112,
+    "temperature": 113,
+    "stack-unit-failed": 114,
+    "reboot-pending": 115,
+    "deploy-failed": 116
+  }
+}

@@ -1,0 +1,212 @@
+{
+  "label": "alerts-list-desktop",
+  "viewport": {
+    "w": 1440,
+    "h": 900
+  },
+  "horizontalOverflow": -15,
+  "h1": {
+    "text": "Avisos",
+    "fontSize": "41.6px",
+    "fontWeight": "650",
+    "lineHeight": "52px",
+    "letterSpacing": "-2.08px",
+    "color": "lab(89.6186 0.457048 5.73838)",
+    "background": "rgba(0, 0, 0, 0)",
+    "outline": "none 3px lab(89.6186 0.457048 5.73838)",
+    "display": "block",
+    "width": 163,
+    "height": 52,
+    "x": 267,
+    "y": 136
+  },
+  "h2": {
+    "text": "Incidencias y recuperaciones",
+    "fontSize": "16.8px",
+    "fontWeight": "800",
+    "lineHeight": "26.04px",
+    "letterSpacing": "normal",
+    "color": "lab(89.6186 0.457048 5.73838)",
+    "background": "rgba(0, 0, 0, 0)",
+    "outline": "none 3px lab(89.6186 0.457048 5.73838)",
+    "display": "block",
+    "width": 1068,
+    "height": 26,
+    "x": 290,
+    "y": 313
+  },
+  "alertTitle": {
+    "text": "Copia de seguridad fallida",
+    "fontSize": "13.6px",
+    "fontWeight": "700",
+    "lineHeight": "21.08px",
+    "letterSpacing": "normal",
+    "color": "lab(89.6186 0.457048 5.73838)",
+    "background": "rgba(0, 0, 0, 0)",
+    "outline": "none 3px lab(89.6186 0.457048 5.73838)",
+    "display": "inline",
+    "width": 170,
+    "height": 18,
+    "x": 325,
+    "y": 374
+  },
+  "alertDetail": {
+    "text": "rsync terminó con código 23: 4 archivos no se pudieron leer",
+    "fontSize": "12.8px",
+    "fontWeight": "400",
+    "lineHeight": "19.84px",
+    "letterSpacing": "normal",
+    "color": "lab(61.6507 1.131 6.85158)",
+    "background": "rgba(0, 0, 0, 0)",
+    "outline": "none 3px lab(61.6507 1.131 6.85158)",
+    "display": "block",
+    "width": 346,
+    "height": 20,
+    "x": 325,
+    "y": 399
+  },
+  "alertTime": {
+    "text": "25/11/2026, 11:48:29 · Pendiente",
+    "fontSize": "10.4px",
+    "fontWeight": "400",
+    "lineHeight": "16.12px",
+    "letterSpacing": "normal",
+    "color": "lab(61.6507 1.131 6.85158)",
+    "background": "rgba(0, 0, 0, 0)",
+    "outline": "none 3px lab(61.6507 1.131 6.85158)",
+    "display": "inline",
+    "width": 165,
+    "height": 14,
+    "x": 325,
+    "y": 429
+  },
+  "delivery": {
+    "text": "Entrega inicial: Enviado",
+    "fontSize": "15.04px",
+    "fontWeight": "400",
+    "lineHeight": "23.312px",
+    "letterSpacing": "normal",
+    "color": "lab(89.6186 0.457048 5.73838)",
+    "background": "rgba(0, 0, 0, 0)",
+    "outline": "none 3px lab(89.6186 0.457048 5.73838)",
+    "display": "block",
+    "width": 346,
+    "height": 23,
+    "x": 325,
+    "y": 446
+  },
+  "deliveryCount": 101,
+  "rowSelected": null,
+  "activeElement": {
+    "tag": "BODY",
+    "dataset": {},
+    "outline": "lab(89.6186 0.457048 5.73838) none 3px",
+    "boxShadow": "none"
+  },
+  "targetSizes": [],
+  "buttons": [
+    {
+      "label": "Resumen",
+      "height": 46,
+      "width": 185
+    },
+    {
+      "label": "Recursos",
+      "height": 46,
+      "width": 185
+    },
+    {
+      "label": "Mantenimiento108",
+      "height": 60,
+      "width": 185
+    },
+    {
+      "label": "Archivos",
+      "height": 46,
+      "width": 185
+    },
+    {
+      "label": "Aplicaciones",
+      "height": 46,
+      "width": 185
+    },
+    {
+      "label": "Ajustes",
+      "height": 46,
+      "width": 185
+    },
+    {
+      "label": "AAlbert",
+      "height": 44,
+      "width": 185
+    },
+    {
+      "label": "Buscar Ctrl K",
+      "height": 44,
+      "width": 148
+    },
+    {
+      "label": "Desplegar ahora",
+      "height": 0,
+      "width": 0
+    },
+    {
+      "label": "Pausar seguidor",
+      "height": 0,
+      "width": 0
+    },
+    {
+      "label": "Reanudar seguidor",
+      "height": 0,
+      "width": 0
+    },
+    {
+      "label": "Ejecutar seguridad",
+      "height": 0,
+      "width": 0
+    },
+    {
+      "label": "Copia ahora",
+      "height": 0,
+      "width": 0
+    },
+    {
+      "label": "Limpiar imágenes",
+      "height": 0,
+      "width": 0
+    },
+    {
+      "label": "Comprobar salud",
+      "height": 0,
+      "width": 0
+    },
+    {
+      "label": "Reconectar apps",
+      "height": 0,
+      "width": 0
+    },
+    {
+      "label": "Cerrar",
+      "height": 0,
+      "width": 0
+    },
+    {
+      "label": "99",
+      "height": 44,
+      "width": 44
+    },
+    {
+      "label": "Cerrar sesión",
+      "height": 44,
+      "width": 44
+    },
+    {
+      "label": "Cerrar",
+      "height": 0,
+      "width": 0
+    }
+  ],
+  "panelRadius": "22.4px",
+  "bodyFontSize": "15.04px",
+  "bodyFontFamily": "\"Manrope Variable\", system-ui, sans-serif"
+}

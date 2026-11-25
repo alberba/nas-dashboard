@@ -1,0 +1,220 @@
+{
+  "label": "alerts-detail-tablet",
+  "viewport": {
+    "w": 768,
+    "h": 1024
+  },
+  "horizontalOverflow": -15,
+  "h1": {
+    "text": "Avisos",
+    "fontSize": "31.52px",
+    "fontWeight": "650",
+    "lineHeight": "39.4px",
+    "letterSpacing": "-1.576px",
+    "color": "lab(89.6186 0.457048 5.73838)",
+    "background": "rgba(0, 0, 0, 0)",
+    "outline": "none 3px lab(89.6186 0.457048 5.73838)",
+    "display": "block",
+    "width": 152,
+    "height": 39,
+    "x": 26,
+    "y": 293
+  },
+  "h2": {
+    "text": "Incidencias y recuperaciones",
+    "fontSize": "16.8px",
+    "fontWeight": "800",
+    "lineHeight": "26.04px",
+    "letterSpacing": "normal",
+    "color": "lab(89.6186 0.457048 5.73838)",
+    "background": "rgba(0, 0, 0, 0)",
+    "outline": "none 3px lab(89.6186 0.457048 5.73838)",
+    "display": "block",
+    "width": 663,
+    "height": 26,
+    "x": 45,
+    "y": 473
+  },
+  "alertTitle": {
+    "text": "Copia de seguridad interrumpida",
+    "fontSize": "13.6px",
+    "fontWeight": "700",
+    "lineHeight": "21.08px",
+    "letterSpacing": "normal",
+    "color": "lab(89.6186 0.457048 5.73838)",
+    "background": "rgba(0, 0, 0, 0)",
+    "outline": "none 3px lab(89.6186 0.457048 5.73838)",
+    "display": "inline",
+    "width": 216,
+    "height": 18,
+    "x": 79,
+    "y": 533
+  },
+  "alertDetail": {
+    "text": "El disco externo se desconectó a mitad de la copia",
+    "fontSize": "12.8px",
+    "fontWeight": "400",
+    "lineHeight": "19.84px",
+    "letterSpacing": "normal",
+    "color": "lab(61.6507 1.131 6.85158)",
+    "background": "rgba(0, 0, 0, 0)",
+    "outline": "none 3px lab(61.6507 1.131 6.85158)",
+    "display": "block",
+    "width": 533,
+    "height": 20,
+    "x": 79,
+    "y": 558
+  },
+  "alertTime": {
+    "text": "9/5/2026, 13:06:29 · Pendiente",
+    "fontSize": "10.4px",
+    "fontWeight": "400",
+    "lineHeight": "16.12px",
+    "letterSpacing": "normal",
+    "color": "lab(61.6507 1.131 6.85158)",
+    "background": "rgba(0, 0, 0, 0)",
+    "outline": "none 3px lab(61.6507 1.131 6.85158)",
+    "display": "inline",
+    "width": 152,
+    "height": 14,
+    "x": 79,
+    "y": 587
+  },
+  "delivery": {
+    "text": "Entrega inicial: Enviado",
+    "fontSize": "14.368px",
+    "fontWeight": "400",
+    "lineHeight": "22.2704px",
+    "letterSpacing": "normal",
+    "color": "lab(89.6186 0.457048 5.73838)",
+    "background": "rgba(0, 0, 0, 0)",
+    "outline": "none 3px lab(89.6186 0.457048 5.73838)",
+    "display": "block",
+    "width": 533,
+    "height": 22,
+    "x": 79,
+    "y": 604
+  },
+  "deliveryCount": 104,
+  "rowSelected": {
+    "outline": "lab(62.3056 43.2358 47.0257) solid 2px",
+    "background": "rgba(0, 0, 0, 0)",
+    "borderLeft": "0px solid lab(89.6186 0.457048 5.73838)"
+  },
+  "activeElement": {
+    "tag": "DIV",
+    "dataset": {
+      "incident": "217",
+      "incidentSelected": "true",
+      "deliveryState": "sent"
+    },
+    "outline": "lab(62.3056 43.2358 47.0257) solid 2px",
+    "boxShadow": "none"
+  },
+  "targetSizes": [],
+  "buttons": [
+    {
+      "label": "Resumen",
+      "height": 44,
+      "width": 116
+    },
+    {
+      "label": "Recursos",
+      "height": 44,
+      "width": 116
+    },
+    {
+      "label": "Mantenimiento108",
+      "height": 44,
+      "width": 191
+    },
+    {
+      "label": "Archivos",
+      "height": 44,
+      "width": 112
+    },
+    {
+      "label": "Aplicaciones",
+      "height": 44,
+      "width": 139
+    },
+    {
+      "label": "Ajustes",
+      "height": 44,
+      "width": 105
+    },
+    {
+      "label": "AAlbert",
+      "height": 0,
+      "width": 0
+    },
+    {
+      "label": "Buscar Ctrl K",
+      "height": 44,
+      "width": 143
+    },
+    {
+      "label": "Desplegar ahora",
+      "height": 0,
+      "width": 0
+    },
+    {
+      "label": "Pausar seguidor",
+      "height": 0,
+      "width": 0
+    },
+    {
+      "label": "Reanudar seguidor",
+      "height": 0,
+      "width": 0
+    },
+    {
+      "label": "Ejecutar seguridad",
+      "height": 0,
+      "width": 0
+    },
+    {
+      "label": "Copia ahora",
+      "height": 0,
+      "width": 0
+    },
+    {
+      "label": "Limpiar imágenes",
+      "height": 0,
+      "width": 0
+    },
+    {
+      "label": "Comprobar salud",
+      "height": 0,
+      "width": 0
+    },
+    {
+      "label": "Reconectar apps",
+      "height": 0,
+      "width": 0
+    },
+    {
+      "label": "Cerrar",
+      "height": 0,
+      "width": 0
+    },
+    {
+      "label": "99",
+      "height": 44,
+      "width": 44
+    },
+    {
+      "label": "Cerrar sesión",
+      "height": 44,
+      "width": 44
+    },
+    {
+      "label": "Cerrar",
+      "height": 0,
+      "width": 0
+    }
+  ],
+  "panelRadius": "22.4px",
+  "bodyFontSize": "14.368px",
+  "bodyFontFamily": "\"Manrope Variable\", system-ui, sans-serif"
+}
