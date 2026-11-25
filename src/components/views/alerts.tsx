@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef } from "react";
 import { CircleCheck, RefreshCw, TriangleAlert } from "lucide-react";
+import { StatusDot, type Tone } from "../ui";
 import type {
   Alert,
   PublicDelivery,
@@ -18,11 +19,21 @@ const stateLabels: Record<PublicDeliveryState, string> = {
   none: "Sin envío",
 };
 
+const stateTones: Record<PublicDeliveryState, Tone> = {
+  pending: "accent",
+  sent: "gain",
+  failed: "loss",
+  suppressed: "muted",
+  uncertain: "peach",
+  none: "muted",
+};
+
 const reasonLabels: Record<PublicDeliveryReason, string> = {
   legacy_open: "Aviso heredado sin nuevo envío",
   digest_pending: "Pendiente del resumen",
   policy_silent: "Silenciado por la política de avisos",
   telegram_disabled: "Telegram desactivado",
+  push_disabled: "Push desactivado",
   permanent_rejection: "Rechazo permanente del proveedor",
   uncertain: "Resultado incierto, sin reenvío automático",
 };
@@ -43,8 +54,14 @@ function DeliveryStatus({
       data-delivery-state={delivery.state}
       data-delivery-reason={delivery.reason ?? undefined}
     >
-      {label}: {stateLabels[delivery.state]}
-      {delivery.reason ? ` · ${reasonLabels[delivery.reason]}` : ""}
+      <span className="alert-delivery-label">{label}</span>
+      <span className="alert-delivery-value">
+        <StatusDot tone={stateTones[delivery.state]} />
+        <span>
+          {stateLabels[delivery.state]}
+          {delivery.reason ? ` · ${reasonLabels[delivery.reason]}` : ""}
+        </span>
+      </span>
     </span>
   );
 }
@@ -100,12 +117,15 @@ export function AlertsView({
         )}
         {rows.map((alert) => {
           const selected = requested === alert.id;
+          const severityTone: Tone =
+            alert.severity === "critical" ? "loss" : "peach";
           return (
             <div
               className="alert-row"
               key={alert.id}
               data-incident={alert.id}
               data-incident-selected={selected ? "true" : undefined}
+              data-severity={alert.severity}
               data-delivery-state={alert.delivery.state}
               data-delivery-reason={alert.delivery.reason ?? undefined}
               tabIndex={selected ? -1 : undefined}
@@ -116,8 +136,20 @@ export function AlertsView({
               ) : (
                 <TriangleAlert className="danger-text" />
               )}
-              <div>
-                <strong>{alert.title}</strong>
+              <div className="alert-row-body">
+                <div className="alert-row-head">
+                  <strong>{alert.title}</strong>
+                  <span
+                    className="alert-severity"
+                    data-severity-indicator={alert.severity}
+                  >
+                    <StatusDot tone={severityTone} />
+                    {alert.severity === "critical" ? "Crítica" : "Advertencia"}
+                  </span>
+                  {selected && (
+                    <span className="alert-selected">Incidencia enlazada</span>
+                  )}
+                </div>
                 <p className="subtle">{alert.detail}</p>
                 <time>
                   {new Date(alert.at).toLocaleString("es")}

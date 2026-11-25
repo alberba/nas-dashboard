@@ -112,6 +112,11 @@ test("INC-E2E-01 opens an episode older than the 100 recent through email login"
   await expect(page.locator('[data-view="alerts"]')).toBeVisible();
   const row = page.locator(`[data-incident="${targetId}"]`);
   await expect(row).toBeVisible();
+  await expect(row).toHaveAttribute("data-incident-selected", "true");
+  await expect(row).toHaveAttribute("data-severity", "critical");
+  await expect(
+    row.locator('[data-severity-indicator="critical"]'),
+  ).toBeVisible();
   await expect(row).toHaveAttribute("data-delivery-state", "sent");
   await expect(
     page.locator(
