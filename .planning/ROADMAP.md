@@ -93,7 +93,7 @@ Plans:
   2. Mientras el host está caído, las incidencias de contenedor quedan inhibidas con su motivo visible, y al volver no se abren por la caída.
   3. Renombrar o recrear un contenedor deja de producir una incidencia `container:<nombre>` permanente.
   4. Los ayudantes privilegiados huérfanos se recogen y un fallo de limpieza queda visible para el operador.
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans executed
 
 Plans:
 **Wave 1**
@@ -103,7 +103,7 @@ Plans:
 - [x] 03-02: Reconciliar `expectedContainers` con el inventario real y purgar los nombres ausentes con gracia
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 03-03: Recoger ayudantes huérfanos y hacer visible el fallo de limpieza
+- [x] 03-03: Recoger ayudantes huérfanos y hacer visible el fallo de limpieza
 
 **Repo:** hub (incluye `agent/`)
 **Research flag:** No — la agrupación y el reaper salen de la auditoría y del código actual.
@@ -219,7 +219,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 |-------|----------------|--------|-----------|
 | 1. Auditoría del ruido | 3/3 | Complete    | 2026-11-24 |
 | 2. Incidencias y entrega única | 5/5 | Complete    | 2026-11-25 |
-| 3. Agrupación, inventario y ayudantes | 2/3 | In Progress | - |
+| 3. Agrupación, inventario y ayudantes | 3/3 | In Progress | - |
 | 4. Resumen diario | 0/3 | Not started | - |
 | 5. Bot de lectura y reconocimiento | 0/3 | Not started | - |
 | 6. Puerta de seguridad | 0/3 | Not started | - |
