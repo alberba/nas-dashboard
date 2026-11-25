@@ -557,11 +557,13 @@ export async function collectHost(host: HostConfig, now = Date.now()) {
       continue;
     }
     if (
-      !["start", "stop", "restart", "remove-container"].includes(
+      !["start", "stop", "remove-container"].includes(
         operation.action,
       )
     )
       continue;
+    // The inventory has no execution generation for restarts. Only a
+    // confirmed agent response can settle them.
     // Only a complete Docker list observed after the operation was recorded
     // can confirm it: a cached list from before is not evidence.
     const fresh = marker !== null && marker * 1000 > operation.at.getTime();

@@ -86,6 +86,7 @@ type FakeAgent = {
   url: string;
   behaviour: Behaviour;
   metricsBody: unknown;
+  beforeActionResponse?: () => Promise<void>;
   requests: unknown[];
   reset(): void;
   close(): Promise<void>;
@@ -100,6 +101,7 @@ async function fakeAgent(token: string): Promise<FakeAgent> {
     reset() {
       agent.behaviour = "ok";
       agent.metricsBody = null;
+      agent.beforeActionResponse = undefined;
       agent.requests = [];
     },
     async close() {
@@ -123,6 +125,7 @@ async function fakeAgent(token: string): Promise<FakeAgent> {
       response.end(JSON.stringify(agent.metricsBody ?? metrics("fake")));
       return;
     }
+    if (path === "/action") await agent.beforeActionResponse?.();
     if (agent.behaviour === "uncertain") {
       response.destroy();
       return;
@@ -1221,6 +1224,91 @@ describe.skipIf(!baseUrl)("incidents API", () => {
     expect(row.value.expectedContainers).toEqual(["sonarr"]);
     expect(row.value.watch!.entries.sonarr).toBeUndefined();
     expect(row.value.watch!.revision).toBe(3);
+  });
+
+  it("keeps a restart pending when a later inventory still shows the running container", async () => {
+    await setSettingsValue("nas-home", { expectedContainers: [] });
+    agent.behaviour = "uncertain";
+    const response = await api("POST", "/api/action?host=nas-home", {
+      body: { action: "restart", id: containerId },
+      headers: {
+        Origin: "http://localhost:3000",
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+    });
+    expect(response.status).toBe(502);
+    const [operation] = await db.select().from(tables.operations);
+    const now = operation.at.getTime() + 30_000;
+    agent.metricsBody = freshMetrics(now, metrics("nas-home").containers);
+    await collectHost(getHosts().find((host) => host.id === "nas-home")!, now);
+
+    expect(await db.select().from(tables.operations)).toMatchObject([
+      { id: operation.id, status: "pending" },
+    ]);
+    const { getSettings } = await import("@/lib/settings");
+    expect((await getSettings("nas-home")).expectedContainers).toEqual([]);
+  });
+
+  it.each(["reject", "uncertain"] as const)(
+    "keeps the confirmed result if the POST response is %s after collection",
+    async (behaviour) => {
+      await setSettingsValue("nas-home", { expectedContainers: [] });
+      agent.behaviour = behaviour;
+      const host = getHosts().find((entry) => entry.id === "nas-home")!;
+      agent.beforeActionResponse = async () => {
+        const [operation] = await db.select().from(tables.operations);
+        const now = operation.at.getTime() + 60_000;
+        agent.metricsBody = freshMetrics(now, metrics(host.id).containers);
+        await collectHost(host, now);
+      };
+
+      const response = await api("POST", "/api/action?host=nas-home", {
+        body: { action: "start", id: containerId },
+        headers: {
+          Origin: "http://localhost:3000",
+          "Idempotency-Key": crypto.randomUUID(),
+        },
+      });
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ status: "success" });
+      expect(await db.select().from(tables.operations)).toMatchObject([
+        { status: "success" },
+      ]);
+    },
+  );
+
+  it("does not apply a collector confirmation after the operation is rejected", async () => {
+    const start = Date.UTC(2026, 10, 28, 15);
+    await setSettingsValue("nas-home", { expectedContainers: [] });
+    const [operation] = await pendingOperation("start", containerId, new Date(start));
+    const query = pool.query.bind(pool);
+    let rejected = false;
+    const intercept = vi.spyOn(pool, "query").mockImplementation((async (
+      config: { text: string },
+      values: unknown[],
+    ) => {
+      const result = await query(config, values);
+      if (config.text.includes('"operations"."status" =') && !rejected) {
+        rejected = true;
+        await db.update(tables.operations).set({ status: "failed" })
+          .where(eq(tables.operations.id, operation.id));
+      }
+      return result;
+    }) as typeof pool.query);
+
+    try {
+      agent.metricsBody = freshMetrics(start + 30_000, metrics("nas-home").containers);
+      await collectHost(getHosts().find((host) => host.id === "nas-home")!, start + 30_000);
+      expect(rejected).toBe(true);
+    } finally {
+      intercept.mockRestore();
+    }
+    const { getSettings } = await import("@/lib/settings");
+    expect((await getSettings("nas-home")).expectedContainers).toEqual([]);
+    expect(await db.select().from(tables.operations)).toMatchObject([
+      { id: operation.id, status: "failed" },
+    ]);
   });
 
   it("waits for a post-operation list before confirming a lost stop and closes once", async () => {

@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "./db";
 import {
@@ -108,7 +108,7 @@ export async function finalizeContainerOperation(input: {
       .for("update");
     operation = locked;
     if (!locked || locked.hostId !== input.hostId) return current;
-    if (locked.status === "success") return current;
+    if (locked.status !== "pending" || locked.action !== input.action) return current;
     const [updated] = await tx
       .update(operations)
       .set({ status: "success", detail: input.detail })
@@ -153,6 +153,21 @@ export async function finalizeContainerOperation(input: {
     return { ...current, expectedContainers: expected, watch };
   });
   return { applied, operation };
+}
+
+/** Records a rejection or uncertainty without replacing a terminal result. */
+export async function updatePendingOperation(
+  id: string,
+  values: { status?: "failed"; detail: string },
+) {
+  const [updated] = await db
+    .update(operations)
+    .set(values)
+    .where(and(eq(operations.id, id), eq(operations.status, "pending")))
+    .returning();
+  if (updated) return { updated: true, operation: updated };
+  const [operation] = await db.select().from(operations).where(eq(operations.id, id));
+  return { updated: false, operation };
 }
 
 /**
@@ -266,22 +281,21 @@ export async function removeContainer({
     return response(operation, result);
   } catch (error) {
     if (error instanceof NasRejected && error.status < 500) {
-      const [operation] = await db
-        .update(operations)
-        .set({ status: "failed", detail: error.message })
-        .where(eq(operations.id, operationId))
-        .returning();
+      const { updated, operation } = await updatePendingOperation(operationId, {
+        status: "failed",
+        detail: error.message,
+      });
+      if (!updated && operation) return response(operation);
       return json(
         { error: error.message, status: "failed", operation: publicOperation(operation) },
         400,
       );
     }
     // The agent may have removed the container before the response was lost.
-    const [operation] = await db
-      .update(operations)
-      .set({ detail: pendingDetail })
-      .where(eq(operations.id, operationId))
-      .returning();
+    const { updated, operation } = await updatePendingOperation(operationId, {
+      detail: pendingDetail,
+    });
+    if (!updated && operation) return response(operation);
     return json(
       {
         error:

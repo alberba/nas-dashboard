@@ -29,6 +29,7 @@ import {
   finalizeContainerOperation,
   publicOperation,
   removeContainer,
+  updatePendingOperation,
 } from "@/lib/lifecycle";
 import { verificationStore } from "@/lib/verification";
 import { nasForHost, NasRejected, CONTAINER_UPDATE_TIMEOUT_MS } from "@/lib/nas";
@@ -601,20 +602,19 @@ async function handle(
         return json({ ok: true, status: "success", result });
       } catch (error) {
         if (error instanceof NasRejected && error.status < 500) {
-          await db
-            .update(operations)
-            .set({ status: "failed", detail: error.message })
-            .where(eq(operations.id, operationId));
+          const { updated, operation } = await updatePendingOperation(operationId, {
+            status: "failed",
+            detail: error.message,
+          });
+          if (!updated && operation) return json(operation);
           return json({ error: error.message, status: "failed" }, 400);
         }
         // A timeout may occur after the NAS executed the action. Never retry it automatically.
-        await db
-          .update(operations)
-          .set({
-            detail:
-              "No se pudo confirmar el resultado. Comprueba el estado antes de repetir.",
-          })
-          .where(eq(operations.id, operationId));
+        const { updated, operation } = await updatePendingOperation(operationId, {
+          detail:
+            "No se pudo confirmar el resultado. Comprueba el estado antes de repetir.",
+        });
+        if (!updated && operation) return json(operation);
         return json(
           {
             error:
