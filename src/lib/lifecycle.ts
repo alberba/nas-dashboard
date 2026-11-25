@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "./db";
 import {
@@ -6,8 +6,9 @@ import {
   resolveHost,
   type HostConfig,
 } from "./hosts";
+import { recordIncidentObservation } from "./incident-store";
 import { nasForHost, NasRejected } from "./nas";
-import { alerts, operations, samples } from "./schema";
+import { operations, samples } from "./schema";
 import { getSettings, saveSettings } from "./settings";
 import { guardSensitiveAction } from "./verification-api";
 import {
@@ -54,6 +55,11 @@ function response(operation: typeof operations.$inferSelect, result?: RemovalRes
   });
 }
 
+/**
+ * Runs only after the agent confirmed the removal on this host. The episode
+ * closure (seq, timeline, pending-outbox cancellation or edit) shares the
+ * store transaction used by the collector; the other host is never touched.
+ */
 async function forgetExpectedContainer(hostId: string, name: string) {
   const settings = await getSettings(hostId);
   if (settings.expectedContainers.includes(name)) {
@@ -62,16 +68,13 @@ async function forgetExpectedContainer(hostId: string, name: string) {
     );
     await saveSettings(hostId, settings);
   }
-  await db
-    .update(alerts)
-    .set({ resolvedAt: new Date() })
-    .where(
-      and(
-        eq(alerts.hostId, hostId),
-        eq(alerts.key, "container:" + name),
-        isNull(alerts.resolvedAt),
-      ),
-    );
+  await recordIncidentObservation({
+    hostId,
+    key: "container:" + name,
+    failing: false,
+    now: Date.now(),
+    closedBy: "lifecycle",
+  });
 }
 
 /**

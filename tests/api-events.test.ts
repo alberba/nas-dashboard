@@ -38,6 +38,7 @@ describe.skipIf(!baseUrl)("events API and open alert count", () => {
   let db: typeof import("@/lib/db").db;
   let pool: typeof import("@/lib/db").pool;
   let tables: typeof import("@/lib/schema");
+  let fingerprint: typeof import("@/lib/incident-store").incidentFingerprint;
   let routes: typeof import("../src/app/api/[...path]/route");
 
   async function api(method: "GET", path: string) {
@@ -82,6 +83,7 @@ describe.skipIf(!baseUrl)("events API and open alert count", () => {
     pool = database.pool;
     await migrate(db, { migrationsFolder: "./drizzle" });
     tables = await import("@/lib/schema");
+    ({ incidentFingerprint: fingerprint } = await import("@/lib/incident-store"));
     routes = await import("../src/app/api/[...path]/route");
   });
 
@@ -95,7 +97,9 @@ describe.skipIf(!baseUrl)("events API and open alert count", () => {
   });
 
   beforeEach(async () => {
-    await db.delete(tables.alerts);
+    await db.delete(tables.notificationOutbox);
+    await db.delete(tables.incidentEvents);
+    await db.delete(tables.incidents);
     await db.delete(tables.operations);
     await db.delete(tables.samples);
     await db.delete(tables.configuration);
@@ -106,13 +110,14 @@ describe.skipIf(!baseUrl)("events API and open alert count", () => {
     key: string,
     resolvedAt: Date | null = null,
   ) {
-    await db.insert(tables.alerts).values({
+    await db.insert(tables.incidents).values({
       hostId,
       key,
       title: key,
       detail: "",
       severity: "warning",
       resolvedAt,
+      fingerprint: fingerprint(hostId, key),
     });
   }
 

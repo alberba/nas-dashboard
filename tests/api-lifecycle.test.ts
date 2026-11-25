@@ -1,5 +1,6 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { eq } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import {
   afterAll,
@@ -156,6 +157,7 @@ describe.skipIf(!baseUrl)("container removal API", () => {
   let db: typeof import("@/lib/db").db;
   let pool: typeof import("@/lib/db").pool;
   let tables: typeof import("@/lib/schema");
+  let store: typeof import("@/lib/incident-store");
   let routes: typeof import("../src/app/api/[...path]/route");
 
   async function api(
@@ -197,6 +199,36 @@ describe.skipIf(!baseUrl)("container removal API", () => {
     });
   }
 
+  async function seedContainerIncident(hostId: string, sent: boolean) {
+    const opened = await store.recordIncidentObservation({
+      hostId,
+      key: "container:sonarr",
+      failing: true,
+      severity: "critical",
+      title: `Servicio detenido en ${hostId}: sonarr`,
+      detail: "",
+      now: Date.now(),
+      delivery: { channel: "telegram", reason: "policy_immediate" },
+    });
+    if (sent) {
+      await db
+        .update(tables.notificationOutbox)
+        .set({
+          status: "sent",
+          chatId: "42",
+          messageId: "9",
+          attempts: 1,
+          result: {
+            state: "sent",
+            reason: null,
+            at: new Date().toISOString(),
+          },
+        })
+        .where(eq(tables.notificationOutbox.incidentId, opened.incidentId!));
+    }
+    return opened.incidentId!;
+  }
+
   beforeAll(async () => {
     agent = await fakeAgent("a".repeat(32));
     process.env.NAS_HOSTS = JSON.stringify([
@@ -223,6 +255,7 @@ describe.skipIf(!baseUrl)("container removal API", () => {
     pool = database.pool;
     await migrate(db, { migrationsFolder: "./drizzle" });
     tables = await import("@/lib/schema");
+    store = await import("@/lib/incident-store");
     routes = await import("../src/app/api/[...path]/route");
     await db.insert(tables.user).values({
       id: "test-user",
@@ -245,8 +278,10 @@ describe.skipIf(!baseUrl)("container removal API", () => {
   });
 
   beforeEach(async () => {
+    await db.delete(tables.notificationOutbox);
+    await db.delete(tables.incidentEvents);
+    await db.delete(tables.incidents);
     await db.delete(tables.operations);
-    await db.delete(tables.alerts);
     await db.delete(tables.samples);
     await db.delete(tables.configuration);
     await db.delete(tables.recentVerification);
@@ -325,6 +360,65 @@ describe.skipIf(!baseUrl)("container removal API", () => {
     expect(operation.hostId).toBe("apps");
   });
 
+  it("closes only the selected host's container incident after a confirmed removal", async () => {
+    const nasIncident = await seedContainerIncident("nas-home", true);
+    const appsIncident = await seedContainerIncident("apps", false);
+    const response = await api(
+      "/api/containers/remove?host=nas-home",
+      { id: containerId, confirmation: "sonarr" },
+      { "Idempotency-Key": crypto.randomUUID() },
+    );
+
+    expect(response.status).toBe(200);
+    const incidents = await db
+      .select()
+      .from(tables.incidents)
+      .orderBy(tables.incidents.id);
+    const nas = incidents.find((row) => row.id === nasIncident)!;
+    const apps = incidents.find((row) => row.id === appsIncident)!;
+    expect(nas).toMatchObject({ resolvedAt: expect.any(Date), seq: 2, closedBy: "lifecycle" });
+    expect(apps).toMatchObject({ resolvedAt: null, seq: 1, closedBy: null });
+
+    const events = await db.select().from(tables.incidentEvents);
+    expect(
+      events
+        .filter((event) => event.incidentId === nasIncident)
+        .map((event) => event.kind)
+        .sort(),
+    ).toEqual(["closed", "opened"]);
+    expect(
+      events.find(
+        (event) => event.incidentId === nasIncident && event.kind === "closed",
+      )!.seq,
+    ).toBe(2);
+    expect(
+      events
+        .filter((event) => event.incidentId === appsIncident)
+        .map((event) => event.kind),
+    ).toEqual(["opened"]);
+
+    const outbox = await db.select().from(tables.notificationOutbox);
+    expect(
+      outbox.find(
+        (row) => row.incidentId === nasIncident && row.kind === "incident-open",
+      ),
+    ).toMatchObject({ status: "sent", chatId: "42", messageId: "9" });
+    expect(
+      outbox.find((row) => row.key === `incident:${nasIncident}:edit:2`),
+    ).toMatchObject({
+      kind: "incident-edit",
+      channel: "telegram",
+      status: "pending",
+      revision: 2,
+      chatId: "42",
+      messageId: "9",
+    });
+    expect(outbox.find((row) => row.incidentId === appsIncident)).toMatchObject({
+      status: "pending",
+      channel: "telegram",
+    });
+  });
+
   it("updates a container image on the selected host and records the operation", async () => {
     const response = await api(
       "/api/action?host=nas-home",
@@ -382,6 +476,7 @@ describe.skipIf(!baseUrl)("container removal API", () => {
   });
 
   it("records an agent rejection once and never retries it", async () => {
+    const incidentId = await seedContainerIncident("nas-home", true);
     agent.behaviour = "reject";
     const response = await api(
       "/api/containers/remove?host=nas-home",
@@ -395,9 +490,17 @@ describe.skipIf(!baseUrl)("container removal API", () => {
     expect(operation.status).toBe("failed");
     expect(operation.detail).toEqual(expect.any(String));
     expect(agent.requests).toHaveLength(1);
+    const [incident] = await db
+      .select()
+      .from(tables.incidents)
+      .where(eq(tables.incidents.id, incidentId));
+    expect(incident).toMatchObject({ resolvedAt: null, seq: 1, closedBy: null });
+    expect(await db.select().from(tables.incidentEvents)).toHaveLength(1);
+    expect(await db.select().from(tables.notificationOutbox)).toHaveLength(1);
   });
 
   it("leaves an uncertain result pending and does not send it again", async () => {
+    const incidentId = await seedContainerIncident("nas-home", true);
     agent.behaviour = "uncertain";
     const key = crypto.randomUUID();
     const response = await api(
@@ -420,6 +523,13 @@ describe.skipIf(!baseUrl)("container removal API", () => {
     expect(retry.status).toBe(200);
     expect(agent.requests).toHaveLength(1);
     expect(await db.select().from(tables.operations)).toHaveLength(1);
+    const [incident] = await db
+      .select()
+      .from(tables.incidents)
+      .where(eq(tables.incidents.id, incidentId));
+    expect(incident).toMatchObject({ resolvedAt: null, seq: 1, closedBy: null });
+    expect(await db.select().from(tables.incidentEvents)).toHaveLength(1);
+    expect(await db.select().from(tables.notificationOutbox)).toHaveLength(1);
   });
 
   it("refuses an action when the host is not connected", async () => {

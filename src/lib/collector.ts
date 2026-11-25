@@ -1,10 +1,13 @@
-import { and, eq, gt, isNull } from "drizzle-orm";
+import { and, eq, gt } from "drizzle-orm";
 import { db } from "./db";
-import { alerts, operations, samples } from "./schema";
+import { operations, samples } from "./schema";
 import { nasForHost } from "./nas";
 import { getSettings, saveSettings } from "./settings";
 import { getHosts, type HostConfig } from "./hosts";
-import { notify } from "./push";
+import {
+  recordIncidentObservation,
+  type IncidentDelivery,
+} from "./incident-store";
 import {
   deploymentAlertSignals,
   maintenanceAlertSignals,
@@ -22,6 +25,17 @@ function scoped(host: HostConfig, key: string) {
   return `${host.id}:${key}`;
 }
 
+/**
+ * Provisional disposition for the collection path. Wave 2 replaces it with the
+ * audited severity/delivery map before the outbox dispatcher is enabled; the
+ * store never chooses a channel on its own.
+ */
+function deliveryFor(severity: string): IncidentDelivery {
+  return severity === "critical"
+    ? { channel: "telegram", reason: "policy_immediate" }
+    : { channel: "digest", reason: "digest_pending" };
+}
+
 async function condition(
   host: HostConfig,
   key: string,
@@ -32,38 +46,30 @@ async function condition(
   duration = 0,
   severity = "warning",
 ) {
-  const [open] = await db
-    .select()
-    .from(alerts)
-    .where(
-      and(
-        eq(alerts.hostId, host.id),
-        eq(alerts.key, key),
-        isNull(alerts.resolvedAt),
-      ),
-    )
-    .limit(1);
   if (!failing) {
     started.delete(scoped(host, key));
-    if (open) {
-      await db
-        .update(alerts)
-        .set({ resolvedAt: new Date(now) })
-        .where(eq(alerts.id, open.id));
-      await notify(
-        "Recuperado: " + title,
-        "La incidencia se ha resuelto.",
-        scoped(host, key) + "-resolved",
-      );
-    }
+    await recordIncidentObservation({
+      hostId: host.id,
+      key,
+      failing: false,
+      now,
+      closedBy: "collector",
+    });
     return;
   }
   if (!started.has(scoped(host, key))) started.set(scoped(host, key), now);
-  if (!open && now - started.get(scoped(host, key))! >= duration * 1000) {
-    await db
-      .insert(alerts)
-      .values({ hostId: host.id, key, title, detail, severity });
-    await notify(title, detail, scoped(host, key));
+  if (now - started.get(scoped(host, key))! >= duration * 1000) {
+    await recordIncidentObservation({
+      hostId: host.id,
+      key,
+      failing: true,
+      severity,
+      title,
+      detail,
+      now,
+      delivery: deliveryFor(severity),
+      closedBy: "collector",
+    });
   }
 }
 
