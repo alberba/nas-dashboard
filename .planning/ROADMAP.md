@@ -93,14 +93,14 @@ Plans:
   2. Mientras el host está caído, las incidencias de contenedor quedan inhibidas con su motivo visible, y al volver no se abren por la caída.
   3. Renombrar o recrear un contenedor deja de producir una incidencia `container:<nombre>` permanente.
   4. Los ayudantes privilegiados huérfanos se recogen y un fallo de limpieza queda visible para el operador.
-**Plans**: 1/3 plans executed
+**Plans**: 2/3 plans executed
 
 Plans:
 **Wave 1**
 - [x] 03-01: Agrupar por host con `services-down` e inhibir contenedores por `connection`
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 03-02: Reconciliar `expectedContainers` con el inventario real y purgar los nombres ausentes con gracia
+- [x] 03-02: Reconciliar `expectedContainers` con el inventario real y purgar los nombres ausentes con gracia
 
 **Wave 3** *(blocked on Wave 2 completion)*
 - [ ] 03-03: Recoger ayudantes huérfanos y hacer visible el fallo de limpieza
@@ -219,7 +219,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 |-------|----------------|--------|-----------|
 | 1. Auditoría del ruido | 3/3 | Complete    | 2026-11-24 |
 | 2. Incidencias y entrega única | 5/5 | Complete    | 2026-11-25 |
-| 3. Agrupación, inventario y ayudantes | 1/3 | In Progress | - |
+| 3. Agrupación, inventario y ayudantes | 2/3 | In Progress | - |
 | 4. Resumen diario | 0/3 | Not started | - |
 | 5. Bot de lectura y reconocimiento | 0/3 | Not started | - |
 | 6. Puerta de seguridad | 0/3 | Not started | - |
