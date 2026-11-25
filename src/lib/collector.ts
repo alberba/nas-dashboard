@@ -564,9 +564,13 @@ export async function collectHost(host: HostConfig, now = Date.now()) {
       continue;
     // The inventory has no execution generation for restarts. Only a
     // confirmed agent response can settle them.
-    // Only a complete Docker list observed after the operation was recorded
-    // can confirm it: a cached list from before is not evidence.
-    const fresh = marker !== null && marker * 1000 > operation.at.getTime();
+    const operationAt = operation.at.getTime();
+    const afterCache = operationAt + CONTAINER_CACHE_INTERVAL_MS;
+    const fresh = marker !== null
+      ? marker * 1000 > operationAt
+      : (operation.action === "start" || operation.action === "stop") &&
+        now > afterCache &&
+        metrics.timestamp * 1000 > afterCache;
     if (!fresh) continue;
     const removing = operation.action === "remove-container";
     const target = removing ? removalTarget(operation.target) : null;

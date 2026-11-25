@@ -1385,6 +1385,40 @@ describe.skipIf(!baseUrl)("incidents API", () => {
     });
   });
 
+  it.each(["start", "stop"] as const)(
+    "reconciles a lost %s on an older agent only after the Docker cache window",
+    async (action) => {
+      const start = Date.UTC(2026, 10, 29, 15);
+      const host = getHosts().find((entry) => entry.id === "nas-home")!;
+      await setSettingsValue(host.id, {
+        expectedContainers: action === "start" ? [] : ["sonarr"],
+      });
+      const [operation] = await pendingOperation(action, containerId, new Date(start));
+      const snapshot = {
+        ...metrics(host.id),
+        containers: [{
+          ...metrics(host.id).containers[0],
+          state: action === "start" ? "running" : "exited",
+        }],
+      };
+      agent.metricsBody = { ...snapshot, timestamp: (start + 5_000) / 1000 };
+      await collectHost(host, start + 5_000);
+      await collectHost(host, start + 20_000);
+      expect(await db.select().from(tables.operations)).toMatchObject([
+        { id: operation.id, status: "pending" },
+      ]);
+
+      agent.metricsBody = { ...snapshot, timestamp: (start + 21_000) / 1000 };
+      await collectHost(host, start + 21_000);
+      expect(await db.select().from(tables.operations)).toMatchObject([
+        { id: operation.id, status: "success" },
+      ]);
+      const { getSettings } = await import("@/lib/settings");
+      expect((await getSettings(host.id)).expectedContainers)
+        .toEqual(action === "start" ? ["sonarr"] : []);
+    },
+  );
+
   it("keeps a removal unconfirmed until the inventory proves the absence", async () => {
     const start = Date.UTC(2026, 10, 26, 16);
     const incidentId = await openIncident("nas-home");
@@ -1416,6 +1450,16 @@ describe.skipIf(!baseUrl)("incidents API", () => {
     let [current] = await db
       .select()
       .from(tables.operations)
+      .where(eq(tables.operations.id, operation.id));
+    expect(current.status).toBe("pending");
+
+    agent.metricsBody = {
+      ...metrics("nas-home"),
+      timestamp: (start + 25_000) / 1000,
+      containers: [],
+    };
+    await collectHost(host, start + 25_000);
+    [current] = await db.select().from(tables.operations)
       .where(eq(tables.operations.id, operation.id));
     expect(current.status).toBe("pending");
 
