@@ -1236,6 +1236,64 @@ class HelperCleanupTest(unittest.TestCase):
             self.registry.section(self.ticks[0])["status"], "indeterminate"
         )
 
+    def test_an_inspection_without_a_valid_stopped_state_preserves_the_helper(self):
+        ident = self.docker.add_helper(
+            owner=self.registry.owner,
+            instance="b" * 32,
+        )
+        detail = self.docker.details[ident]
+        detail.pop("State")
+        reaper = self._reaper()
+
+        for state in (
+            None,
+            {"Status": "unknown"},
+            {"Status": "exited", "Running": True},
+        ):
+            with self.subTest(state=state):
+                if state is not None:
+                    detail["State"] = state
+
+                result = reaper.sweep()
+
+                self.assertEqual(result, {"status": "indeterminate", "deleted": 0})
+                self.assertEqual(self.docker.deletes(), [])
+                self.assertIn(ident, self.docker.containers)
+
+    def test_an_unknown_inventory_state_leaves_the_sweep_indeterminate(self):
+        ident = self.docker.add_helper(
+            owner=self.registry.owner,
+            instance="b" * 32,
+        )
+        self.docker.containers[ident]["State"] = "unknown"
+
+        result = self._reaper().sweep()
+
+        self.assertEqual(result, {"status": "indeterminate", "deleted": 0})
+        self.assertEqual(self.docker.deletes(), [])
+
+    def test_failed_deletes_count_towards_the_candidate_limit(self):
+        for _ in range(6):
+            self.docker.add_helper(owner=self.registry.owner, instance="b" * 32)
+        self.docker.delete_failures = 6
+
+        result = self._reaper().sweep()
+
+        self.assertEqual(len(self.docker.deletes()), 5)
+        self.assertEqual(result, {"status": "indeterminate", "deleted": 0})
+        self.assertEqual(self.registry.section()["pending"], 5)
+
+    def test_a_candidate_beyond_the_limit_prevents_a_clean_sweep(self):
+        for _ in range(6):
+            last = self.docker.add_helper(owner=self.registry.owner, instance="b" * 32)
+        reaper = self._reaper()
+
+        result = reaper.sweep()
+
+        self.assertEqual(result, {"status": "indeterminate", "deleted": 5})
+        self.assertEqual(list(self.docker.containers), [last])
+        self.assertEqual(reaper.sweep(), {"status": "clean", "deleted": 1})
+
     def test_two_coexisting_roles_are_each_deleted_once(self):
         host = self.docker.add_helper(
             owner=self.registry.owner,

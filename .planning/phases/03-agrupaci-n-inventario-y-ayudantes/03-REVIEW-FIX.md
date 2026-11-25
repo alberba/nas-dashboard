@@ -26,16 +26,19 @@ La reconciliación aplica las transferencias inequívocas antes de retirar las v
 
 Sin marca de inventario, el inicio y la parada se confirman cuando tanto la recogida como la muestra superan la fecha de la operación más los 10 segundos de caché del agente. Las pruebas comprueban que una muestra anterior al límite sigue siendo insuficiente cuando se vuelve a servir después, y que un borrado sigue requiriendo la marca de inventario.
 
+### WR-06: Una inspección sin estado permite borrar un ayudante
+
+El barrido exige un estado de Docker que permita el borrado tanto en el inventario como en la inspección. Un estado ausente, desconocido o incompatible con los indicadores de la inspección deja el barrido indeterminado y conserva el ayudante. Las pruebas cubren un estado desconocido en el inventario y una inspección que mantiene el ID y las etiquetas con un estado ausente, desconocido o contradictorio.
+
+### WR-07: El límite del barrido cuenta éxitos y puede acreditar una limpieza parcial
+
+El barrido cuenta cada candidato que intenta procesar. Si el límite deja un candidato elegible pendiente, el resultado es indeterminado hasta un barrido completo. Las pruebas comprueban el máximo de cinco intentos ante seis borrados fallidos y el caso de cinco borrados correctos con un sexto ayudante pendiente que se retira en el siguiente barrido.
+
 ### WR-08: La retención puede dejar bloqueada una incidencia cuando reaparece el contenedor
 
 La retención conserva los grupos referenciados por episodios abiertos. Si el grupo original ya falta, el colector usa el último grupo de conexión disponible como límite de frescura y revalida el episodio cuando reaparece el contenedor. Las pruebas cubren el grupo retenido, una referencia huérfana y la eliminación del grupo cuando el episodio deja de referenciarlo.
 
-## Skipped Issues
+## Verificación de WR-06 y WR-07
 
-### WR-06: Una inspección sin estado permite borrar un ayudante
-
-Asignado a la tarea de Python.
-
-### WR-07: El límite del barrido cuenta éxitos y puede acreditar una limpieza parcial
-
-Asignado a la tarea de Python.
+- `python3 -m unittest discover -s agent -p 'test_maintenance.py'` pasó los 48 tests.
+- `pnpm test:agent` ejecutó 203 tests en el primer intento y en el único reintento, con 200 correctos y 2 omitidos en cada ejecución. En ambos casos, el único error fue el fallo preexistente de `.env.lock` en `test_env_settings.EnvSettingsTest.test_serializes_concurrent_writes_without_losing_updated_bytes`.
