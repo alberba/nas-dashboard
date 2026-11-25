@@ -373,3 +373,212 @@ describe.skipIf(!baseUrl)("incidents migration 0004", () => {
     }
   });
 });
+
+describe.skipIf(!baseUrl)("incidents rollback rehearsal", () => {
+  async function rehearsal() {
+    const context = await createTestDatabase(baseUrl!);
+    const client = new Client({ connectionString: context.url });
+    await client.connect();
+    return { context, client };
+  }
+
+  async function runRollback(client: Client) {
+    await client.query(
+      readFileSync("scripts/rollback/0004_incidents.sql", "utf8"),
+    );
+  }
+
+  it("rehearses 0003 → 0004 → rollback → 0004 without repeating or losing ids", async () => {
+    const { context, client } = await rehearsal();
+    try {
+      await migrateThrough(client, 3);
+      const seeds = await client.query<{
+        id: number;
+        title: string;
+        resolvedEpoch: number | null;
+      }>(`
+        INSERT INTO alerts ("hostId", key, title, detail, severity, at, "resolvedAt") VALUES
+          ('nas-home','connection','hist-resolved','', 'critical', now() - interval '10 days', now() - interval '9 days'),
+          ('nas-home','backup-failed','dup-older','', 'warning', now() - interval '2 days', NULL),
+          ('nas-home','backup-failed','dup-tied-old','', 'warning', now() - interval '1 day', NULL),
+          ('nas-home','backup-failed','dup-tied-new','', 'critical', now() - interval '1 day', NULL),
+          ('apps','backup-failed','other-host-open','', 'warning', now() - interval '1 day', NULL)
+        RETURNING id, title, extract(epoch from "resolvedAt")::double precision AS "resolvedEpoch"
+      `);
+      const seedIds = seeds.rows.map((row) => row.id).sort((a, b) => a - b);
+      const historical = seeds.rows.find((row) => row.title === "hist-resolved")!;
+
+      await migrateAll(client);
+      const migrated = await client.query<{
+        id: number;
+        title: string;
+        closedBy: string | null;
+      }>('SELECT id, title, "closedBy" FROM incidents ORDER BY id');
+      expect(migrated.rows.map((row) => row.id)).toEqual(seedIds);
+      expect(
+        migrated.rows
+          .filter((row) => row.closedBy === "migration-dedup")
+          .map((row) => row.title)
+          .sort(),
+      ).toEqual(["dup-older", "dup-tied-old"]);
+
+      const activity = await client.query<{ id: number }>(`
+        INSERT INTO incidents ("hostId", key, title, detail, severity, fingerprint, seq, origin)
+        VALUES ('apps','connection','post-open','', 'critical','post-open-fp',1,'live')
+        RETURNING id
+      `);
+      const activityId = activity.rows[0].id;
+      await client.query(
+        `INSERT INTO incident_events ("incidentId", seq, kind, severity, title, detail)
+         VALUES ($1, 1, 'opened', 'critical', 'post-open', '')`,
+        [activityId],
+      );
+      await client.query(
+        `INSERT INTO notification_outbox (key, "incidentId", kind, channel, status, result)
+         VALUES ($1, $2, 'incident-open', 'telegram', 'sent', '{"state":"sent","reason":null,"at":"2026-11-25T00:00:00.000Z"}'::jsonb)`,
+        [`incident:${activityId}:open`, activityId],
+      );
+      const postResolved = await client.query<{ id: number }>(`
+        INSERT INTO incidents ("hostId", key, title, detail, severity, fingerprint, seq, origin, "resolvedAt")
+        VALUES ('nas-home','memory','post-resolved','', 'warning','post-resolved-fp',2,'live', now() - interval '1 minute')
+        RETURNING id
+      `);
+      const postResolvedId = postResolved.rows[0].id;
+
+      await runRollback(client);
+
+      const tables = await client.query<{ table_name: string }>(`
+        SELECT table_name FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name IN ('alerts','incidents','incident_events','notification_outbox')
+        ORDER BY table_name
+      `);
+      expect(tables.rows.map((row) => row.table_name)).toEqual(["alerts"]);
+
+      const after = await client.query<{
+        id: number;
+        title: string;
+        resolvedEpoch: number | null;
+      }>(`
+        SELECT id, title, extract(epoch from "resolvedAt")::double precision AS "resolvedEpoch"
+        FROM alerts ORDER BY id
+      `);
+      expect(after.rows.map((row) => row.id)).toEqual(
+        [...seedIds, activityId, postResolvedId].sort((a, b) => a - b),
+      );
+      const openTitles = after.rows
+        .filter((row) => row.resolvedEpoch === null)
+        .map((row) => row.title)
+        .sort();
+      expect(openTitles).toEqual(
+        ["dup-older", "dup-tied-new", "dup-tied-old", "other-host-open", "post-open"].sort(),
+      );
+      expect(
+        after.rows.find((row) => row.title === "hist-resolved")!.resolvedEpoch,
+      ).toBeCloseTo(historical.resolvedEpoch!, 2);
+      expect(
+        after.rows.find((row) => row.title === "post-resolved")!.resolvedEpoch,
+      ).not.toBeNull();
+
+      const appliedAfterRollback = await client.query<{ created_at: string }>(
+        "SELECT created_at FROM drizzle.__drizzle_migrations ORDER BY id",
+      );
+      expect(
+        appliedAfterRollback.rows.map((row) => Number(row.created_at)),
+      ).toEqual(journal().entries.slice(0, 4).map((entry) => entry.when));
+
+      const maxAfterRollback = Math.max(...after.rows.map((row) => row.id));
+      const probe = await client.query<{ id: number }>(`
+        INSERT INTO alerts ("hostId", key, title, detail, severity)
+        VALUES ('apps','rollback-probe','probe','','warning')
+        RETURNING id
+      `);
+      expect(probe.rows[0].id).toBeGreaterThan(maxAfterRollback);
+
+      await migrateAll(client);
+      const reapplied = await client.query<{
+        id: number;
+        origin: string;
+        fingerprint: string;
+      }>("SELECT id, origin, fingerprint FROM incidents ORDER BY id");
+      expect(reapplied.rows.map((row) => row.id)).toEqual(
+        [...after.rows.map((row) => row.id), probe.rows[0].id].sort(
+          (a, b) => a - b,
+        ),
+      );
+      const probeRow = reapplied.rows.find(
+        (row) => row.id === probe.rows[0].id,
+      )!;
+      expect(probeRow.origin).toBe("legacy");
+      expect(probeRow.fingerprint).toMatch(/^[a-f0-9]{32}$/);
+
+      const duplicateOpens = await client.query<{ count: string }>(`
+        SELECT count(*)::text AS count FROM (
+          SELECT "hostId", key, count(*) FROM incidents
+          WHERE "resolvedAt" IS NULL GROUP BY "hostId", key HAVING count(*) > 1
+        ) duplicated
+      `);
+      expect(duplicateOpens.rows[0].count).toBe("0");
+
+      expect(
+        (await client.query("SELECT count(*)::int AS count FROM notification_outbox")).rows[0].count,
+      ).toBe(0);
+      expect(
+        (await client.query("SELECT count(*)::int AS count FROM incident_events")).rows[0].count,
+      ).toBe(0);
+
+      const next = await client.query<{ id: number }>(`
+        INSERT INTO incidents ("hostId", key, title, detail, severity, fingerprint)
+        VALUES ('apps','after-reapply','after','', 'warning','after-fp')
+        RETURNING id
+      `);
+      expect(next.rows[0].id).toBeGreaterThan(probe.rows[0].id);
+
+      const appliedAfterReapply = await client.query<{ created_at: string }>(
+        "SELECT created_at FROM drizzle.__drizzle_migrations ORDER BY id",
+      );
+      expect(
+        appliedAfterReapply.rows.map((row) => Number(row.created_at)),
+      ).toEqual(journal().entries.map((entry) => entry.when));
+    } finally {
+      await client.end();
+      await dropTestDatabase(context);
+    }
+  });
+
+  it("refuses a journal where 0004 is not the last applied advance", async () => {
+    const { context, client } = await rehearsal();
+    try {
+      await migrateThrough(client, 3);
+      await migrateAll(client);
+      await client.query(
+        `INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES ('future-migration', 1795591379121)`,
+      );
+
+      let message = "";
+      try {
+        await runRollback(client);
+      } catch (error) {
+        message = (error as Error).message;
+        await client.query("ROLLBACK");
+      }
+      expect(message).toContain("no es el último avance");
+
+      const incidents = await client.query<{ name: string | null }>(
+        "SELECT to_regclass('public.incidents') AS name",
+      );
+      expect(incidents.rows[0].name).toBe("incidents");
+      const alerts = await client.query<{ name: string | null }>(
+        "SELECT to_regclass('public.alerts') AS name",
+      );
+      expect(alerts.rows[0].name).toBeNull();
+      const journalRows = await client.query<{ count: string }>(
+        "SELECT count(*)::text AS count FROM drizzle.__drizzle_migrations",
+      );
+      expect(journalRows.rows[0].count).toBe("6");
+    } finally {
+      await client.end();
+      await dropTestDatabase(context);
+    }
+  });
+});
