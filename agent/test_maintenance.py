@@ -761,8 +761,8 @@ class DiskExecutorTest(unittest.TestCase):
             def call(self, method, path, body=None, *, timeout=None, raw=False):
                 self.calls.append((method, path, body, raw))
                 if path == "/containers/create":
-                    return {"Id": "helper"}
-                if path == "/containers/helper/logs?stdout=true&stderr=false":
+                    return {"Id": "c" * 64}
+                if path == "/containers/" + "c" * 64 + "/logs?stdout=true&stderr=false":
                     return b"\x01\x00\x00\x00\x00\x00\x00\x03ok\n"
                 return {}
 
@@ -783,11 +783,22 @@ class DiskExecutorTest(unittest.TestCase):
         self.assertIn("/dev:/dev:ro", create[2]["HostConfig"]["Binds"])
         self.assertIn("/sys:/sys:ro", create[2]["HostConfig"]["Binds"])
         self.assertNotIn("PidMode", create[2]["HostConfig"])
+        self.assertEqual(
+            create[2]["Labels"][helper_cleanup.FAMILY_LABEL], "disk"
+        )
         self.assertIn(
-            ("GET", "/containers/helper/logs?stdout=true&stderr=false", None, True),
+            (
+                "GET",
+                "/containers/" + "c" * 64 + "/logs?stdout=true&stderr=false",
+                None,
+                True,
+            ),
             socket.calls,
         )
-        self.assertIn(("DELETE", "/containers/helper?force=1", None, False), socket.calls)
+        self.assertIn(
+            ("DELETE", "/containers/" + "c" * 64 + "?v=0", None, False),
+            socket.calls,
+        )
 
 
 class FakeNotFound(OSError):
@@ -1054,6 +1065,249 @@ class HelperCleanupTest(unittest.TestCase):
             docker=self.docker, registry=self.registry, clock=self.clock
         )
         reaper.sweep()
+        self.assertEqual(self.registry.section(self.ticks[0])["status"], "clean")
+
+    def _reaper(self):
+        return helper_cleanup.HelperReaper(
+            docker=self.docker, registry=self.registry, clock=self.clock
+        )
+
+    def test_a_previous_generation_orphan_is_deleted_without_volumes(self):
+        ident = self.docker.add_helper(
+            owner=self.registry.owner,
+            instance="b" * 32,
+            family="host",
+        )
+        self.assertEqual(
+            self.registry.section(self.ticks[0])["status"], "indeterminate"
+        )
+
+        result = self._reaper().sweep()
+
+        self.assertEqual(result["deleted"], 1)
+        self.assertEqual(
+            self.docker.deletes(), ["/containers/" + ident + "?v=0"]
+        )
+        self.assertEqual(self.registry.section(self.ticks[0])["status"], "clean")
+
+    def test_foreign_containers_with_the_same_image_are_never_deleted(self):
+        self.docker.add_helper(
+            owner=self.registry.owner,
+            instance="b" * 32,
+            marker=False,
+        )
+        self.docker.add_helper(
+            owner="hub-agent:other:instance",
+            instance="b" * 32,
+            family="host",
+        )
+
+        result = self._reaper().sweep()
+
+        self.assertEqual(result["deleted"], 0)
+        self.assertEqual(self.docker.deletes(), [])
+
+    def test_incomplete_ownership_labels_are_preserved(self):
+        self.docker.add_helper(
+            owner=self.registry.owner,
+            instance=None,
+            family="host",
+        )
+        result = self._reaper().sweep()
+        self.assertEqual(result["deleted"], 0)
+        self.assertEqual(self.docker.deletes(), [])
+        self.assertEqual(
+            self.registry.section(self.ticks[0])["status"], "indeterminate"
+        )
+
+        self.docker.containers.clear()
+        self.docker.details.clear()
+        self.docker.add_helper(
+            owner=self.registry.owner,
+            instance="b" * 32,
+            family=None,
+        )
+        result = self._reaper().sweep()
+        self.assertEqual(result["deleted"], 0)
+        self.assertEqual(self.docker.deletes(), [])
+
+    def test_active_helpers_and_old_running_helpers_are_preserved(self):
+        running = self.docker.add_helper(
+            owner=self.registry.owner,
+            instance="b" * 32,
+            family="host",
+            state="running",
+            created=self.ticks[0] - 900,
+        )
+        active = self.docker.add_helper(
+            owner=self.registry.owner,
+            instance=self.registry.instance,
+            family="host",
+            state="exited",
+            created=self.ticks[0] - 900,
+        )
+        self.registry.enrol(active, "host")
+
+        result = self._reaper().sweep()
+
+        self.assertEqual(result["deleted"], 0)
+        self.assertEqual(self.docker.deletes(), [])
+        self.assertIn(running, self.docker.containers)
+        self.assertIn(active, self.docker.containers)
+
+        self.registry.release(active)
+        result = self._reaper().sweep()
+        self.assertEqual(result["deleted"], 1)
+        self.assertIn(running, self.docker.containers)
+        self.assertNotIn(active, self.docker.containers)
+
+    def test_the_reboot_helper_is_protected_while_it_runs(self):
+        running = self.docker.add_helper(
+            owner=self.registry.owner,
+            instance=self.registry.instance,
+            family="reboot",
+            state="running",
+            created=self.ticks[0] - 900,
+        )
+        self.registry.enrol(running, "reboot")
+        self.registry.protect(running)
+        stopped = self.docker.add_helper(
+            owner=self.registry.owner,
+            instance="b" * 32,
+            family="reboot",
+            state="exited",
+            created=self.ticks[0] - 900,
+        )
+        self.registry.enrol(stopped, "reboot")
+        self.registry.protect(stopped)
+
+        result = self._reaper().sweep()
+
+        self.assertEqual(result["deleted"], 0)
+        self.assertEqual(self.docker.deletes(), [])
+
+    def test_an_invalid_identifier_leaves_the_sweep_indeterminate(self):
+        self.docker.containers["bad"] = {
+            "Id": "not-a-docker-id",
+            "Labels": {},
+            "State": "exited",
+            "Created": 300.0,
+        }
+
+        result = self._reaper().sweep()
+
+        self.assertEqual(result["deleted"], 0)
+        self.assertEqual(self.docker.deletes(), [])
+        self.assertEqual(
+            self.registry.section(self.ticks[0])["status"], "indeterminate"
+        )
+
+    def test_an_inventory_failure_preserves_the_pending_attempts(self):
+        ident = self.docker.add_helper(
+            owner=self.registry.owner,
+            instance="b" * 32,
+            family="host",
+        )
+        self.registry.discover(ident, "host", 300.0)
+        self.registry.record_delete_failure(ident, "host", self.ticks[0])
+        self.docker.fail_list = True
+
+        result = self._reaper().sweep()
+
+        self.assertEqual(result["deleted"], 0)
+        self.assertEqual(self.docker.deletes(), [])
+        section = self.registry.section(self.ticks[0])
+        self.assertEqual(section["status"], "indeterminate")
+        self.assertEqual(section["pending"], 1)
+
+    def test_an_incoherent_inspection_preserves_the_helper(self):
+        ident = self.docker.add_helper(
+            owner=self.registry.owner,
+            instance="b" * 32,
+            family="host",
+        )
+        self.docker.details[ident]["Id"] = "d" * 64
+
+        result = self._reaper().sweep()
+
+        self.assertEqual(result["deleted"], 0)
+        self.assertEqual(self.docker.deletes(), [])
+        self.assertEqual(
+            self.registry.section(self.ticks[0])["status"], "indeterminate"
+        )
+
+    def test_two_coexisting_roles_are_each_deleted_once(self):
+        host = self.docker.add_helper(
+            owner=self.registry.owner,
+            instance="b" * 32,
+            family="host",
+        )
+        disk = self.docker.add_helper(
+            owner=self.registry.owner,
+            instance="b" * 32,
+            family="disk",
+        )
+
+        result = self._reaper().sweep()
+
+        self.assertEqual(result["deleted"], 2)
+        self.assertEqual(
+            sorted(self.docker.deletes()),
+            sorted(
+                [
+                    "/containers/" + host + "?v=0",
+                    "/containers/" + disk + "?v=0",
+                ]
+            ),
+        )
+
+    def test_a_lost_counter_does_not_imply_recovery(self):
+        self.docker.add_helper(
+            owner=self.registry.owner,
+            instance="b" * 32,
+            family="host",
+        )
+        self.docker.delete_failures = 1
+
+        self._reaper().sweep()
+        section = self.registry.section(self.ticks[0])
+        self.assertEqual(section["status"], "failing")
+        self.assertEqual(section["pending"], 1)
+        self.assertEqual(section["persistent"], 0)
+
+        self._reaper().sweep()
+        self.assertEqual(
+            self.registry.section(self.ticks[0])["status"], "clean"
+        )
+
+    def test_a_too_recent_orphan_is_preserved(self):
+        self.docker.add_helper(
+            owner=self.registry.owner,
+            instance="b" * 32,
+            family="host",
+            created=self.ticks[0] - 60,
+        )
+
+        result = self._reaper().sweep()
+
+        self.assertEqual(result["deleted"], 0)
+        self.assertEqual(self.docker.deletes(), [])
+
+    def test_a_pending_helper_absent_from_a_complete_list_is_accredited(self):
+        ident = self.docker.add_helper(
+            owner=self.registry.owner,
+            instance="b" * 32,
+            family="host",
+        )
+        self.registry.discover(ident, "host", 300.0)
+        self.registry.record_delete_failure(ident, "host", self.ticks[0])
+        self.docker.containers.clear()
+        self.docker.details.clear()
+
+        result = self._reaper().sweep()
+
+        self.assertEqual(result["deleted"], 0)
+        self.assertEqual(self.docker.deletes(), [])
         self.assertEqual(self.registry.section(self.ticks[0])["status"], "clean")
 
     def test_an_older_check_date_never_replaces_a_newer_one(self):

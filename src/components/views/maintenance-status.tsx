@@ -59,7 +59,7 @@ function cleanupSegment(
   if (!cleanup || cleanup.available !== true) return null;
   const checked = relative(cleanup.checkedAt, nowMs);
   const count =
-    cleanup.status === "persistent" || cleanup.status === "failing"
+    cleanup.pending > 0
       ? `${cleanup.pending} ${
           cleanup.pending === 1 ? "pendiente" : "pendientes"
         }`
@@ -94,7 +94,7 @@ function cleanupSegment(
     ...base,
     state: "indeterminate",
     tone: "muted",
-    value: "Sin confirmar",
+    value: count ? `${count} sin confirmar` : "Sin confirmar",
     detail: "sin inventario completo",
   };
 }

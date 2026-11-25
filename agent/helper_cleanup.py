@@ -138,7 +138,7 @@ class HelperRegistry:
         self._in_flight = set()
         self._last_sweep = None
         self._last_check = None
-        self._indeterminate = True
+        self._sweep_failed = False
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -293,7 +293,7 @@ class HelperRegistry:
 
     def mark_indeterminate(self, now=None):
         with self._lock:
-            self._indeterminate = True
+            self._sweep_failed = True
             self._note_check(now)
 
     def finish_sweep(self, now, complete):
@@ -301,20 +301,20 @@ class HelperRegistry:
             if complete:
                 if self._last_sweep is None or now > self._last_sweep:
                     self._last_sweep = now
-                self._indeterminate = False
-            else:
-                self._indeterminate = True
+            self._sweep_failed = not complete
             self._note_check(now)
 
     def section(self, now=None):
         with self._lock:
             pending = self.pending_count()
             persistent = self.persistent_count()
-            if persistent:
+            if self._sweep_failed:
+                status = "indeterminate"
+            elif persistent:
                 status = "persistent"
             elif pending:
                 status = "failing"
-            elif self._indeterminate or self._last_sweep is None:
+            elif self._last_sweep is None:
                 status = "indeterminate"
             else:
                 status = "clean"
@@ -394,7 +394,11 @@ class HelperReaper:
             for entry in parsed:
                 if deleted >= self.max_candidates:
                     break
-                if not self._eligible(entry, now):
+                eligible = self._eligible(entry, now)
+                if eligible == "indeterminate":
+                    complete = False
+                    continue
+                if not eligible:
                     continue
                 outcome = self._delete(entry, now)
                 if outcome == "deleted":
@@ -448,10 +452,10 @@ class HelperReaper:
         if not entry["instance"] or not INSTANCE_PATTERN.fullmatch(entry["instance"]):
             # Ownership cannot be proved: leave the sweep indeterminate.
             self.registry.mark_indeterminate(now)
-            return False
+            return "indeterminate"
         if entry["created"] is None:
             self.registry.mark_indeterminate(now)
-            return False
+            return "indeterminate"
         if entry["state"] in ACTIVE_STATES:
             # Running helpers may still be serving; never delete them.
             return False

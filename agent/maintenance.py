@@ -509,9 +509,10 @@ class HostExecutor:
 class DiskExecutor:
     """Runs smartctl inside the helper image with the host devices mounted read-only."""
 
-    def __init__(self, docker=None, image=None):
+    def __init__(self, docker=None, image=None, registry=None):
         self.docker = docker or DockerSocket(timeout=15)
         self.image = image or os.getenv("HOST_HELPER_IMAGE", "hub-agent:1")
+        self.registry = registry or helper_cleanup_module.shared_registry()
 
     def run(self, argv, timeout=15):
         if not isinstance(argv, list) or not argv:
@@ -523,6 +524,7 @@ class DiskExecutor:
                 "Image": self.image,
                 "Entrypoint": [argv[0]],
                 "Cmd": argv[1:],
+                "Labels": self.registry.labels("disk"),
                 "HostConfig": {
                     "Privileged": True,
                     "Binds": ["/dev:/dev:ro", "/sys:/sys:ro"],
@@ -533,6 +535,7 @@ class DiskExecutor:
             timeout=timeout,
         )
         ident = created["Id"]
+        self.registry.enrol(ident, "disk")
         try:
             self.docker.call(
                 "POST", "/containers/" + ident + "/start", timeout=timeout
@@ -548,12 +551,10 @@ class DiskExecutor:
             )
             return demultiplex_logs(logs)
         finally:
-            try:
-                self.docker.call(
-                    "DELETE", "/containers/" + ident + "?force=1", timeout=timeout
-                )
-            except (OSError, ValueError):
-                pass
+            self.registry.release(ident)
+            helper_cleanup_module.delete_helper(
+                self.docker, self.registry, ident, timeout
+            )
 
 
 class HostReader:
