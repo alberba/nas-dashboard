@@ -62,6 +62,15 @@ function forgetContainers(host: HostConfig) {
 }
 
 /**
+ * A list evaluated before the outage is not a candidate for fresh evidence
+ * after recovery. Dropping the mark forces the next Docker read to prove
+ * itself against the outage date instead of the pre-outage cache.
+ */
+function forgetInventoryMark(host: HostConfig) {
+  lastInventorySeen.delete(host.id);
+}
+
+/**
  * Audited disposition for the collection path. Severity alone is not enough:
  * `disk-health` escalates from digest to immediate and `container:<name>` is
  * silent at every severity.
@@ -314,6 +323,7 @@ export async function collectHost(host: HostConfig, now = Date.now()) {
     // A transport failure ends the container windows immediately, even before
     // the 60-second outage threshold is reached (D-03).
     forgetContainers(host);
+    forgetInventoryMark(host);
     const [planned] = await db
       .select()
       .from(operations)

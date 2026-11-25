@@ -1375,6 +1375,190 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
     });
   });
 
+  it("confirms previous episodes only with post-outage evidence and windows new failures", async () => {
+    const start = Date.UTC(2027, 0, 7, 10);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    await setSettings("nas-home", {
+      expectedContainers: [
+        "legacy-running",
+        "legacy-stopped",
+        "legacy-absent",
+        "healthy-now-stopped",
+      ],
+    });
+    await collectHost(host, start - 5_000);
+    const runningId = await openContainer(
+      "nas-home",
+      "legacy-running",
+      start - 20_000,
+    );
+    const stoppedId = await openContainer(
+      "nas-home",
+      "legacy-stopped",
+      start - 19_000,
+    );
+    const absentId = await openContainer(
+      "nas-home",
+      "legacy-absent",
+      start - 18_000,
+    );
+    await db.insert(tables.samples).values({
+      hostId: "nas-home",
+      at: new Date(start - 30_000),
+      data: metricsSnapshot({
+        containersObservedAt: (start - 31_000) / 1000,
+        containers: [
+          containerOf("legacy-running", "running"),
+          containerOf("legacy-stopped", "exited"),
+          containerOf("legacy-absent", "running"),
+          containerOf("healthy-now-stopped", "running"),
+        ],
+      }) as never,
+    });
+    nas.failMetrics = true;
+    await collectHost(host, start);
+    await collectHost(host, start + 61_000);
+    let current = await state();
+    const group = current.incidents.find(
+      (row) => row.key === "connection" && row.hostId === "nas-home",
+    )!;
+    expect(
+      current.incidents
+        .filter((row) => row.inhibitedBy === group.id)
+        .map((row) => row.key)
+        .sort(),
+    ).toEqual([
+      "container:legacy-absent",
+      "container:legacy-running",
+      "container:legacy-stopped",
+    ]);
+
+    // A Docker cache from before the confirmed outage is not evidence.
+    const stale = (start + 30_000) / 1000;
+    nas.failMetrics = false;
+    nas.metrics = metricsSnapshot({
+      timestamp: (start + 62_000) / 1000,
+      containersObservedAt: stale,
+      containers: [
+        containerOf("legacy-running", "running"),
+        containerOf("legacy-stopped", "exited"),
+        containerOf("healthy-now-stopped", "exited"),
+      ],
+    });
+    await collectHost(host, start + 62_000);
+    current = await state();
+    expect(
+      current.incidents.find((row) => row.id === group.id)!.resolvedAt,
+    ).not.toBeNull();
+    expect(
+      current.incidents.find((row) => row.id === stoppedId),
+    ).toMatchObject({ inhibitedBy: group.id, observationPending: true, seq: 2 });
+    expect(
+      current.incidents.find((row) => row.id === runningId),
+    ).toMatchObject({ resolvedAt: null, seq: 2 });
+    // Repeating the same cache is not a new observation.
+    await collectHost(host, start + 72_000);
+    current = await state();
+    expect(
+      current.incidents.find((row) => row.id === stoppedId)!.seq,
+    ).toBe(2);
+    expect(
+      current.incidents.find((row) => row.key === "container:healthy-now-stopped"),
+    ).toBeUndefined();
+
+    // A fresh list releases each previous episode: running closes, stopped
+    // resumes the same ID, absence stays pending for 03-02.
+    nas.metrics = metricsSnapshot({
+      timestamp: (start + 80_000) / 1000,
+      containersObservedAt: (start + 80_000) / 1000,
+      containers: [
+        containerOf("legacy-running", "running"),
+        containerOf("legacy-stopped", "exited"),
+        containerOf("healthy-now-stopped", "exited"),
+      ],
+    });
+    await collectHost(host, start + 80_000);
+    current = await state();
+    expect(
+      current.incidents.find((row) => row.id === runningId),
+    ).toMatchObject({ resolvedAt: expect.any(Date), seq: 3, observationPending: false });
+    expect(
+      current.incidents.find((row) => row.id === stoppedId),
+    ).toMatchObject({
+      id: stoppedId,
+      resolvedAt: null,
+      seq: 3,
+      inhibitedBy: null,
+      inhibitedReason: null,
+      observationPending: false,
+    });
+    expect(
+      current.incidents.find((row) => row.id === absentId),
+    ).toMatchObject({
+      resolvedAt: null,
+      seq: 2,
+      inhibitedBy: group.id,
+      observationPending: true,
+    });
+    expect(
+      current.events.filter(
+        (event) => event.incidentId === stoppedId && event.kind === "resumed",
+      ),
+    ).toHaveLength(1);
+    expect(
+      current.outbox.filter((notice) => notice.incidentId === stoppedId),
+    ).toHaveLength(1);
+    // The group closes exactly once and never creates a recovery message.
+    expect(
+      current.outbox.filter((notice) => notice.incidentId === group.id),
+    ).toHaveLength(1);
+    expect(
+      current.incidents.find((row) => row.key === "container:healthy-now-stopped"),
+    ).toBeUndefined();
+
+    // The new failure needs its own 30-second window of fresh observations.
+    nas.metrics = metricsSnapshot({
+      timestamp: (start + 90_000) / 1000,
+      containersObservedAt: (start + 90_000) / 1000,
+      containers: [
+        containerOf("legacy-running", "running"),
+        containerOf("legacy-stopped", "exited"),
+        containerOf("healthy-now-stopped", "exited"),
+      ],
+    });
+    await collectHost(host, start + 90_000);
+    current = await state();
+    expect(
+      current.incidents.find((row) => row.key === "container:healthy-now-stopped"),
+    ).toBeUndefined();
+
+    nas.metrics = metricsSnapshot({
+      timestamp: (start + 110_000) / 1000,
+      containersObservedAt: (start + 110_000) / 1000,
+      containers: [
+        containerOf("legacy-running", "running"),
+        containerOf("legacy-stopped", "exited"),
+        containerOf("healthy-now-stopped", "exited"),
+      ],
+    });
+    await collectHost(host, start + 110_000);
+    current = await state();
+    const newFailure = current.incidents.find(
+      (row) => row.key === "container:healthy-now-stopped",
+    )!;
+    expect(newFailure).toMatchObject({ resolvedAt: null, seq: 1 });
+    const newNotice = current.outbox.find(
+      (notice) => notice.incidentId === newFailure.id,
+    )!;
+    expect(newNotice).toMatchObject({
+      channel: "silent",
+      status: "suppressed",
+    });
+    expect(
+      current.incidents.find((row) => row.id === group.id)!.seq,
+    ).toBe(2);
+  });
+
   it("delivers the outage notice with the host and link but never the inventory", async () => {
     const start = Date.UTC(2027, 0, 8, 10);
     const host = getHosts().find((entry) => entry.id === "nas-home")!;
