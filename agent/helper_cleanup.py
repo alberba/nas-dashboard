@@ -147,7 +147,8 @@ class HelperRegistry:
         self._lock = threading.RLock()
         self._records = {}
         self._in_flight = set()
-        self._last_sweep = None
+        self._failure_revision = 0
+        self._swept_failure_revision = None
         self._last_check = None
         self._sweep_failed = False
 
@@ -253,6 +254,8 @@ class HelperRegistry:
                     "attempts": 0,
                 }
                 self._records[ident] = record
+            self._failure_revision += 1
+            record["failure_revision"] = self._failure_revision
             record["attempts"] += 1
             record["active"] = False
             self._note_check(now)
@@ -307,11 +310,27 @@ class HelperRegistry:
             self._sweep_failed = True
             self._note_check(now)
 
-    def finish_sweep(self, now, complete):
+    def failure_revision(self):
         with self._lock:
+            return self._failure_revision
+
+    def finish_sweep(self, now, complete, *, inventory_revision=None, present=()):
+        with self._lock:
+            if inventory_revision is not None:
+                # The list can only cover failures recorded before its request.
+                for ident in self.pending_ids():
+                    record = self._records[ident]
+                    if (
+                        ident not in present
+                        and record["failure_revision"] <= inventory_revision
+                    ):
+                        self.confirm_absent(ident, now)
             if complete:
-                if self._last_sweep is None or now > self._last_sweep:
-                    self._last_sweep = now
+                self._swept_failure_revision = (
+                    self._failure_revision
+                    if inventory_revision is None
+                    else inventory_revision
+                )
             self._sweep_failed = not complete
             self._note_check(now)
 
@@ -325,7 +344,7 @@ class HelperRegistry:
                 status = "persistent"
             elif pending:
                 status = "failing"
-            elif self._last_sweep is None:
+            elif self._swept_failure_revision != self._failure_revision:
                 status = "indeterminate"
             else:
                 status = "clean"
@@ -383,6 +402,7 @@ class HelperReaper:
         complete = True
         try:
             now = self.clock()
+            inventory_revision = self.registry.failure_revision()
             try:
                 items = self.docker.call(
                     "GET", "/containers/json?all=true", timeout=self.timeout
@@ -397,11 +417,6 @@ class HelperReaper:
                 return {"status": "indeterminate", "deleted": 0}
 
             present = {entry["id"] for entry in parsed}
-            # A complete list that no longer contains a pending id is positive
-            # evidence of its absence, not a missing reading.
-            for ident in self.registry.pending_ids():
-                if ident not in present:
-                    self.registry.confirm_absent(ident, now)
 
             for entry in parsed:
                 eligible = self._eligible(entry, now)
@@ -420,7 +435,9 @@ class HelperReaper:
                 elif outcome == "indeterminate":
                     complete = False
 
-            self.registry.finish_sweep(now, complete)
+            self.registry.finish_sweep(
+                now, complete, inventory_revision=inventory_revision, present=present
+            )
             return {
                 "status": self.registry.section(now)["status"],
                 "deleted": deleted,

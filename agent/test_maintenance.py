@@ -1202,6 +1202,28 @@ class HelperCleanupTest(unittest.TestCase):
             self.registry.section(self.ticks[0])["status"], "indeterminate"
         )
 
+    def test_an_inventory_cannot_clear_failures_recorded_during_the_list(self):
+        first = "d" * 64
+        second = "e" * 64
+        registry = self.registry
+        registry.record_delete_failure(first, "host", self.clock())
+
+        class ConcurrentFailureDocker(HelperDocker):
+            def call(self, method, path, body=None, *, timeout=None, raw=False):
+                result = super().call(method, path, body, timeout=timeout, raw=raw)
+                if method == "GET" and path == "/containers/json?all=true":
+                    registry.record_delete_failure(second, "host", self.clock())
+                    registry.record_delete_failure(second, "host", self.clock())
+                return result
+
+        self.docker = ConcurrentFailureDocker(clock=self.clock)
+        result = self._reaper().sweep()
+
+        self.assertEqual(self.registry.pending_ids(), [second])
+        self.assertEqual(self.registry.section()["persistent"], 1)
+        self.assertNotEqual(result["status"], "clean")
+        self.assertNotEqual(self.registry.section()["status"], "clean")
+
     def test_an_inventory_failure_preserves_the_pending_attempts(self):
         ident = self.docker.add_helper(
             owner=self.registry.owner,
