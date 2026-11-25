@@ -1,5 +1,6 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { Client } from "pg";
 import { eq } from "drizzle-orm";
 import { describe, expect, it, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import {
@@ -9,6 +10,8 @@ import {
   type TestDatabase,
 } from "./database";
 import { deploymentsSnapshot, maintenanceSnapshot, metricsSnapshot } from "./host-fixtures";
+import type { RuntimeConfig } from "@/lib/runtime-config";
+import type { TelegramTransport } from "@/lib/telegram";
 
 type AgentState = {
   maintenance: unknown;
@@ -120,6 +123,15 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
         .orderBy(tables.incidents.id),
       events: await db.select().from(tables.incidentEvents),
       outbox: await db.select().from(tables.notificationOutbox),
+    };
+  }
+
+  function containerOf(name: string, state: string) {
+    return {
+      ...metricsSnapshot().containers[0],
+      name,
+      state,
+      status: state === "running" ? "Up 1 hour" : "Exited (0)",
     };
   }
 
@@ -1116,5 +1128,222 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
     expect(
       current.incidents.filter((row) => row.key === "temperature"),
     ).toMatchObject([{ resolvedAt: null, seq: 1 }]);
+  });
+
+  it("groups a sustained outage into one services-down episode with a dated inventory", async () => {
+    const start = Date.UTC(2027, 0, 5, 10);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    await setSettings("nas-home", { expectedContainers: [] });
+    // A healthy baseline clears any sustained timer left by another test.
+    await collectHost(host, start - 5_000);
+    await db.insert(tables.samples).values({
+      hostId: "nas-home",
+      at: new Date(start - 30_000),
+      data: metricsSnapshot({
+        containersObservedAt: (start - 31_000) / 1000,
+        containers: [
+          containerOf("sonarr", "running"),
+          containerOf("radarr", "exited"),
+        ],
+      }) as never,
+    });
+    nas.failMetrics = true;
+
+    await collectHost(host, start);
+    let current = await state();
+    expect(
+      current.incidents.filter((row) => row.key === "connection"),
+    ).toHaveLength(0);
+
+    await collectHost(host, start + 61_000);
+    current = await state();
+    const groups = current.incidents.filter((row) => row.key === "connection");
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({
+      hostId: "nas-home",
+      key: "connection",
+      severity: "critical",
+      resolvedAt: null,
+    });
+    expect(groups[0].title).toContain("NAS-HOME");
+    expect(groups[0].detail).not.toContain("sonarr");
+    expect(groups[0].context).toMatchObject({
+      kind: "services-down",
+      observedFrom: "inventory",
+      complete: true,
+      omitted: 0,
+      entries: [
+        { name: "sonarr", state: "running" },
+        { name: "radarr", state: "exited" },
+      ],
+    });
+    expect(groups[0].context!.observedAt).toBeCloseTo(
+      (start - 31_000) / 1000,
+      3,
+    );
+    const notices = current.outbox.filter(
+      (row) => row.incidentId === groups[0].id,
+    );
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({
+      key: `incident:${groups[0].id}:open`,
+      kind: "incident-open",
+      channel: "telegram",
+      status: "pending",
+    });
+
+    await collectHost(host, start + 122_000);
+    await collectHost(host, start + 183_000);
+    current = await state();
+    expect(
+      current.incidents.filter((row) => row.key === "connection"),
+    ).toHaveLength(1);
+    expect(current.outbox).toHaveLength(1);
+    expect(current.incidents.some((row) => row.hostId === "apps")).toBe(false);
+
+    const [projected] = await store.projectIncidents(groups);
+    expect(projected).toMatchObject({
+      kind: "services-down",
+      inventory: expect.objectContaining({
+        complete: true,
+        entries: [
+          { name: "sonarr", state: "running" },
+          { name: "radarr", state: "exited" },
+        ],
+      }),
+    });
+  });
+
+  it("labels an older agent inventory with the sample date and keeps unknown state explicit", async () => {
+    const start = Date.UTC(2027, 0, 5, 18);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    await setSettings("nas-home", { expectedContainers: [] });
+    await collectHost(host, start - 5_000);
+    await db.insert(tables.samples).values({
+      hostId: "nas-home",
+      at: new Date(start - 45_000),
+      data: metricsSnapshot({
+        containers: [containerOf("sonarr", "running")],
+      }) as never,
+    });
+    nas.failMetrics = true;
+    await collectHost(host, start);
+    await collectHost(host, start + 61_000);
+    let current = await state();
+    let group = current.incidents.find((row) => row.key === "connection")!;
+    expect(group.context).toMatchObject({
+      observedFrom: "sample",
+      complete: true,
+      observedAt: (start - 45_000) / 1000,
+    });
+
+    // A second host with no stored sample keeps an unknown state instead of
+    // inventing an empty inventory.
+    await db.delete(tables.notificationOutbox);
+    await db.delete(tables.incidentEvents);
+    await db.delete(tables.incidents);
+    await db.delete(tables.samples);
+    nas.reset();
+    apps.failMetrics = true;
+    const appsHost = getHosts().find((entry) => entry.id === "apps")!;
+    await collectHost(appsHost, start + 200_000);
+    await collectHost(appsHost, start + 261_000);
+    current = await state();
+    group = current.incidents.find((row) => row.key === "connection")!;
+    expect(group.context).toEqual({
+      kind: "services-down",
+      observedAt: null,
+      observedFrom: "unknown",
+      complete: false,
+      entries: [],
+      omitted: 0,
+    });
+  });
+
+  it("delivers the outage notice with the host and link but never the inventory", async () => {
+    const start = Date.UTC(2027, 0, 8, 10);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    await setSettings("nas-home", { expectedContainers: [] });
+    await collectHost(host, start - 5_000);
+    await db.insert(tables.samples).values({
+      hostId: "nas-home",
+      at: new Date(start - 30_000),
+      data: metricsSnapshot({
+        containersObservedAt: (start - 31_000) / 1000,
+        containers: [containerOf("sonarr", "running")],
+      }) as never,
+    });
+    nas.failMetrics = true;
+    await collectHost(host, start);
+    await collectHost(host, start + 61_000);
+    const current = await state();
+    const group = current.incidents.find((row) => row.key === "connection")!;
+
+    const calls: Array<{ body: Record<string, unknown> }> = [];
+    const transport: TelegramTransport = async (_url, init) => {
+      calls.push({ body: JSON.parse(String(init.body)) as Record<string, unknown> });
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          result: { message_id: 501, chat: { id: -1001234567890 } },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    };
+    const dispatch = await import("@/lib/notification-dispatch");
+    const client = new Client({ connectionString: context.url });
+    await client.connect();
+    try {
+      expect(await dispatch.acquireCollectionLock(client)).toBe(true);
+      const config: RuntimeConfig = {
+        databaseUrl: context.url,
+        betterAuthSecret: "b".repeat(32),
+        betterAuthUrl: "https://hub.example.com",
+        setupToken: "s".repeat(32),
+        trustedOrigins: [],
+        hosts: [],
+        telegram: {
+          botToken: "123456:abcdefghijklmnopqrstuvwxyzABCDEFGH",
+          chatId: "-1001234567890",
+        },
+        vapid: null,
+        pushWarnings: false,
+      };
+      const result = await dispatch.runDispatchOnce({
+        client,
+        config,
+        now: () => start + 62_000,
+        fetchImpl: transport,
+      });
+      expect(result.action).toBe("sent");
+      expect(calls).toHaveLength(1);
+      const text = String(calls[0].body.text);
+      expect(text).toContain("NAS-HOME");
+      expect(text).toContain("critical");
+      expect(text).not.toContain("sonarr");
+      expect(text).not.toContain("inventory");
+      const markup = calls[0].body.reply_markup as {
+        inline_keyboard: Array<Array<{ text: string; url: string }>>;
+      };
+      const url = new URL(markup.inline_keyboard[0][0].url);
+      expect(url.searchParams.get("view")).toBe("alerts");
+      expect(url.searchParams.get("host")).toBe("nas-home");
+      expect(url.searchParams.get("incident")).toBe(String(group.id));
+      expect(url.origin).toBe("https://hub.example.com");
+    } finally {
+      await client.end();
+    }
+
+    const after = await state();
+    expect(
+      after.outbox.filter((notice) => notice.incidentId === group.id),
+    ).toHaveLength(1);
+    expect(after.outbox[0].status).toBe("sent");
+    // The inventory is stored for the authenticated detail, never serialized
+    // into the provider payload asserted above.
+    expect(after.incidents[0].context?.entries).toContainEqual({
+      name: "sonarr",
+      state: "running",
+    });
   });
 });

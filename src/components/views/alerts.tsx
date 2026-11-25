@@ -66,6 +66,50 @@ function DeliveryStatus({
   );
 }
 
+function inventoryTime(value: number | null) {
+  return value === null ? "Sin inventario conocido" : new Date(value * 1000).toLocaleString("es");
+}
+
+function InventoryDetail({ alert }: { alert: Alert }) {
+  const inventory = alert.inventory;
+  if (!inventory) return null;
+  return (
+    <div
+      className="alert-inventory"
+      data-incident-group="services-down"
+      data-inventory-source={inventory.observedFrom}
+      data-inventory-complete={inventory.complete ? "true" : "false"}
+      data-inventory-observed-at={inventory.observedAt ?? undefined}
+      data-inventory-count={inventory.entries.length}
+      data-inventory-omitted={inventory.omitted}
+    >
+      <span className="alert-inventory-label">Último inventario conocido</span>
+      <time>{inventoryTime(inventory.observedAt)}</time>
+      {!inventory.complete ? (
+        <p className="subtle">No hay una lectura válida del inventario de este host.</p>
+      ) : inventory.entries.length === 0 ? (
+        <p className="subtle">El host no tenía contenedores en esa lectura.</p>
+      ) : (
+        <ul className="alert-inventory-list">
+          {inventory.entries.map((entry) => (
+            <li key={entry.name} data-inventory-entry={entry.name}>
+              <span>{entry.name}</span>
+              <span data-inventory-state={entry.state}>
+                {entry.state === "running" ? "En marcha" : "Detenido"}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {inventory.omitted > 0 && (
+        <p className="subtle" data-inventory-remaining={inventory.omitted}>
+          {inventory.omitted} contenedores más no se muestran.
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function AlertsView({
   data,
   requested,
@@ -124,6 +168,7 @@ export function AlertsView({
               className="alert-row"
               key={alert.id}
               data-incident={alert.id}
+              data-incident-kind={alert.kind}
               data-incident-selected={selected ? "true" : undefined}
               data-severity={alert.severity}
               data-delivery-state={alert.delivery.state}
@@ -151,6 +196,7 @@ export function AlertsView({
                   )}
                 </div>
                 <p className="subtle">{alert.detail}</p>
+                <InventoryDetail alert={alert} />
                 <time>
                   {new Date(alert.at).toLocaleString("es")}
                   {alert.resolvedAt

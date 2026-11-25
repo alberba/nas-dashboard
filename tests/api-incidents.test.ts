@@ -596,6 +596,133 @@ describe.skipIf(!baseUrl)("incidents API", () => {
     }
   });
 
+  it("projects the outage group with its inventory and inhibited episodes beyond the recent list", async () => {
+    const now = Date.now();
+    const [group] = await db
+      .insert(tables.incidents)
+      .values({
+        hostId: "nas-home",
+        key: "connection",
+        title: "NAS-HOME no responde",
+        detail: "No se reciben métricas.",
+        severity: "critical",
+        at: new Date(now),
+        fingerprint: store.incidentFingerprint("nas-home", "connection"),
+        seq: 2,
+        origin: "live",
+        context: {
+          kind: "services-down",
+          observedAt: Math.floor(now / 1000) - 60,
+          observedFrom: "inventory",
+          complete: true,
+          entries: [
+            { name: "sonarr", state: "running" },
+            { name: "radarr", state: "exited" },
+          ],
+          omitted: 0,
+        },
+      })
+      .returning();
+    await db.insert(tables.notificationOutbox).values({
+      key: `incident:${group.id}:open`,
+      incidentId: group.id,
+      kind: "incident-open",
+      channel: "telegram",
+      status: "sent",
+      chatId: "999",
+      messageId: "888",
+      result: {
+        state: "sent",
+        reason: null,
+        at: new Date(now).toISOString(),
+      },
+    });
+    const [blocked] = await db
+      .insert(tables.incidents)
+      .values({
+        hostId: "nas-home",
+        key: "container:sonarr",
+        title: "Servicio detenido en NAS-HOME: sonarr",
+        detail: "El servicio estaba previsto en ejecución y no está disponible.",
+        severity: "warning",
+        at: new Date(now - 500_000),
+        fingerprint: store.incidentFingerprint("nas-home", "container:sonarr"),
+        seq: 2,
+        origin: "live",
+        inhibitedBy: group.id,
+        inhibitedReason: "host-unreachable",
+        observationPending: true,
+      })
+      .returning();
+    await db.insert(tables.incidents).values(
+      Array.from({ length: 105 }, (_, index) => ({
+        hostId: "nas-home",
+        key: `filler-${index}`,
+        title: `Relleno ${index}`,
+        detail: "",
+        severity: "warning",
+        at: new Date(now - 1_000 - index * 1_000),
+        fingerprint: store.incidentFingerprint("nas-home", `filler-${index}`),
+        seq: 1,
+        origin: "live",
+      })),
+    );
+
+    const overview = await (
+      await api("GET", "/api/overview?host=nas-home")
+    ).json();
+    expect(overview.alerts).toHaveLength(100);
+    const overviewGroup = overview.alerts.find(
+      (alert: { id: number }) => alert.id === group.id,
+    );
+    expect(overviewGroup).toMatchObject({
+      kind: "services-down",
+      inventory: {
+        observedFrom: "inventory",
+        complete: true,
+        entries: [
+          { name: "sonarr", state: "running" },
+          { name: "radarr", state: "exited" },
+        ],
+      },
+    });
+    expect(
+      overview.alerts.some((alert: { id: number }) => alert.id === blocked.id),
+    ).toBe(false);
+
+    const detail = await (
+      await api("GET", `/api/incidents/${group.id}?host=nas-home`)
+    ).json();
+    expect(detail.incident).toMatchObject({
+      id: group.id,
+      hostId: "nas-home",
+      kind: "services-down",
+      inventory: { complete: true },
+    });
+    expect(detail.incident.inhibited).toHaveLength(1);
+    expect(detail.incident.inhibited[0]).toMatchObject({
+      id: blocked.id,
+      kind: "container",
+      inhibitedBy: group.id,
+      inhibitedReason: "host-unreachable",
+      observationPending: true,
+    });
+    expect(JSON.stringify(detail)).not.toContain("999");
+    expect(JSON.stringify(detail)).not.toContain("888");
+
+    sessionState.authenticated = false;
+    expect(
+      (await api("GET", `/api/incidents/${group.id}?host=nas-home`)).status,
+    ).toBe(401);
+    expect(
+      (await api("GET", "/api/overview?host=nas-home")).status,
+    ).toBe(401);
+    sessionState.authenticated = true;
+    expect(
+      (await api("GET", `/api/incidents/${group.id}?host=apps`)).status,
+    ).toBe(404);
+  });
+
   it("closes only the selected host's incident through the store after a confirmed stop", async () => {
     const nasIncident = await openIncident("nas-home");
     const appsIncident = await openIncident("apps");

@@ -134,6 +134,8 @@ const container = z.looseObject({
 /** `GET /metrics`: native host metrics plus the Docker container inventory. */
 export const metricsSnapshotSchema = z.looseObject({
   timestamp: epoch,
+  /** Docker list date; absent on agents that predate the field. */
+  containersObservedAt: epoch.optional(),
   hostname: z.string(),
   system: systemDetails.nullable().optional(),
   cpu: nullableFinite,

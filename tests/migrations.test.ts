@@ -339,13 +339,15 @@ describe.skipIf(!baseUrl)("incidents migration 0004", () => {
   it("keeps SQL, snapshot and journal aligned", async () => {
     const entries = journal().entries;
     const last = entries.at(-1)!;
-    expect(last.tag).toBe("0004_incidents");
+    expect(last.tag).toBe("0005_incident_context");
     expect(last.when).toBeGreaterThan(entries.at(-2)!.when);
 
-    const current = snapshot("0004_incidents");
-    expect(current.prevId).toBe(snapshot("0003_multi_host").id);
+    const current = snapshot("0005_incident_context");
+    expect(current.prevId).toBe(snapshot("0004_incidents").id);
     expect(current.tables["public.alerts"]).toBeUndefined();
     expect(current.tables["public.incidents"]).toBeDefined();
+    expect(current.tables["public.alerts"]).toBeUndefined();
+    expect(snapshot("0004_incidents").tables["public.incidents"]).toBeDefined();
 
     for (const table of [
       "incidents",
@@ -370,6 +372,123 @@ describe.skipIf(!baseUrl)("incidents migration 0004", () => {
         .filter((name) => !primary.includes(name) && !name.endsWith("_pkey"))
         .sort();
       expect(actualIndexes).toEqual(expectedIndexes);
+    }
+  });
+});
+
+describe.skipIf(!baseUrl)("incidents migration 0005", () => {
+  it("adds the context and observation columns without rewriting history or delivery", async () => {
+    const context = await createTestDatabase(baseUrl!);
+    const client = new Client({ connectionString: context.url });
+    await client.connect();
+    try {
+      await migrateThrough(client, 4);
+      const seeded = await client.query<{
+        id: number;
+        title: string;
+        resolvedEpoch: number | null;
+      }>(`
+        INSERT INTO incidents ("hostId", key, title, detail, severity, at, "resolvedAt", fingerprint, seq, origin)
+        VALUES
+          ('nas-home','connection','NAS caído','', 'critical', now() - interval '2 hours', NULL, 'fp-open', 4, 'live'),
+          ('apps','connection','Apps caído','', 'critical', now() - interval '90 minutes', NULL, 'fp-pending', 1, 'live'),
+          ('nas-home','container:sonarr','Sonarr detenido','', 'warning', now() - interval '3 hours', now() - interval '2 hours', 'fp-closed', 2, 'live')
+        RETURNING id, title, extract(epoch from "resolvedAt")::double precision AS "resolvedEpoch"
+      `);
+      const before = new Map(seeded.rows.map((row) => [row.title, row]));
+      const open = before.get("NAS caído")!;
+      const pending = before.get("Apps caído")!;
+      await client.query(
+        `INSERT INTO notification_outbox (key, "incidentId", kind, channel, status, "chatId", "messageId", result)
+         VALUES
+           ('incident:${open.id}:open', ${open.id}, 'incident-open', 'telegram', 'sent', '42', '9', '{"state":"sent","reason":null,"at":"2026-11-25T00:00:00.000Z"}'::jsonb),
+           ('incident:${pending.id}:open', ${pending.id}, 'incident-open', 'telegram', 'pending', NULL, NULL, NULL)`,
+      );
+
+      await migrateAll(client);
+
+      const rows = await client.query<{
+        id: number;
+        title: string;
+        resolvedEpoch: number | null;
+        fingerprint: string;
+        seq: number;
+        origin: string;
+        context: unknown;
+        inhibitedBy: number | null;
+        inhibitedReason: string | null;
+        observationPending: boolean;
+      }>(`
+        SELECT id, title, fingerprint, seq, origin, context, "inhibitedBy",
+          "inhibitedReason", "observationPending",
+          extract(epoch from "resolvedAt")::double precision AS "resolvedEpoch"
+        FROM incidents ORDER BY id
+      `);
+      expect(rows.rows).toHaveLength(3);
+      for (const row of rows.rows) {
+        const previous = before.get(row.title)!;
+        expect(row.id).toBe(previous.id);
+        expect(row.resolvedEpoch).toBeCloseTo(previous.resolvedEpoch ?? 0, 2);
+        if (previous.resolvedEpoch === null)
+          expect(row.resolvedEpoch).toBeNull();
+        expect(row.context).toBeNull();
+        expect(row.inhibitedBy).toBeNull();
+        expect(row.inhibitedReason).toBeNull();
+        expect(row.observationPending).toBe(false);
+      }
+      expect(
+        rows.rows.find((row) => row.title === "NAS caído")!.fingerprint,
+      ).toBe("fp-open");
+      expect(rows.rows.find((row) => row.title === "Apps caído")!.seq).toBe(1);
+      expect(
+        rows.rows.find((row) => row.title === "Sonarr detenido")!.origin,
+      ).toBe("live");
+
+      const outbox = await client.query<{
+        key: string;
+        status: string;
+        chatId: string | null;
+        messageId: string | null;
+      }>('SELECT key, status, "chatId", "messageId" FROM notification_outbox ORDER BY id');
+      expect(outbox.rows).toEqual([
+        {
+          key: `incident:${open.id}:open`,
+          status: "sent",
+          chatId: "42",
+          messageId: "9",
+        },
+        {
+          key: `incident:${pending.id}:open`,
+          status: "pending",
+          chatId: null,
+          messageId: null,
+        },
+      ]);
+
+      // The previous binary keeps working: it only knows the old columns and
+      // the new ones are nullable or defaulted.
+      const legacy = await client.query<{
+        id: number;
+        context: unknown;
+        observationPending: boolean;
+      }>(`
+        INSERT INTO incidents ("hostId", key, title, detail, severity, fingerprint, seq, origin)
+        VALUES ('nas-home','cpu','CPU alta','', 'warning','fp-legacy-insert',1,'live')
+        RETURNING id, context, "observationPending"
+      `);
+      expect(legacy.rows[0].context).toBeNull();
+      expect(legacy.rows[0].observationPending).toBe(false);
+
+      const applied = await client.query<{ created_at: string }>(
+        "SELECT created_at FROM drizzle.__drizzle_migrations ORDER BY id",
+      );
+      expect(applied.rows.map((row) => Number(row.created_at))).toEqual(
+        journal().entries.map((entry) => entry.when),
+      );
+      expect(journal().entries.at(-1)!.tag).toBe("0005_incident_context");
+    } finally {
+      await client.end();
+      await dropTestDatabase(context);
     }
   });
 });
@@ -408,7 +527,7 @@ describe.skipIf(!baseUrl)("incidents rollback rehearsal", () => {
       const seedIds = seeds.rows.map((row) => row.id).sort((a, b) => a - b);
       const historical = seeds.rows.find((row) => row.title === "hist-resolved")!;
 
-      await migrateAll(client);
+      await migrateThrough(client, 4);
       const migrated = await client.query<{
         id: number;
         title: string;
@@ -495,7 +614,7 @@ describe.skipIf(!baseUrl)("incidents rollback rehearsal", () => {
       `);
       expect(probe.rows[0].id).toBeGreaterThan(maxAfterRollback);
 
-      await migrateAll(client);
+      await migrateThrough(client, 4);
       const reapplied = await client.query<{
         id: number;
         origin: string;
@@ -539,7 +658,7 @@ describe.skipIf(!baseUrl)("incidents rollback rehearsal", () => {
       );
       expect(
         appliedAfterReapply.rows.map((row) => Number(row.created_at)),
-      ).toEqual(journal().entries.map((entry) => entry.when));
+      ).toEqual(journal().entries.slice(0, 5).map((entry) => entry.when));
     } finally {
       await client.end();
       await dropTestDatabase(context);
@@ -575,7 +694,9 @@ describe.skipIf(!baseUrl)("incidents rollback rehearsal", () => {
       const journalRows = await client.query<{ count: string }>(
         "SELECT count(*)::text AS count FROM drizzle.__drizzle_migrations",
       );
-      expect(journalRows.rows[0].count).toBe("6");
+      expect(journalRows.rows[0].count).toBe(
+        String(journal().entries.length + 1),
+      );
     } finally {
       await client.end();
       await dropTestDatabase(context);

@@ -354,11 +354,17 @@ def metrics():
                     )
                 ),
             )
-    return {
+    result = {
         **sample,
         "hostname": os.getenv("NAS_NAME", "NAS"),
         "containers": container_cache[1],
     }
+    # The date comes from the cached Docker list, not from this sample. A
+    # repeated cache keeps the same mark so the hub never treats a copy as new
+    # evidence; agents before this field simply omit it.
+    if container_cache[0]:
+        result["containersObservedAt"] = container_cache[0]
+    return result
 
 
 def update_container(body):

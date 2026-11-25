@@ -95,6 +95,8 @@ export type Container = {
 };
 export type Metrics = {
   timestamp: number;
+  /** Docker list date (Unix seconds); absent on agents before the field existed. */
+  containersObservedAt?: number;
   hostname: string;
   system?: SystemDetails | null;
   cpu: number | null;
@@ -182,10 +184,31 @@ export type PublicDelivery = {
   state: PublicDeliveryState;
   reason: PublicDeliveryReason | null;
 };
+/** Public shape of an episode: the outage group, a container or another key. */
+export type IncidentKind = "services-down" | "container" | "condition";
+export type IncidentInventoryEntry = {
+  name: string;
+  state: string;
+};
+/**
+ * Last trustworthy inventory captured when a `services-down` group opened.
+ * `observedAt` is Unix seconds. `observedFrom` separates a real Docker list
+ * date from the general sample date an older agent can offer; `complete` is
+ * false when no evidence existed, never because a genuine list was empty.
+ */
+export type IncidentInventoryContext = {
+  kind: "services-down";
+  observedAt: number | null;
+  observedFrom: "inventory" | "sample" | "unknown";
+  complete: boolean;
+  entries: IncidentInventoryEntry[];
+  omitted: number;
+};
 export type Alert = {
   id: number;
   hostId: string;
   key: string;
+  kind: IncidentKind;
   title: string;
   detail: string;
   severity: string;
@@ -199,6 +222,15 @@ export type Alert = {
   fallback: PublicDelivery | null;
   /** Latest edit result for the confirmed Telegram message, if any. */
   lastUpdate: PublicDelivery | null;
+  /** Captured inventory of a `services-down` group; null for other episodes. */
+  inventory: IncidentInventoryContext | null;
+  /** Outage episode that currently blocks this container observation. */
+  inhibitedBy: number | null;
+  inhibitedReason: string | null;
+  /** True while the container state is still unverified after an outage. */
+  observationPending: boolean;
+  /** Open container episodes inhibited by this group, if it is one. */
+  inhibited: Alert[] | null;
 };
 export type Operation = {
   id: string;

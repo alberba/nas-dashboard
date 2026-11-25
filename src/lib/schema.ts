@@ -10,7 +10,7 @@ import {
   primaryKey,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
-import type { Metrics, Settings } from "./types";
+import type { IncidentInventoryContext, Metrics, Settings } from "./types";
 
 export const user = pgTable("user", {
   id: text().primaryKey(),
@@ -157,12 +157,24 @@ export const incidents = pgTable(
     closedBy: text(),
     /** Original `resolvedAt`, kept for the reversible migration. */
     previousResolvedAt: timestamp(),
+    /**
+     * Public inventory captured when a `services-down` group opened. Nullable
+     * so the previous binary keeps writing and older episodes stay readable.
+     */
+    context: jsonb().$type<IncidentInventoryContext>(),
+    /** Outage episode that currently blocks a container observation (D-02). */
+    inhibitedBy: integer(),
+    /** Finite cause of the observation block, separate from delivery. */
+    inhibitedReason: text(),
+    /** True while a container state is still unverified after an outage. */
+    observationPending: boolean().notNull().default(false),
   },
   (t) => [
     index("incidents_key_idx").on(t.key),
     index("incidents_at_idx").on(t.at),
     index("incidents_host_key_idx").on(t.hostId, t.key),
     index("incidents_fingerprint_idx").on(t.fingerprint),
+    index("incidents_inhibited_idx").on(t.inhibitedBy),
     uniqueIndex("incidents_open_host_key_idx")
       .on(t.hostId, t.key)
       .where(sql`${t.resolvedAt} is null`),
