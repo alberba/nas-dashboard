@@ -1061,29 +1061,41 @@ describe.skipIf(!baseUrl)("incidents API", () => {
 
   it("ignores a collector reading started before a confirmed stop", async () => {
     const start = Date.UTC(2026, 10, 26, 13);
-    const { reconcileContainers, watchRevision } = await import(
-      "@/lib/container-watch"
-    );
     const { getSettings } = await import("@/lib/settings");
     const incidentId = await openIncident("nas-home");
-    const revision = watchRevision(await getSettings("nas-home"));
-
-    const response = await api("POST", "/api/action?host=nas-home", {
-      body: { action: "stop", id: containerId },
-      headers: {
-        Origin: "http://localhost:3000",
-        "Idempotency-Key": crypto.randomUUID(),
-      },
-    });
-    expect(response.status).toBe(200);
-
     const host = getHosts().find((entry) => entry.id === "nas-home")!;
-    await reconcileContainers({
-      host,
-      metrics: freshMetrics(start, [metrics("nas-home").containers[0]]) as never,
-      now: start,
-      revision,
-    });
+    agent.metricsBody = freshMetrics(start, [
+      { ...metrics("nas-home").containers[0], state: "exited" },
+    ]);
+    const query = pool.query.bind(pool);
+    let stopped = false;
+    // Stop after the collector has read the open episode and before it can
+    // use that episode to bypass the sustained failure threshold.
+    const intercept = vi.spyOn(pool, "query").mockImplementation((async (
+      config: { text: string },
+      values: unknown[],
+    ) => {
+      const result = await query(config, values);
+      if (config.text.includes('"incidents"."key" like') && !stopped) {
+        stopped = true;
+        const response = await api("POST", "/api/action?host=nas-home", {
+          body: { action: "stop", id: containerId },
+          headers: {
+            Origin: "http://localhost:3000",
+            "Idempotency-Key": crypto.randomUUID(),
+          },
+        });
+        expect(response.status).toBe(200);
+      }
+      return result;
+    }) as typeof pool.query);
+
+    try {
+      await collectHost(host, start);
+      expect(stopped).toBe(true);
+    } finally {
+      intercept.mockRestore();
+    }
 
     const settings = await getSettings("nas-home");
     expect(settings.expectedContainers).toEqual([]);

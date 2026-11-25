@@ -2,7 +2,7 @@ import { and, asc, desc, eq, gt, inArray, isNull, like } from "drizzle-orm";
 import { db } from "./db";
 import { incidents, operations, samples } from "./schema";
 import { nasForHost, NasInvalidResponse } from "./nas";
-import { getSettings, mutateSettings } from "./settings";
+import { getSettings, mutateSettings, type SettingsTransaction } from "./settings";
 import {
   breakWatchContinuity,
   pendingWatch,
@@ -15,6 +15,8 @@ import {
   captureServiceInventory,
   HOST_UNREACHABLE_REASON,
   recordIncidentObservation,
+  recordIncidentObservationIn,
+  type IncidentObservation,
   type IncidentDelivery,
   type IncidentObservationResult,
 } from "./incident-store";
@@ -116,10 +118,13 @@ async function condition(
   duration = 0,
   severity = "warning",
   options: ConditionOptions = {},
+  tx?: SettingsTransaction,
 ): Promise<IncidentObservationResult | undefined> {
+  const record = (input: IncidentObservation) =>
+    tx ? recordIncidentObservationIn(tx, input) : recordIncidentObservation(input);
   if (!failing) {
     started.delete(scoped(host, key));
-    return await recordIncidentObservation({
+    return await record({
       hostId: host.id,
       key,
       failing: false,
@@ -130,7 +135,7 @@ async function condition(
   }
   if (!started.has(scoped(host, key))) started.set(scoped(host, key), now);
   if (now - started.get(scoped(host, key))! < duration * 1000) return;
-  return await recordIncidentObservation({
+  return await record({
     hostId: host.id,
     key,
     failing: true,
@@ -235,6 +240,7 @@ async function collectContainers(
   expected: string[],
   pending: Set<string>,
   now: number,
+  revision: number,
 ) {
   const marker = inventoryMarker(metrics);
   if (marker !== null) {
@@ -275,34 +281,6 @@ async function collectContainers(
       .map((row) => row.key),
   );
 
-  for (const row of open) {
-    if (row.inhibitedBy === null) continue;
-    const group = groupById.get(row.inhibitedBy);
-    if (!group || !connectionGroupIsFresh(metrics, group, now)) continue;
-    const name = row.key.slice(CONTAINER_PREFIX.length);
-    const container = metrics.containers.find((item) => item.name === name);
-    // Absence keeps the episode pending; the watch reconciliation owns it.
-    if (!container) continue;
-    if (container.state === "running") {
-      await condition(host, row.key, false, "", "", now, 0, "warning", {
-        clearObservation: true,
-      });
-    } else {
-      // Resume the same episode; its ID and delivery result are preserved.
-      await condition(
-        host,
-        row.key,
-        true,
-        row.title,
-        row.detail,
-        now,
-        0,
-        row.severity,
-        { clearObservation: true },
-      );
-    }
-  }
-
   const [latestGroup] = await db
     .select()
     .from(incidents)
@@ -311,41 +289,89 @@ async function collectContainers(
     )
     .orderBy(desc(incidents.at))
     .limit(1);
-  if (latestGroup && !connectionGroupIsFresh(metrics, latestGroup, now)) return;
+  await mutateSettings(host.id, async (current, tx) => {
+    if (watchRevision(current) !== revision) {
+      forgetContainers(host);
+      return current;
+    }
+    const watched = new Set(current.expectedContainers);
+    async function observe(
+      name: string,
+      failing: boolean,
+      title: string,
+      detail: string,
+      duration: number,
+      severity: string,
+      options: ConditionOptions,
+    ) {
+      if (!watched.has(name)) return;
+      await condition(
+        host, CONTAINER_PREFIX + name, failing, title, detail,
+        now, duration, severity, options, tx,
+      );
+    }
 
-  for (const name of expected) {
-    const key = CONTAINER_PREFIX + name;
-    // A previous blocked episode is confirmed above; the normal 30-second
-    // window only applies to names that were healthy before the outage.
-    if (inhibitedKeys.has(key)) continue;
-    // An absent name ends any partial failure window: a later reappearance
-    // must accredit its own 30 seconds instead of inheriting old evidence.
-    if (pending.has(name)) {
-      forget(host, key);
-      continue;
+    for (const row of open) {
+      if (row.inhibitedBy === null) continue;
+      const group = groupById.get(row.inhibitedBy);
+      if (!group || !connectionGroupIsFresh(metrics, group, now)) continue;
+      const name = row.key.slice(CONTAINER_PREFIX.length);
+      const container = metrics.containers.find((item) => item.name === name);
+      // Absence keeps the episode pending; the watch reconciliation owns it.
+      if (!container) continue;
+      if (container.state === "running") {
+        await observe(name, false, "", "", 0, "warning", {
+          clearObservation: true,
+        });
+      } else {
+        // Resume the same episode; its ID and delivery result are preserved.
+        await observe(
+          name,
+          true,
+          row.title,
+          row.detail,
+          0,
+          row.severity,
+          { clearObservation: true },
+        );
+      }
     }
-    const container = metrics.containers.find((item) => item.name === name);
-    // A name missing from the list never opens an episode (D-06): absence is
-    // only evidence for the durable watch window. A present but stopped
-    // container keeps the existing 30-second failure threshold (D-05), but an
-    // episode that was already open resumes on this first valid reading (D-04).
-    if (!container) {
-      forget(host, key);
-      continue;
+
+    if (latestGroup && !connectionGroupIsFresh(metrics, latestGroup, now)) return current;
+
+    for (const name of expected) {
+      const key = CONTAINER_PREFIX + name;
+      // A previous blocked episode is confirmed above; the normal 30-second
+      // window only applies to names that were healthy before the outage.
+      if (inhibitedKeys.has(key)) continue;
+      // An absent name ends any partial failure window: a later reappearance
+      // must accredit its own 30 seconds instead of inheriting old evidence.
+      if (pending.has(name)) {
+        forget(host, key);
+        continue;
+      }
+      const container = metrics.containers.find((item) => item.name === name);
+      // A name missing from the list never opens an episode (D-06): absence is
+      // only evidence for the durable watch window. A present but stopped
+      // container keeps the existing 30-second failure threshold (D-05), but an
+      // episode that was already open resumes on this first valid reading (D-04).
+      if (!container) {
+        forget(host, key);
+        continue;
+      }
+      const existing = openByKey.get(key);
+      await observe(
+        name,
+        container.state !== "running",
+        `Servicio detenido en ${host.name}: ${name}`,
+        "El servicio estaba previsto en ejecución y no está disponible.",
+        existing ? 0 : 30,
+        "warning",
+        existing ? { clearObservation: true } : {},
+      );
     }
-    const existing = openByKey.get(key);
-    await condition(
-      host,
-      key,
-      container.state !== "running",
-      `Servicio detenido en ${host.name}: ${name}`,
-      "El servicio estaba previsto en ejecución y no está disponible.",
-      now,
-      existing ? 0 : 30,
-      "warning",
-      existing ? { clearObservation: true } : {},
-    );
-  }
+    return current;
+  });
 }
 
 export async function collectHost(host: HostConfig, now = Date.now()) {
@@ -435,7 +461,7 @@ export async function collectHost(host: HostConfig, now = Date.now()) {
   // Only a fresh, complete list can accredit absence or move a watch. The
   // revision captured before the fetch prevents a stale list overwriting the
   // operator's most recent intention.
-  await reconcileContainers({ host, metrics, now, revision });
+  const inventoryRevision = await reconcileContainers({ host, metrics, now, revision });
   const settings = await getSettings(host.id);
   // A null CPU measurement or an empty temperature list is absence of
   // evidence, not a recovery. Leave those episodes exactly as they were.
@@ -495,13 +521,15 @@ export async function collectHost(host: HostConfig, now = Date.now()) {
   const pendingNames = new Set(
     pendingWatch(settings).map((pending) => pending.name),
   );
-  await collectContainers(
-    host,
-    metrics,
-    settings.expectedContainers,
-    pendingNames,
-    now,
-  );
+  if (inventoryRevision !== null)
+    await collectContainers(
+      host,
+      metrics,
+      settings.expectedContainers,
+      pendingNames,
+      now,
+      inventoryRevision,
+    );
   await collectSnapshotAlerts(host, now);
   const pending = await db
     .select()

@@ -270,14 +270,16 @@ export async function reconcileContainers(input: {
   metrics: Metrics;
   now: number;
   revision: number;
-}): Promise<void> {
+}): Promise<number | null> {
   const mark = inventoryMark(input.metrics);
   // An older agent has no list date: presence is still evaluated, but absence
   // is never evidence and no watch state is written.
-  if (mark === null) return;
+  if (mark === null) return input.revision;
+  let evaluatedRevision: number | null = null;
   await mutateSettings(input.host.id, async (current, tx) => {
     const watch = watchOf(current);
     if (watch.revision !== input.revision) return current;
+    evaluatedRevision = watch.revision;
     if (watch.lastInventoryAt !== null && mark <= watch.lastInventoryAt)
       return current;
 
@@ -379,11 +381,13 @@ export async function reconcileContainers(input: {
         });
 
     if (changed) watch.revision += 1;
+    evaluatedRevision = watch.revision;
     watch.lastInventoryAt = mark;
     watch.chainAt = mark;
     watch.workerId = WORKER_ID;
     return { ...current, expectedContainers: expected, watch };
   });
+  return evaluatedRevision;
 }
 
 /** Exposed for tests that simulate a worker restart without reloading DB. */
