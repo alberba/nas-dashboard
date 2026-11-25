@@ -2132,6 +2132,61 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
     });
   });
 
+  it.each(["retained", "orphaned"])(
+    "resumes an inhibited episode when its container returns with a %s group",
+    async (groupState) => {
+      const start = Date.UTC(2027, 0, 6, 10);
+      const host = getHosts().find((entry) => entry.id === "nas-home")!;
+      await setSettings(host.id, { expectedContainers: ["service"] });
+      const incidentId = await openContainer(host.id, "service", start - 20_000);
+      const group = await store.recordIncidentObservation({
+        hostId: host.id,
+        key: "connection",
+        failing: true,
+        severity: "critical",
+        now: start,
+        delivery: { channel: "silent", reason: "policy_silent" },
+        inhibitContainers: { reason: store.HOST_UNREACHABLE_REASON },
+      });
+      nas.metrics = metricsSnapshot({ timestamp: (start + 60_000) / 1000, containers: [] });
+      await collectHost(host, start + 60_000);
+      const reappearance = start + 32 * 86_400_000;
+      const cutoff = new Date(reappearance - 30 * 86_400_000);
+      if (groupState === "orphaned") {
+        await db.delete(tables.incidents).where(eq(tables.incidents.id, group.incidentId!));
+      } else {
+        await store.cleanupExpiredIncidents(cutoff);
+        expect((await state()).incidents).toContainEqual(expect.objectContaining({
+          id: group.incidentId,
+          resolvedAt: expect.any(Date),
+        }));
+      }
+      expect((await state()).incidents).toContainEqual(expect.objectContaining({
+        id: incidentId,
+        inhibitedBy: group.incidentId,
+        observationPending: true,
+      }));
+
+      nas.metrics = metricsSnapshot({
+        timestamp: reappearance / 1000,
+        containers: [containerOf("service", "exited")],
+      });
+      await collectHost(host, reappearance);
+      const current = await state();
+      expect(current.incidents.find((row) => row.id === incidentId)).toMatchObject({
+        resolvedAt: null,
+        inhibitedBy: null,
+        observationPending: false,
+      });
+      expect(current.events).toContainEqual(expect.objectContaining({
+        incidentId,
+        kind: "resumed",
+      }));
+      await store.cleanupExpiredIncidents(cutoff);
+      expect((await state()).incidents.map((row) => row.id)).toEqual([incidentId]);
+    },
+  );
+
   it("confirms previous episodes only with post-outage evidence and windows new failures", async () => {
     const start = Date.UTC(2027, 0, 7, 10);
     const host = getHosts().find((entry) => entry.id === "nas-home")!;

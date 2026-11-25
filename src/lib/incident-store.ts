@@ -1038,7 +1038,7 @@ export async function projectIncidents(rows: IncidentRow[]): Promise<Alert[]> {
 
 /**
  * Removes episodes past retention, together with their terminal delivery
- * state, but keeps any episode that still has live work (pending or claimed).
+ * state. Keeps groups referenced by open episodes and episodes with live work.
  * Orphan push-test rows are removed by their own age. The incident cascade
  * deletes its events and terminal outbox rows in the same statement.
  */
@@ -1047,6 +1047,11 @@ export async function cleanupExpiredIncidents(cutoff: Date): Promise<void> {
     DELETE FROM "incidents" AS i
     WHERE i."at" < ${cutoff}
       AND i."resolvedAt" < ${cutoff}
+      AND NOT EXISTS (
+        SELECT 1 FROM "incidents" AS member
+        WHERE member."inhibitedBy" = i."id"
+          AND member."resolvedAt" IS NULL
+      )
       AND NOT EXISTS (
         SELECT 1 FROM "notification_outbox" AS o
         WHERE o."incidentId" = i."id"

@@ -314,8 +314,10 @@ async function collectContainers(
 
     for (const row of open) {
       if (row.inhibitedBy === null) continue;
-      const group = groupById.get(row.inhibitedBy);
-      if (!group || !connectionGroupIsFresh(metrics, group, now)) continue;
+      // Older retention runs could delete the original group. If so, use
+      // the latest outage as the freshness bound when one is still present.
+      const group = groupById.get(row.inhibitedBy) ?? latestGroup;
+      if (group && !connectionGroupIsFresh(metrics, group, now)) continue;
       const name = row.key.slice(CONTAINER_PREFIX.length);
       const container = metrics.containers.find((item) => item.name === name);
       // Absence keeps the episode pending; the watch reconciliation owns it.
