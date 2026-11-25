@@ -925,6 +925,15 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
     await collectHost(host, start + 150_000);
     expect((await watchState()).entries.gone.accreditedMs).toBe(60_000);
 
+    // A transport failure breaks the chain too: the next list is not a
+    // continuation of the interval it missed.
+    nas.failMetrics = true;
+    await collectHost(host, start + 160_000);
+    nas.failMetrics = false;
+    nas.metrics = at(190);
+    await collectHost(host, start + 190_000);
+    expect((await watchState()).entries.gone.accreditedMs).toBe(60_000);
+
     // A worker restart also starts a new chain from its first fresh list: the
     // durable worker marker no longer matches the interval that preceded it.
     const [row] = await db
@@ -940,8 +949,8 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
         },
       })
       .where(eq(tables.configuration.hostId, "nas-home"));
-    nas.metrics = at(180);
-    await collectHost(host, start + 180_000);
+    nas.metrics = at(220);
+    await collectHost(host, start + 220_000);
     watch = await watchState();
     expect(watch.entries.gone.accreditedMs).toBe(60_000);
     expect(watch.workerId).toBe(currentWatchWorkerId());
