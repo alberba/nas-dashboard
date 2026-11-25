@@ -303,13 +303,22 @@ async function collectContainers(
     const key = CONTAINER_PREFIX + name;
     // A previous blocked episode is confirmed above; the normal 30-second
     // window only applies to names that were healthy before the outage.
-    if (inhibitedKeys.has(key) || pending.has(name)) continue;
+    if (inhibitedKeys.has(key)) continue;
+    // An absent name ends any partial failure window: a later reappearance
+    // must accredit its own 30 seconds instead of inheriting old evidence.
+    if (pending.has(name)) {
+      forget(host, key);
+      continue;
+    }
     const container = metrics.containers.find((item) => item.name === name);
     // A name missing from the list never opens an episode (D-06): absence is
     // only evidence for the durable watch window. A present but stopped
     // container keeps the existing 30-second failure threshold (D-05), but an
     // episode that was already open resumes on this first valid reading (D-04).
-    if (!container) continue;
+    if (!container) {
+      forget(host, key);
+      continue;
+    }
     const existing = openByKey.get(key);
     await condition(
       host,

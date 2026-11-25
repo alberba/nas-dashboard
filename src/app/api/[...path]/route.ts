@@ -74,7 +74,8 @@ const ranges = {
 
 /** Public settings never expose the internal inventory watch metadata. */
 function publicSettings(settings: Settings) {
-  const { watch: _watch, ...visible } = settings;
+  const visible = { ...settings };
+  delete visible.watch;
   return visible;
 }
 

@@ -1135,6 +1135,59 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
     expect(await db.select().from(tables.incidents)).toHaveLength(0);
   });
 
+  it("restarts the failure window when a stopped name reappears after absence", async () => {
+    const start = Date.UTC(2026, 9, 25, 14, 30);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    await setSettings("nas-home", {
+      cpu: 200,
+      memory: 200,
+      disk: 100,
+      temperature: 200,
+      sustainedSeconds: 0,
+      expectedContainers: ["svc"],
+    });
+    const at = (seconds: number, containers: unknown[]) =>
+      metricsSnapshot({
+        timestamp: start / 1000 + seconds,
+        containersObservedAt: start / 1000 + seconds,
+        containers,
+      });
+    const stopped = containerOf("svc", "exited");
+
+    nas.metrics = at(0, [stopped]);
+    await collectHost(host, start);
+    nas.metrics = at(20, [stopped]);
+    await collectHost(host, start + 20_000);
+    expect(await db.select().from(tables.incidents)).toHaveLength(0);
+
+    // The name disappears before the window completes and starts a watch.
+    nas.metrics = at(30, []);
+    await collectHost(host, start + 30_000);
+    const [row] = await db
+      .select()
+      .from(tables.configuration)
+      .where(eq(tables.configuration.hostId, "nas-home"));
+    expect(row.value.watch!.entries.svc).toMatchObject({ accreditedMs: 0 });
+
+    // Reappearing stopped starts a fresh 30-second window from this reading.
+    nas.metrics = at(40, [stopped]);
+    await collectHost(host, start + 40_000);
+    nas.metrics = at(60, [stopped]);
+    await collectHost(host, start + 60_000);
+    expect(await db.select().from(tables.incidents)).toHaveLength(0);
+
+    nas.metrics = at(70, [stopped]);
+    await collectHost(host, start + 70_000);
+    const incidents = await db.select().from(tables.incidents);
+    expect(incidents).toMatchObject([
+      {
+        key: "container:svc",
+        resolvedAt: null,
+        seq: 1,
+      },
+    ]);
+  });
+
   async function setWatchSettings(
     hostId: string,
     expected: string[],

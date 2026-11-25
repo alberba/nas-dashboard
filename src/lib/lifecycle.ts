@@ -108,20 +108,30 @@ export async function finalizeContainerOperation(input: {
     const expected = [...current.expectedContainers];
     const identity =
       input.identity ?? (input.container ? identityOf(input.container) : null);
+    // The confirmed ID wins over the name of the sample that started the
+    // action: a rename between the request and its confirmation must move the
+    // watched entry, not create a second one.
+    const watchedName = input.containerId
+      ? Object.entries(watch.identities).find(
+          ([, identity]) => identity.containerId === input.containerId,
+        )?.[0]
+      : undefined;
+    const name =
+      watchedName && expected.includes(watchedName) ? watchedName : input.name;
     if (input.action === "start" || input.action === "restart") {
-      if (!expected.includes(input.name)) expected.push(input.name);
-      delete watch.entries[input.name];
-      if (identity) watch.identities[input.name] = identity;
+      if (!expected.includes(name)) expected.push(name);
+      delete watch.entries[name];
+      if (identity) watch.identities[name] = identity;
     } else {
-      const index = expected.indexOf(input.name);
+      const index = expected.indexOf(name);
       if (index >= 0) expected.splice(index, 1);
-      delete watch.entries[input.name];
-      delete watch.identities[input.name];
+      delete watch.entries[name];
+      delete watch.identities[name];
       // Only the selected host and key are touched; the episode closure keeps
       // its phase 2 transition, delivery result and outbox.
       await recordIncidentObservationIn(tx, {
         hostId: input.hostId,
-        key: "container:" + input.name,
+        key: "container:" + name,
         failing: false,
         now: at.getTime(),
         closedBy: "lifecycle",
