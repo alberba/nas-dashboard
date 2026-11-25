@@ -96,8 +96,13 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
+**Wave 1**
 - [ ] 03-01: Agrupar por host con `services-down` e inhibir contenedores por `connection`
+
+**Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 03-02: Reconciliar `expectedContainers` con el inventario real y purgar los nombres ausentes con gracia
+
+**Wave 3** *(blocked on Wave 2 completion)*
 - [ ] 03-03: Recoger ayudantes huérfanos y hacer visible el fallo de limpieza
 
 **Repo:** hub (incluye `agent/`)

@@ -1,6 +1,7 @@
 # Fase 3 · Agrupación, inventario y ayudantes
 
-**Fecha** 2026-11-25  
+**Fecha** 2026-11-25
+
 **Estado** Lista para planificar
 
 <domain>
@@ -15,24 +16,24 @@ Agrupar la caída de un host en una sola incidencia de servicios, reconciliar `e
 
 ### Caída y recuperación del host
 
-- **D-01.** La caída genera una sola incidencia de servicios por host. El aviso inicial de Telegram identifica el host que no responde y enlaza a su incidencia autenticada. El hub muestra el último inventario conocido con su fecha y las incidencias de contenedor inhibidas.
-- **D-02.** Durante la caída, las incidencias de contenedor ya abiertas siguen visibles y marcadas como inhibidas. El motivo indica que el host no responde y el estado actual del contenedor está sin verificar.
-- **D-03.** Para un contenedor que estaba sano y sigue detenido al volver el host, abrir una incidencia solo tras una nueva ventana de 30 segundos de observaciones válidas. La ventana empieza con la primera observación válida del fallo tras la recuperación.
-- **D-04.** Para una incidencia previa, la primera lectura válida que confirme el estado del contenedor basta para retirar la inhibición. Si sigue detenido, reanudar el mismo episodio. Si está en marcha, cerrarlo según la política de la fase 2. Un nombre ausente sigue las reglas de reconciliación del inventario.
+- **D-01:** La caída genera una sola incidencia de servicios por host. El aviso inicial de Telegram identifica el host que no responde y enlaza a su incidencia autenticada. El hub muestra el último inventario conocido con su fecha y las incidencias de contenedor inhibidas.
+- **D-02:** Durante la caída, las incidencias de contenedor ya abiertas siguen visibles y marcadas como inhibidas. El motivo indica que el host no responde y el estado actual del contenedor está sin verificar.
+- **D-03:** Para un contenedor que estaba sano y sigue detenido al volver el host, abrir una incidencia solo tras una nueva ventana de 30 segundos de observaciones válidas. La ventana empieza con la primera observación válida del fallo tras la recuperación.
+- **D-04:** Para una incidencia previa, la primera lectura válida que confirme el estado del contenedor basta para retirar la inhibición. Si sigue detenido, reanudar el mismo episodio. Si está en marcha, cerrarlo según la política de la fase 2. Un nombre ausente sigue las reglas de reconciliación del inventario.
 
 ### Inventario esperado
 
-- **D-05.** Conservar durante 30 minutos de inventario válido un nombre esperado que ya no aparece. Si reaparece durante ese plazo, conservar la vigilancia. Un contenedor presente pero detenido sigue sujeto a la evaluación normal.
-- **D-06.** Mostrar el nombre como pendiente de reconciliar en el inventario y mantener visible cualquier incidencia previa con el motivo de la espera. La ausencia por sí sola no abre una incidencia. Agotado el plazo, retirar el nombre ausente de `expectedContainers` y resolver cualquier incidencia que quede abierta por ese nombre, conservando su historial.
-- **D-07.** Trasladar la vigilancia al nuevo nombre si Docker confirma la identidad en el mismo host. El mismo ID confirma un renombrado. Para una recreación con otro nombre, el proyecto y el servicio de Compose deben identificar un único reemplazo. Una coincidencia ambigua sigue la espera de reconciliación.
-- **D-08.** Conservar el episodio y el historial si hay una incidencia abierta al identificar el reemplazo. Actualizar la referencia al contenedor. Si el reemplazo está en marcha, cerrar el episodio. Si sigue detenido, continúa abierto.
+- **D-05:** Conservar durante 30 minutos de inventario válido un nombre esperado que ya no aparece. Si reaparece durante ese plazo, conservar la vigilancia. Un contenedor presente pero detenido sigue sujeto a la evaluación normal.
+- **D-06:** Mostrar el nombre como pendiente de reconciliar en el inventario y mantener visible cualquier incidencia previa con el motivo de la espera. La ausencia por sí sola no abre una incidencia. Agotado el plazo, retirar el nombre ausente de `expectedContainers` y resolver cualquier incidencia que quede abierta por ese nombre, conservando su historial.
+- **D-07:** Trasladar la vigilancia al nuevo nombre si Docker confirma la identidad en el mismo host. El mismo ID confirma un renombrado. Para una recreación con otro nombre, el proyecto y el servicio de Compose deben identificar un único reemplazo. Una coincidencia ambigua sigue la espera de reconciliación.
+- **D-08:** Conservar el episodio y el historial si hay una incidencia abierta al identificar el reemplazo. Actualizar la referencia al contenedor. Si el reemplazo está en marcha, cerrar el episodio. Si sigue detenido, continúa abierto.
 
 ### Limpieza de ayudantes
 
-- **D-09.** Mostrar el primer fallo de limpieza en Mantenimiento. Si persiste, abrir una sola incidencia en Avisos por host.
-- **D-10.** Abrir la incidencia tras dos intentos reales fallidos de limpiar el mismo ayudante o el mismo conjunto pendiente. Las lecturas del estado en el hub quedan fuera del recuento.
-- **D-11.** Mantener la incidencia visible en el hub durante la fase 3 y prepararla para el resumen diario de la fase 4. La política de entrega de esta condición es de resumen, sin aviso inmediato.
-- **D-12.** Cerrar la incidencia cuando no quede ningún ayudante pendiente de esa limpieza. Cada ayudante cuenta como resuelto al eliminarlo o al confirmar con Docker que ya no existe.
+- **D-09:** Mostrar el primer fallo de limpieza en Mantenimiento. Si persiste, abrir una sola incidencia en Avisos por host.
+- **D-10:** Abrir la incidencia tras dos intentos reales fallidos de limpiar el mismo ayudante o el mismo conjunto pendiente. Las lecturas del estado en el hub quedan fuera del recuento.
+- **D-11:** Mantener la incidencia visible en el hub durante la fase 3 y prepararla para el resumen diario de la fase 4. La política de entrega de esta condición es de resumen, sin aviso inmediato.
+- **D-12:** Cerrar la incidencia cuando no quede ningún ayudante pendiente de esa limpieza. Cada ayudante cuenta como resuelto al eliminarlo o al confirmar con Docker que ya no existe.
 
 ### Decisiones delegadas a la planificación
 
