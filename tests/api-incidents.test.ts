@@ -698,4 +698,32 @@ describe.skipIf(!baseUrl)("incidents API", () => {
     expect(rows.map((row) => row.id)).toEqual([nasIncident, appsIncident]);
   });
 
+  it("queues the push test for the session owner without contacting a provider", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    try {
+      const response = await api("POST", "/api/push/test", {
+        body: { ownerUserId: "another-user" },
+        headers: { Origin: "http://localhost:3000" },
+      });
+      expect(response.status).toBe(202);
+      expect(await response.json()).toMatchObject({ ok: true, queued: true });
+
+      const [job] = await db
+        .select()
+        .from(tables.notificationOutbox)
+        .where(eq(tables.notificationOutbox.kind, "push-test"));
+      expect(job).toMatchObject({
+        kind: "push-test",
+        channel: "push",
+        status: "pending",
+        ownerUserId: "test-user",
+        incidentId: null,
+      });
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(agent.requests).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

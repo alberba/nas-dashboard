@@ -223,7 +223,7 @@ export function Settings({
                   if (!response.ok)
                     throw new Error((await response.json()).error);
                   setMessage(
-                    "Aviso de prueba enviado a tus dispositivos suscritos.",
+                    "Prueba en cola: el worker la enviará a tus dispositivos suscritos. Recibirla no confirma que la hayas visto.",
                   );
                 })
               }

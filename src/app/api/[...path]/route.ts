@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { and, count, desc, eq, gt, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { auth, bootstrapAuth, origins } from "@/lib/auth";
 import { db, pool } from "@/lib/db";
 import {
   alerts,
+  notificationOutbox,
   operations,
   presence,
   samples,
@@ -45,7 +46,6 @@ import {
   projectIncidents,
   recordIncidentObservation,
 } from "@/lib/incident-store";
-import { notify } from "@/lib/push";
 import {
   fetchRenovatePullRequests,
   githubConfig,
@@ -699,12 +699,19 @@ async function handle(
       return json({ ok: true });
     }
     if (route === "push/test" && mutation) {
-      await notify(
-        "hub. conectado",
-        "Las notificaciones del NAS están activadas en este dispositivo.",
-        "test",
-      );
-      return json({ ok: true });
+      // The route only records durable work: the worker owns delivery and
+      // scopes it to the subscriptions of the authenticated session owner.
+      const [job] = await db
+        .insert(notificationOutbox)
+        .values({
+          key: `push-test:${randomUUID()}`,
+          ownerUserId: current.user.id,
+          kind: "push-test",
+          channel: "push",
+          status: "pending",
+        })
+        .returning({ id: notificationOutbox.id });
+      return json({ ok: true, queued: true, jobId: job.id }, 202);
     }
     if (route === "push" && request.method === "DELETE") {
       const { endpoint } = z

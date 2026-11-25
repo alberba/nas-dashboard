@@ -18,6 +18,7 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
+import { updatePresentIncidentNotification } from "@/lib/incident-push";
 import type { Alert, HostStatus, Overview } from "@/lib/types";
 import { FileBrowser, type ActionRequest } from "./file-browser";
 import {
@@ -106,6 +107,8 @@ export function Dashboard({ name }: { name: string }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const nav = useRef<HTMLElement>(null);
   const tabId = useRef("");
+  /** Last revision already checked against the device tray, per episode. */
+  const notifiedRevisions = useRef(new Map<number, number>());
   /** What the page wants right now; answers for anything else are dropped. */
   const wanted = useRef({ scope, range, route });
   useEffect(() => {
@@ -140,6 +143,38 @@ export function Dashboard({ name }: { name: string }) {
     router.refresh();
   }, [router]);
 
+  /**
+   * D-05: only a visible authenticated refresh may replace an older notice in
+   * the tray. Absent or already-current notifications are left untouched and
+   * no push is sent; the hub already shows the new revision.
+   */
+  const refreshPresentNotifications = useCallback((alerts: Alert[]) => {
+    if (document.visibilityState !== "visible") return;
+    for (const alert of alerts) {
+      if (
+        !Number.isSafeInteger(alert.id) ||
+        !Number.isSafeInteger(alert.seq)
+      )
+        continue;
+      if (notifiedRevisions.current.get(alert.id) === alert.seq) continue;
+      notifiedRevisions.current.set(alert.id, alert.seq);
+      void updatePresentIncidentNotification({
+        hostId: alert.hostId,
+        incidentId: alert.id,
+        seq: alert.seq,
+        title: alert.title,
+        body: alert.detail,
+        url: routeHref({
+          view: "alerts",
+          tab: "status",
+          host: alert.hostId,
+          incident: alert.id,
+        }),
+        visible: true,
+      }).catch(() => {});
+    }
+  }, []);
+
   const refresh = useCallback(
     async (signal?: AbortSignal) => {
       const current = () =>
@@ -162,6 +197,8 @@ export function Dashboard({ name }: { name: string }) {
         }
         if (!response.ok) throw new Error(result.error);
         setSnapshot({ scope, data: result });
+        if (Array.isArray(result.alerts))
+          refreshPresentNotifications(result.alerts);
         if (Array.isArray(result.hosts))
           setDirectory((previous) => ({
             primary:
@@ -181,7 +218,7 @@ export function Dashboard({ name }: { name: string }) {
           );
       }
     },
-    [range, scope, go, signInAgain],
+    [range, scope, go, signInAgain, refreshPresentNotifications],
   );
 
   useEffect(() => {
@@ -302,13 +339,15 @@ export function Dashboard({ name }: { name: string }) {
             data: null,
             missing: true,
           });
-        else if (response.ok && result?.incident)
+        else if (response.ok && result?.incident) {
           setIncidentDetail({
             host: targetHost!,
             id: targetId!,
             data: result.incident,
             missing: false,
           });
+          refreshPresentNotifications([result.incident]);
+        }
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError")
           return;
@@ -316,7 +355,12 @@ export function Dashboard({ name }: { name: string }) {
     }
     void load();
     return () => controller.abort();
-  }, [requestedIncident, incidentHost, signInAgain]);
+  }, [
+    requestedIncident,
+    incidentHost,
+    signInAgain,
+    refreshPresentNotifications,
+  ]);
   const sameHost = (a: string | null, b: string | null) =>
     a === b || (a ?? primary) === (b ?? primary);
   /** Never render one host's data while another host is selected. */
