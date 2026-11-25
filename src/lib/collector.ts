@@ -26,6 +26,7 @@ import {
 } from "./notification-policy";
 import {
   finalizeContainerOperation,
+  removalTarget,
   type ContainerOperationAction,
 } from "./lifecycle";
 import {
@@ -565,21 +566,22 @@ export async function collectHost(host: HostConfig, now = Date.now()) {
     // can confirm it: a cached list from before is not evidence.
     const fresh = marker !== null && marker * 1000 > operation.at.getTime();
     if (!fresh) continue;
-    const container = metrics.containers.find(
-      (item) => item.id === operation.target,
+    const removing = operation.action === "remove-container";
+    const target = removing ? removalTarget(operation.target) : null;
+    const knownId = target
+      ? target.id ?? watch.identities[target.name]?.containerId
+      : operation.target;
+    const container = metrics.containers.find((item) =>
+      item.id === (knownId ?? operation.target) ||
+      Boolean(target && !target.id && item.name === target.name),
     );
-    const confirmed =
-      operation.action === "remove-container"
-        ? !container
-        : operation.action === "stop"
-          ? Boolean(container && container.state !== "running")
-          : container?.state === "running";
+    const confirmed = removing
+      ? !container
+      : operation.action === "stop"
+        ? Boolean(container && container.state !== "running")
+        : container?.state === "running";
     if (!confirmed) continue;
-    const name =
-      container?.name ??
-      Object.entries(watch.identities).find(
-        ([, identity]) => identity.containerId === operation.target,
-      )?.[0];
+    const name = container?.name ?? target?.name;
     if (!name) continue;
     await finalizeContainerOperation({
       hostId: host.id,
@@ -587,7 +589,7 @@ export async function collectHost(host: HostConfig, now = Date.now()) {
       operationId: operation.id,
       action: operation.action as ContainerOperationAction,
       name,
-      containerId: operation.target,
+      containerId: knownId,
       container: container ?? null,
       detail:
         operation.action === "remove-container"

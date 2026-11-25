@@ -48,11 +48,23 @@ export type RemovalResult = {
 const pendingDetail =
   "No se pudo confirmar el resultado. Comprueba el estado del contenedor antes de repetir la operación.";
 
+// Docker names cannot contain a colon, so older name-only rows still parse.
+export function removalTarget(target: string) {
+  const [name, id] = target.split(":");
+  return { name, id };
+}
+
+export function publicOperation(operation: typeof operations.$inferSelect) {
+  return operation.action === "remove-container"
+    ? { ...operation, target: removalTarget(operation.target).name }
+    : operation;
+}
+
 function response(operation: typeof operations.$inferSelect, result?: RemovalResult) {
   return json({
     ok: true,
     status: operation.status,
-    operation,
+    operation: publicOperation(operation),
     ...(result ? { result } : {}),
   });
 }
@@ -206,7 +218,7 @@ export async function removeContainer({
       hostId: host.id,
       userId: session.user.id,
       action: "remove-container",
-      target: input.confirmation,
+      target: `${input.confirmation}:${input.id}`,
       status: "pending",
     })
     .onConflictDoNothing()
@@ -260,7 +272,7 @@ export async function removeContainer({
         .where(eq(operations.id, operationId))
         .returning();
       return json(
-        { error: error.message, status: "failed", operation },
+        { error: error.message, status: "failed", operation: publicOperation(operation) },
         400,
       );
     }
@@ -275,7 +287,7 @@ export async function removeContainer({
         error:
           "Resultado pendiente de verificar. No se ha repetido la eliminación.",
         status: "pending",
-        operation,
+        operation: publicOperation(operation),
       },
       502,
     );

@@ -27,6 +27,7 @@ import {
 } from "@/lib/verification-api";
 import {
   finalizeContainerOperation,
+  publicOperation,
   removeContainer,
 } from "@/lib/lifecycle";
 import { verificationStore } from "@/lib/verification";
@@ -390,7 +391,7 @@ async function handle(
         alerts: recentAlerts,
         openAlerts: openAlerts.value,
         watchPending: pendingWatch(settings),
-        operations: recentOperations,
+        operations: recentOperations.map(publicOperation),
         history: history.rows,
         settings: publicSettings(settings),
       });
@@ -489,7 +490,7 @@ async function handle(
             { error: "La clave de idempotencia ya se usó en otro host" },
             409,
           );
-        return json(existing);
+        return json(publicOperation(existing));
       }
       if (body.action === "reboot") {
         const denied = await guardSensitiveAction({

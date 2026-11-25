@@ -45,6 +45,7 @@ type FakeAgent = {
   requests: RecordedRequest[];
   behaviour: Behaviour;
   recreate: boolean;
+  metricsBody: unknown;
   reset(): void;
   close(): Promise<void>;
 };
@@ -71,10 +72,12 @@ async function fakeAgent(token: string): Promise<FakeAgent> {
     requests: [] as RecordedRequest[],
     behaviour: "ok" as Behaviour,
     recreate: false,
+    metricsBody: null as unknown,
     reset() {
       agent.requests = [];
       agent.behaviour = "ok";
       agent.recreate = false;
+      agent.metricsBody = null;
     },
     async close() {
       await new Promise<void>((resolve, reject) =>
@@ -95,7 +98,7 @@ async function fakeAgent(token: string): Promise<FakeAgent> {
     const path = new URL(request.url ?? "/", "http://agent").pathname;
     if (path === "/metrics") {
       response.writeHead(200, { "Content-Type": "application/json" });
-      response.end(JSON.stringify(metrics("fake")));
+      response.end(JSON.stringify(agent.metricsBody ?? metrics("fake")));
       return;
     }
     if (path !== "/action") {
@@ -343,7 +346,7 @@ describe.skipIf(!baseUrl)("container removal API", () => {
       id: result.operation.id,
       hostId: "nas-home",
       action: "remove-container",
-      target: "sonarr",
+      target: `sonarr:${containerId}`,
       status: "success",
     });
   });
@@ -530,6 +533,57 @@ describe.skipIf(!baseUrl)("container removal API", () => {
     expect(incident).toMatchObject({ resolvedAt: null, seq: 1, closedBy: null });
     expect(await db.select().from(tables.incidentEvents)).toHaveLength(1);
     expect(await db.select().from(tables.notificationOutbox)).toHaveLength(1);
+  });
+
+  it("reconciles a lost removal response using the ID recorded by the POST", async () => {
+    const incidentId = await seedContainerIncident("nas-home", false);
+    const { collectHost } = await import("@/lib/collector");
+    const { getHosts } = await import("@/lib/hosts");
+    const { metricsSnapshot } = await import("./host-fixtures");
+    agent.behaviour = "uncertain";
+    const response = await api(
+      "/api/containers/remove?host=nas-home",
+      { id: containerId, confirmation: "sonarr" },
+      { "Idempotency-Key": crypto.randomUUID() },
+    );
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({
+      operation: { target: "sonarr", status: "pending" },
+    });
+    const [operation] = await db.select().from(tables.operations);
+    const start = operation.at.getTime() + 20_000;
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    agent.metricsBody = metricsSnapshot({
+      timestamp: start / 1000,
+      containersObservedAt: start / 1000,
+      containers: [{
+        ...metricsSnapshot().containers[0],
+        id: containerId,
+        name: "renamed",
+        state: "exited",
+      }],
+    });
+    await collectHost(host, start);
+    expect(await db.select().from(tables.operations)).toMatchObject([
+      { id: operation.id, status: "pending" },
+    ]);
+
+    agent.metricsBody = metricsSnapshot({
+      timestamp: (start + 10_000) / 1000,
+      containersObservedAt: (start + 10_000) / 1000,
+      containers: [],
+    });
+    await collectHost(host, start + 10_000);
+    expect(await db.select().from(tables.operations)).toMatchObject([
+      { id: operation.id, status: "success" },
+    ]);
+    const [incident] = await db.select().from(tables.incidents)
+      .where(eq(tables.incidents.id, incidentId));
+    expect(incident).toMatchObject({
+      resolvedAt: expect.any(Date),
+      closedBy: "lifecycle",
+    });
+    expect(agent.requests.filter((request) => request.path === "/action")).toHaveLength(1);
   });
 
   it("refuses an action when the host is not connected", async () => {

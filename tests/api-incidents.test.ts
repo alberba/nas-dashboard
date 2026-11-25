@@ -1302,7 +1302,7 @@ describe.skipIf(!baseUrl)("incidents API", () => {
     const incidentId = await openIncident("nas-home");
     const [operation] = await pendingOperation(
       "remove-container",
-      containerId,
+      "sonarr",
       new Date(start),
     );
     const stopped = {
