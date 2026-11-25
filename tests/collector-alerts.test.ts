@@ -2268,6 +2268,15 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
     expect(
       current.incidents.find((row) => row.id === runningId),
     ).toMatchObject({ resolvedAt: null, seq: 2 });
+    expect(
+      current.incidents.find((row) => row.id === absentId),
+    ).toMatchObject({
+      resolvedAt: null,
+      seq: 2,
+      inhibitedBy: group.id,
+      inhibitedReason: "host-unreachable",
+      observationPending: true,
+    });
     // Repeating the same cache is not a new observation.
     await collectHost(host, start + 72_000);
     current = await state();

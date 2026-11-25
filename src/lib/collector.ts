@@ -220,7 +220,7 @@ function connectionGroupIsFresh(
   now: number,
 ) {
   const marker = inventoryMarker(metrics);
-  if (marker !== null) return marker * 1000 >= group.at.getTime();
+  if (marker !== null) return marker * 1000 > group.at.getTime();
   return (
     group.resolvedAt !== null &&
     now >= group.resolvedAt.getTime() + CONTAINER_CACHE_INTERVAL_MS
@@ -242,6 +242,7 @@ async function collectContainers(
   pending: Set<string>,
   now: number,
   revision: number,
+  latestGroup: typeof incidents.$inferSelect | undefined,
 ) {
   const marker = inventoryMarker(metrics);
   if (marker !== null) {
@@ -282,14 +283,6 @@ async function collectContainers(
       .map((row) => row.key),
   );
 
-  const [latestGroup] = await db
-    .select()
-    .from(incidents)
-    .where(
-      and(eq(incidents.hostId, host.id), eq(incidents.key, "connection")),
-    )
-    .orderBy(desc(incidents.at))
-    .limit(1);
   await mutateSettings(host.id, async (current, tx) => {
     if (watchRevision(current) !== revision) {
       forgetContainers(host);
@@ -339,8 +332,6 @@ async function collectContainers(
         );
       }
     }
-
-    if (latestGroup && !connectionGroupIsFresh(metrics, latestGroup, now)) return current;
 
     for (const name of expected) {
       const key = CONTAINER_PREFIX + name;
@@ -464,7 +455,18 @@ export async function collectHost(host: HostConfig, now = Date.now()) {
   // Only a fresh, complete list can accredit absence or move a watch. The
   // revision captured before the fetch prevents a stale list overwriting the
   // operator's most recent intention.
-  const inventoryRevision = await reconcileContainers({ host, metrics, now, revision });
+  const [latestGroup] = await db
+    .select()
+    .from(incidents)
+    .where(
+      and(eq(incidents.hostId, host.id), eq(incidents.key, "connection")),
+    )
+    .orderBy(desc(incidents.at))
+    .limit(1);
+  const inventoryRevision =
+    latestGroup && !connectionGroupIsFresh(metrics, latestGroup, now)
+      ? null
+      : await reconcileContainers({ host, metrics, now, revision });
   const settings = await getSettings(host.id);
   // A null CPU measurement or an empty temperature list is absence of
   // evidence, not a recovery. Leave those episodes exactly as they were.
@@ -532,6 +534,7 @@ export async function collectHost(host: HostConfig, now = Date.now()) {
       pendingNames,
       now,
       inventoryRevision,
+      latestGroup,
     );
   await collectSnapshotAlerts(host, now);
   const pending = await db
