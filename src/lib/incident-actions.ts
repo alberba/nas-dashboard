@@ -57,7 +57,7 @@ async function acknowledge(
   const at = new Date(now);
   // The collector and this action compete for `seq`; lock the episode first.
   const locked = await lockEpisode(tx, input.incidentId);
-  if (locked.outcome) return locked.outcome;
+  if (!locked.ok) return locked.outcome;
   const incident = locked.incident;
   // Acknowledging twice is a no-op: no event, no seq, no edit.
   if (incident.acknowledgedAt) return "unchanged";
@@ -105,6 +105,10 @@ export async function applyIncidentAction(
   }
 }
 
+type EpisodeLock =
+  | { ok: false; outcome: "not_found" | "resolved" }
+  | { ok: true; incident: typeof incidents.$inferSelect };
+
 /**
  * Locks the open episode an action targets. A closed or missing episode writes
  * nothing: after resolution the state controls are gone and the silence expires
@@ -113,19 +117,16 @@ export async function applyIncidentAction(
 async function lockEpisode(
   tx: Transaction,
   incidentId: number,
-): Promise<
-  | { outcome: "not_found" | "resolved"; incident?: never }
-  | { outcome?: never; incident: typeof incidents.$inferSelect }
-> {
+): Promise<EpisodeLock> {
   const [incident] = await tx
     .select()
     .from(incidents)
     .where(eq(incidents.id, incidentId))
     .limit(1)
     .for("update");
-  if (!incident) return { outcome: "not_found" };
-  if (incident.resolvedAt) return { outcome: "resolved" };
-  return { incident };
+  if (!incident) return { ok: false, outcome: "not_found" };
+  if (incident.resolvedAt) return { ok: false, outcome: "resolved" };
+  return { ok: true, incident };
 }
 
 /** Writes the new revision, its timeline event and the silent edit. */
@@ -162,7 +163,7 @@ async function snooze(
   const now = input.now ?? Date.now();
   const at = new Date(now);
   const locked = await lockEpisode(tx, input.incidentId);
-  if (locked.outcome) return locked.outcome;
+  if (!locked.ok) return locked.outcome;
   const incident = locked.incident;
 
   const until = snoozeDeadline(at, input.hours);
@@ -193,7 +194,7 @@ async function unsnooze(
   const now = input.now ?? Date.now();
   const at = new Date(now);
   const locked = await lockEpisode(tx, input.incidentId);
-  if (locked.outcome) return locked.outcome;
+  if (!locked.ok) return locked.outcome;
   const incident = locked.incident;
 
   const cleared = await clearSnooze(tx, incident.hostId, incident.key, at);
