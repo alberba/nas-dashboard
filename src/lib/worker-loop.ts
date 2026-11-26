@@ -1,4 +1,5 @@
 import { CollectionLockLost } from "./notification-dispatch";
+import type { UpdatesOutcome } from "./telegram-updates";
 import type { WorkerHealth } from "./worker-health";
 
 /**
@@ -13,6 +14,11 @@ import type { WorkerHealth } from "./worker-health";
 export const WORKER_DRAIN_TURNS = 20;
 export const WORKER_CLEANUP_MS = 3_600_000;
 export const WORKER_IDLE_MS = 1_000;
+/**
+ * Longest Telegram poll of one turn. A long poll past this would delay the
+ * collection that a visible tab expects every 5 s; 3 s is the compromise.
+ */
+export const WORKER_UPDATES_MAX_WAIT_SECONDS = 3;
 
 export type WorkerDrainDeps = {
   health: WorkerHealth;
@@ -48,8 +54,22 @@ export type WorkerTurnDeps = {
   collect: () => Promise<void>;
   drain: () => Promise<void>;
   cleanup: () => Promise<void>;
+  /** Optional Telegram updates lane: the long poll replaces the idle pause. */
+  updates?: (budget: { waitSeconds: number }) => Promise<UpdatesOutcome>;
   state: { lastCollection: number; lastCleanup: number };
 };
+
+/**
+ * Seconds the updates lane may wait without delaying the next collection.
+ * A zero means short polling: the collection is due right now.
+ */
+export function updatesWaitSeconds(remainingMs: number): number {
+  if (!Number.isFinite(remainingMs)) return WORKER_UPDATES_MAX_WAIT_SECONDS;
+  return Math.min(
+    Math.max(Math.ceil(remainingMs / 1000), 0),
+    WORKER_UPDATES_MAX_WAIT_SECONDS,
+  );
+}
 
 /**
  * One turn of the loop that owns the collection lock. It renews the mark only
@@ -75,5 +95,15 @@ export async function workerTurn(deps: WorkerTurnDeps): Promise<void> {
     await deps.cleanup();
     deps.state.lastCleanup = deps.now();
     await deps.health.renew();
+  }
+
+  if (deps.updates) {
+    const untilNextCollection =
+      deps.state.lastCollection + deps.sampleInterval(active) - deps.now();
+    const outcome = await deps.updates({
+      waitSeconds: updatesWaitSeconds(untilNextCollection),
+    });
+    // A failed poll is no progress: it must not extend the health mark.
+    if (outcome.ok) await deps.health.renew();
   }
 }

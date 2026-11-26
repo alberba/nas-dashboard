@@ -13,6 +13,7 @@ import {
   runDispatchOnce,
 } from "./lib/notification-dispatch";
 import { runDigestOnce, publicDigestReason, type DigestTransition } from "./lib/digest-runs";
+import { createUpdatesLane } from "./lib/telegram-updates";
 import { sampleInterval } from "./lib/validation";
 import { WorkerHealth } from "./lib/worker-health";
 import {
@@ -107,6 +108,16 @@ async function main() {
   const config = readRuntimeConfig();
   const hosts = config.hosts;
   const lock = await pool.connect();
+  // Only a private chat will ever match the operator allowlist (D-11); the lane
+  // itself refuses a group id with one finite line.
+  const updatesLane = config.telegram
+    ? createUpdatesLane({
+        client: lock,
+        config,
+        signal: shutdown.signal,
+        log: (line) => console.error(line),
+      })
+    : null;
   health = new WorkerHealth({
     holdsLock: () => holdsCollectionLock(lock),
     log: (line) => console.error(line),
@@ -157,6 +168,9 @@ async function main() {
             await db.delete(operations).where(lt(operations.at, cutoff));
             await db.delete(presence).where(lt(presence.expiresAt, new Date()));
           },
+          updates: updatesLane
+            ? (budget) => updatesLane.run({ waitSeconds: budget.waitSeconds })
+            : undefined,
           state,
         });
         lastCollection = state.lastCollection;
@@ -167,7 +181,7 @@ async function main() {
           "Error de recogida; se volverá a comprobar sin repetir acciones",
         );
       }
-      if (!stopping) await delay(WORKER_IDLE_MS);
+      if (!stopping) await delay(updatesLane ? updatesLane.idleMs() : WORKER_IDLE_MS);
     }
     if (lockLost) throw new CollectionLockLost();
   } finally {

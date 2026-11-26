@@ -9,8 +9,14 @@ import { incidents, notificationOutbox, type NotificationOutcome } from "./schem
 import {
   editTelegramMessage,
   sendTelegramMessage,
+  type TelegramActionButton,
   type TelegramTransport,
 } from "./telegram";
+import {
+  issueActionTokens,
+  keyboardActions,
+  renderActionRows,
+} from "./telegram-keyboard";
 import { deliverPush, type PushTransport } from "./push";
 
 /** Session-level PostgreSQL advisory lock already used by the collector. */
@@ -597,6 +603,21 @@ async function dispatchTelegramOpening(
   if (!(await holdsCollectionLock(context.client)))
     throw new CollectionLockLost();
 
+  // Tokens are rendered with the notice: a failed send only leaves harmless
+  // unused rows, never a button that outlived its message.
+  const actionRows: TelegramActionButton[][] = renderActionRows(
+    await issueActionTokens(workerDb(context.client), {
+      incidentId: incident.id,
+      chatId: telegram.chatId,
+      actions: keyboardActions({
+        resolved: false,
+        acknowledged: incident.acknowledgedAt !== null,
+        snoozed: false,
+      }),
+      now: context.now,
+    }),
+  );
+
   const attempts = await beginOutboxAttempt(
     context.client,
     job.id,
@@ -615,6 +636,7 @@ async function dispatchTelegramOpening(
         incident.hostId,
         incident.id,
       ),
+      actionRows,
     },
     {
       botToken: telegram.botToken,
@@ -866,6 +888,19 @@ async function dispatchEdit(
   if (!(await holdsCollectionLock(context.client)))
     throw new CollectionLockLost();
 
+  const actionRows: TelegramActionButton[][] = renderActionRows(
+    await issueActionTokens(workerDb(context.client), {
+      incidentId: incident.id,
+      chatId: original.chatId,
+      actions: keyboardActions({
+        resolved: incident.resolvedAt !== null,
+        acknowledged: incident.acknowledgedAt !== null,
+        snoozed: false,
+      }),
+      now: context.now,
+    }),
+  );
+
   const attempts = await beginOutboxAttempt(
     context.client,
     job.id,
@@ -888,6 +923,7 @@ async function dispatchEdit(
         incident.hostId,
         incident.id,
       ),
+      actionRows,
     },
     {
       botToken: telegram.botToken,

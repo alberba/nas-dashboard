@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   pgTable,
   text,
   timestamp,
@@ -168,6 +169,18 @@ export const incidents = pgTable(
     inhibitedReason: text(),
     /** True while a container state is still unverified after an outage. */
     observationPending: boolean().notNull().default(false),
+    /**
+     * When the operator acknowledged the episode, by any channel. Null while
+     * nobody has seen it; the `sentAt -> acknowledgedAt` span feeds D-05.
+     */
+    acknowledgedAt: timestamp({ withTimezone: true }),
+    /** `telegram` or `hub`; null when the episode is not acknowledged. */
+    acknowledgedVia: text(),
+    /**
+     * Internal name of the actor: the session name from the hub. Telegram runs
+     * leave it null so the numeric operator id is never persisted.
+     */
+    acknowledgedBy: text(),
   },
   (t) => [
     index("incidents_key_idx").on(t.key),
@@ -310,6 +323,75 @@ export const telegramCooldown = pgTable("telegram_cooldown", {
   channel: text().primaryKey(),
   until: timestamp({ withTimezone: true }).notNull(),
   reason: text().notNull(),
+  updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * One single-use token per rendered keyboard button. Only the SHA-256 digest of
+ * the `callback_data` value lives here: the token itself never persists, so a
+ * database reader cannot replay a button. The token is bound to the episode,
+ * the action and the chat; the message it belongs to is validated at consumption
+ * against the confirmed `incident:<id>:open` outbox row.
+ */
+export const telegramActionTokens = pgTable(
+  "telegram_action_tokens",
+  {
+    /** SHA-256 hex of the opaque token; primary key. */
+    tokenHash: text().primaryKey(),
+    incidentId: integer()
+      .notNull()
+      .references(() => incidents.id, { onDelete: "cascade" }),
+    /**
+     * Closed set of actions: `ack`, `snooze_1h`, `snooze_24h`, `unsnooze` and
+     * `why`. Everything else is deduced server-side, never sent in the callback.
+     */
+    action: text().notNull(),
+    /** Chat the keyboard was rendered for; a token from another chat is void. */
+    chatId: text().notNull(),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+    /** Set exactly once by the atomic consumption of the callback. */
+    usedAt: timestamp({ withTimezone: true }),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("telegram_action_tokens_incident_idx").on(t.incidentId),
+    index("telegram_action_tokens_expires_idx").on(t.expiresAt),
+  ],
+);
+
+/**
+ * A silence lasts for a `(hostId, key)` pair, not for one episode: a flapping
+ * condition or a re-escalation stays quiet until `until`, and a later event
+ * after the deadline interrupts again. Removing the row is the only way to end
+ * a silence early; the timeline keeps the history.
+ */
+export const incidentSnoozes = pgTable(
+  "incident_snoozes",
+  {
+    hostId: text().notNull().default("nas-home"),
+    key: text().notNull(),
+    until: timestamp({ withTimezone: true }).notNull(),
+    setAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    /** `telegram` or `hub`. */
+    setVia: text().notNull(),
+    /** Internal session name from the hub; null for Telegram. */
+    setBy: text(),
+    updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.hostId, t.key] })],
+);
+
+/**
+ * Durable `getUpdates` offset of the single updates consumer. One row named
+ * `updates`; a missing row means the lane has never polled. `lastUpdateAt`
+ * decides when the sequential ids of Telegram may have reset (a week without
+ * activity), so the lane omits the offset instead of trusting it.
+ */
+export const telegramPollState = pgTable("telegram_poll_state", {
+  /** One row per consumer; only `updates` exists today. */
+  name: text().primaryKey(),
+  lastUpdateId: bigint({ mode: "number" }),
+  lastUpdateAt: timestamp({ withTimezone: true }),
   updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
 export const operations = pgTable(

@@ -1,16 +1,21 @@
 /**
- * Outgoing Telegram Bot API client for incident openings and edits.
+ * Telegram Bot API client: outgoing notices plus the inbound polling lane.
  *
  * The origin is fixed, redirects are never followed, requests have a bounded
  * timeout and every response is validated. The client never sets `parse_mode`
  * and truncates plain text to the provider limit. It returns a finite outcome
  * instead of throwing so the dispatcher can distinguish a confirmed rejection
  * from an attempt whose result is unknown (D-01).
+ *
+ * The bot token only ever touches the URL built inside `botRequest`; every
+ * caller sees finite results, so no log or stored value can carry it (BOT-10).
  */
 
 export const TELEGRAM_ORIGIN = "https://api.telegram.org";
 export const TELEGRAM_TEXT_LIMIT = 4096;
 export const TELEGRAM_REQUEST_TIMEOUT_MS = 10_000;
+/** `answerCallbackQuery` rejects longer texts; the toast is always brief. */
+export const TELEGRAM_ANSWER_TEXT_LIMIT = 200;
 /**
  * Ceiling for a provider-supplied wait, in milliseconds.
  *
@@ -48,6 +53,12 @@ export type TelegramSendResult =
 
 export type TelegramEditResult = TelegramSendResult;
 
+/** One `callback_data` button of the keyboard rendered by `telegram-keyboard`. */
+export type TelegramActionButton = {
+  text: string;
+  callbackData: string;
+};
+
 export type TelegramClientOptions = {
   botToken: string;
   fetchImpl?: TelegramTransport;
@@ -56,6 +67,8 @@ export type TelegramClientOptions = {
 };
 
 const BOT_TOKEN_PATTERN = /^\d{5,12}:[A-Za-z0-9_-]{30,}$/;
+/** Any string shaped like a bot token, with or without the `/bot` prefix. */
+const TOKEN_LIKE_PATTERN = /\d{5,12}:[A-Za-z0-9_-]{30,}/g;
 
 /** Truncates to the Bot API limit without splitting a surrogate pair. */
 export function telegramText(value: string): string {
@@ -66,9 +79,19 @@ export function telegramText(value: string): string {
   return `${value.slice(0, end)}…`;
 }
 
+/**
+ * Removes the bot token from a log line. The literal token is replaced first,
+ * then any remaining string shaped like a token, so a value built elsewhere
+ * cannot leak either.
+ */
+export function redactToken(text: string, token?: string): string {
+  const withoutLiteral = token ? text.split(token).join("[token]") : text;
+  return withoutLiteral.replace(TOKEN_LIKE_PATTERN, "[token]");
+}
+
 type TelegramEnvelope = {
   ok?: unknown;
-  result?: { message_id?: unknown; chat?: { id?: unknown } };
+  result?: unknown;
   description?: unknown;
   parameters?: { retry_after?: unknown };
 };
@@ -84,6 +107,17 @@ function parseEnvelope(raw: string): TelegramEnvelope | null {
   }
 }
 
+function resultObject(envelope: TelegramEnvelope): Record<string, unknown> | null {
+  const value = envelope.result;
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function resultItems(envelope: TelegramEnvelope): unknown[] | null {
+  return Array.isArray(envelope.result) ? envelope.result : null;
+}
+
 function retryAfterMs(envelope: TelegramEnvelope): number | null {
   const seconds = envelope.parameters?.retry_after;
   if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds <= 0)
@@ -97,14 +131,18 @@ function retryAfterMs(envelope: TelegramEnvelope): number | null {
 }
 
 function messageId(envelope: TelegramEnvelope): string | null {
-  const value = envelope.result?.message_id;
+  const value = resultObject(envelope)?.message_id;
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0)
     return null;
   return String(value);
 }
 
 function providerChatId(envelope: TelegramEnvelope, fallback: string): string {
-  const value = envelope.result?.chat?.id;
+  const chat = resultObject(envelope)?.chat;
+  const value =
+    chat && typeof chat === "object" && !Array.isArray(chat)
+      ? (chat as Record<string, unknown>).id
+      : undefined;
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
   if (typeof value === "string" && value.trim()) return value;
   return fallback;
@@ -144,20 +182,36 @@ function httpReason(status: number, envelope: TelegramEnvelope): TelegramFailure
   return "telegram_400";
 }
 
-type RequestContext = {
-  method: "sendMessage" | "editMessageText";
+type TelegramMethod =
+  | "sendMessage"
+  | "editMessageText"
+  | "getUpdates"
+  | "deleteWebhook"
+  | "answerCallbackQuery";
+
+type BotRequestContext = {
+  method: TelegramMethod;
   body: Record<string, unknown>;
   botToken: string;
   fetchImpl: TelegramTransport;
   signal?: AbortSignal;
   timeoutMs: number;
-  fallbackChatId: string;
-  fallbackMessageId?: string;
 };
 
-async function post(context: RequestContext): Promise<TelegramSendResult> {
+type BotRequestFailureReason = "aborted" | "timeout" | "network" | "invalid_response";
+
+type BotRequestResult =
+  | { state: "failed"; reason: BotRequestFailureReason }
+  | { state: "response"; status: number; envelope: TelegramEnvelope | null };
+
+/**
+ * The only place that builds the URL with the bot token. A failed request is
+ * reported as a finite transport reason; the provider body is parsed as an
+ * envelope and never kept as text.
+ */
+async function botRequest(context: BotRequestContext): Promise<BotRequestResult> {
   if (!BOT_TOKEN_PATTERN.test(context.botToken))
-    return { state: "uncertain", reason: "invalid_response" };
+    return { state: "failed", reason: "invalid_response" };
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), context.timeoutMs);
@@ -184,9 +238,9 @@ async function post(context: RequestContext): Promise<TelegramSendResult> {
     clearTimeout(timer);
     // A connection that failed after the durable attempt mark may have reached
     // the provider: never treat it as a confirmed rejection (D-01).
-    if (context.signal?.aborted) return { state: "uncertain", reason: "aborted" };
+    if (context.signal?.aborted) return { state: "failed", reason: "aborted" };
     return {
-      state: "uncertain",
+      state: "failed",
       reason: controller.signal.aborted ? "timeout" : "network",
     };
   }
@@ -198,14 +252,28 @@ async function post(context: RequestContext): Promise<TelegramSendResult> {
   } catch {
     clearTimeout(timer);
     return {
-      state: "uncertain",
+      state: "failed",
       reason: controller.signal.aborted ? "timeout" : "invalid_response",
     };
   }
   clearTimeout(timer);
-  const envelope = parseEnvelope(raw);
+  return { state: "response", status: response.status, envelope: parseEnvelope(raw) };
+}
 
-  if (response.status === 429) {
+type RequestContext = BotRequestContext & {
+  method: "sendMessage" | "editMessageText";
+  fallbackChatId: string;
+  fallbackMessageId?: string;
+};
+
+async function post(context: RequestContext): Promise<TelegramSendResult> {
+  const request = await botRequest(context);
+  if (request.state === "failed")
+    return { state: "uncertain", reason: request.reason };
+
+  const { status, envelope } = request;
+
+  if (status === 429) {
     return {
       state: "retry",
       status: 429,
@@ -214,13 +282,13 @@ async function post(context: RequestContext): Promise<TelegramSendResult> {
     };
   }
 
-  if (response.status >= 500)
+  if (status >= 500)
     return { state: "uncertain", reason: "telegram_server_error" };
 
-  if (response.status >= 300) {
+  if (status >= 300) {
     if (
       context.method === "editMessageText" &&
-      response.status === 400 &&
+      status === 400 &&
       envelope &&
       isNotModified(envelope)
     ) {
@@ -235,17 +303,17 @@ async function post(context: RequestContext): Promise<TelegramSendResult> {
     if (
       context.method === "editMessageText" &&
       envelope &&
-      isMissingMessage(response.status, envelope)
+      isMissingMessage(status, envelope)
     )
-      return { state: "rejected", status: response.status, reason: "message_missing" };
+      return { state: "rejected", status, reason: "message_missing" };
     return {
       state: "rejected",
-      status: response.status,
-      reason: envelope ? httpReason(response.status, envelope) : "telegram_400",
+      status,
+      reason: envelope ? httpReason(status, envelope) : "telegram_400",
     };
   }
 
-  if (!envelope || envelope.ok !== true || response.status !== 200) {
+  if (!envelope || envelope.ok !== true || status !== 200) {
     // A 2xx body that cannot be validated is not a confirmation (D-01).
     return { state: "uncertain", reason: "invalid_response" };
   }
@@ -278,15 +346,30 @@ function normalizeOptions(options: TelegramClientOptions) {
   };
 }
 
-function buttons(buttonUrl: string) {
-  return {
-    inline_keyboard: [[{ text: "Abrir en el hub", url: buttonUrl }]],
-  };
+function buttons(buttonUrl: string, actionRows?: TelegramActionButton[][]) {
+  const rows: Array<Array<Record<string, unknown>>> = [
+    [{ text: "Abrir en el hub", url: buttonUrl }],
+  ];
+  for (const row of actionRows ?? []) {
+    if (row.length === 0) continue;
+    rows.push(
+      row.map((button) => ({
+        text: button.text,
+        callback_data: button.callbackData,
+      })),
+    );
+  }
+  return { inline_keyboard: rows };
 }
 
-/** Sends the plain-text opening with one URL button to the episode. */
+/** Sends the plain-text opening with the URL button and any action rows. */
 export async function sendTelegramMessage(
-  input: { chatId: string; text: string; buttonUrl: string },
+  input: {
+    chatId: string;
+    text: string;
+    buttonUrl: string;
+    actionRows?: TelegramActionButton[][];
+  },
   options: TelegramClientOptions,
 ): Promise<TelegramSendResult> {
   const normalized = normalizeOptions(options);
@@ -296,7 +379,7 @@ export async function sendTelegramMessage(
       chat_id: input.chatId,
       text: telegramText(input.text),
       disable_web_page_preview: true,
-      reply_markup: buttons(input.buttonUrl),
+      reply_markup: buttons(input.buttonUrl, input.actionRows),
     },
     fallbackChatId: input.chatId,
     ...normalized,
@@ -308,7 +391,13 @@ export async function sendTelegramMessage(
  * the provider already has that content.
  */
 export async function editTelegramMessage(
-  input: { chatId: string; messageId: string; text: string; buttonUrl: string },
+  input: {
+    chatId: string;
+    messageId: string;
+    text: string;
+    buttonUrl: string;
+    actionRows?: TelegramActionButton[][];
+  },
   options: TelegramClientOptions,
 ): Promise<TelegramEditResult> {
   const normalized = normalizeOptions(options);
@@ -319,10 +408,122 @@ export async function editTelegramMessage(
       message_id: input.messageId,
       text: telegramText(input.text),
       disable_web_page_preview: true,
-      reply_markup: buttons(input.buttonUrl),
+      reply_markup: buttons(input.buttonUrl, input.actionRows),
     },
     fallbackChatId: input.chatId,
     fallbackMessageId: input.messageId,
     ...normalized,
   });
+}
+
+export type TelegramPollResult =
+  | { state: "ok"; updates: unknown[] }
+  | { state: "retry"; retryAfterMs: number | null }
+  | { state: "failed"; reason: TelegramFailureReason | "conflict" };
+
+/** `getUpdates` caps the provider wait at 50 s; the lane never asks that long. */
+const TELEGRAM_POLL_MAX_SECONDS = 50;
+
+/**
+ * Reads pending updates. `allowed_updates` is always sent: omitting it makes
+ * Telegram reuse the previous setting, which could keep delivering text.
+ * The fetch timer is the requested wait plus the regular request margin, so
+ * the poll is never aborted by its own timeout.
+ */
+export async function getTelegramUpdates(
+  input: { offset: number | null; timeoutSeconds: number; limit?: number },
+  options: TelegramClientOptions,
+): Promise<TelegramPollResult> {
+  const normalized = normalizeOptions(options);
+  const timeoutSeconds = Math.min(
+    Math.max(Math.trunc(input.timeoutSeconds), 0),
+    TELEGRAM_POLL_MAX_SECONDS,
+  );
+  const request = await botRequest({
+    method: "getUpdates",
+    body: {
+      ...(input.offset === null ? {} : { offset: input.offset }),
+      timeout: timeoutSeconds,
+      limit: input.limit ?? 20,
+      allowed_updates: ["callback_query"],
+    },
+    botToken: normalized.botToken,
+    fetchImpl: normalized.fetchImpl,
+    signal: normalized.signal,
+    timeoutMs: timeoutSeconds * 1000 + normalized.timeoutMs,
+  });
+  if (request.state === "failed")
+    return { state: "failed", reason: request.reason };
+
+  if (request.status === 429)
+    return {
+      state: "retry",
+      retryAfterMs: request.envelope ? retryAfterMs(request.envelope) : null,
+    };
+  if (request.status === 409) return { state: "failed", reason: "conflict" };
+
+  const updates =
+    request.status === 200 && request.envelope?.ok === true
+      ? resultItems(request.envelope)
+      : null;
+  if (!updates)
+    return {
+      state: "failed",
+      reason: request.envelope
+        ? httpReason(request.status, request.envelope)
+        : "invalid_response",
+    };
+  return { state: "ok", updates };
+}
+
+export type TelegramAckResult =
+  | { state: "ok" }
+  | { state: "retry"; retryAfterMs: number | null }
+  | { state: "failed"; reason: TelegramFailureReason };
+
+async function voidRequest(
+  method: "deleteWebhook" | "answerCallbackQuery",
+  body: Record<string, unknown>,
+  options: TelegramClientOptions,
+): Promise<TelegramAckResult> {
+  const request = await botRequest({ method, body, ...normalizeOptions(options) });
+  if (request.state === "failed")
+    return { state: "failed", reason: request.reason };
+  if (request.status === 429)
+    return {
+      state: "retry",
+      retryAfterMs: request.envelope ? retryAfterMs(request.envelope) : null,
+    };
+  if (request.status === 200 && request.envelope?.ok === true)
+    return { state: "ok" };
+  return {
+    state: "failed",
+    reason: request.envelope
+      ? httpReason(request.status, request.envelope)
+      : "invalid_response",
+  };
+}
+
+/**
+ * Removes any outgoing webhook so `getUpdates` is allowed to poll. Pending
+ * updates are kept on purpose: a button pressed while the worker was stopped
+ * must still arrive.
+ */
+export async function deleteTelegramWebhook(
+  options: TelegramClientOptions,
+): Promise<TelegramAckResult> {
+  return voidRequest("deleteWebhook", {}, options);
+}
+
+/** Closes the callback spinner. `show_alert` is never used: the toast is brief. */
+export async function answerTelegramCallback(
+  input: { callbackQueryId: string; text?: string },
+  options: TelegramClientOptions,
+): Promise<TelegramAckResult> {
+  const body: Record<string, unknown> = {
+    callback_query_id: input.callbackQueryId,
+  };
+  const text = input.text?.slice(0, TELEGRAM_ANSWER_TEXT_LIMIT);
+  if (text) body.text = text;
+  return voidRequest("answerCallbackQuery", body, options);
 }

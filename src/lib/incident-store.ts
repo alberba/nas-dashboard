@@ -156,6 +156,43 @@ function editKey(incidentId: number, seq: number) {
 }
 
 /**
+ * Queues one silent edit of the confirmed Telegram notice for `seq`. It is the
+ * only writer of `incident-edit` rows, shared by closures, severity changes and
+ * operator actions, so every state change reaches the message the same way. No
+ * confirmed message means no edit: nothing is ever re-sent.
+ */
+export async function queueEdit(
+  tx: Transaction,
+  incidentId: number,
+  seq: number,
+): Promise<"queued" | "none"> {
+  const [first] = await tx
+    .select()
+    .from(notificationOutbox)
+    .where(eq(notificationOutbox.key, openKey(incidentId)))
+    .limit(1);
+  if (
+    !first ||
+    first.status !== "sent" ||
+    first.channel !== "telegram" ||
+    !first.chatId ||
+    !first.messageId
+  )
+    return "none";
+  await tx.insert(notificationOutbox).values({
+    key: editKey(incidentId, seq),
+    incidentId,
+    kind: "incident-edit",
+    channel: "telegram",
+    status: "pending",
+    revision: seq,
+    chatId: first.chatId,
+    messageId: first.messageId,
+  });
+  return "queued";
+}
+
+/**
  * Stable identity of the watched condition. The length prefixes make the
  * concatenation injective and exactly match the 0004 backfill:
  * md5('incident:' || length(hostId) || ':' || hostId || ':' || length(key) ||
@@ -228,19 +265,8 @@ async function closeEpisode(
     first.channel === "telegram" &&
     first.chatId &&
     first.messageId
-  ) {
-    await tx.insert(notificationOutbox).values({
-      key: editKey(open.id, seq),
-      incidentId: open.id,
-      kind: "incident-edit",
-      channel: "telegram",
-      status: "pending",
-      revision: seq,
-      chatId: first.chatId,
-      messageId: first.messageId,
-    });
-    return "queued";
-  }
+  )
+    return queueEdit(tx, open.id, seq);
 
   return "none";
 }
@@ -322,19 +348,8 @@ async function changeSeverity(
     first.channel === "telegram" &&
     first.chatId &&
     first.messageId
-  ) {
-    await tx.insert(notificationOutbox).values({
-      key: editKey(incident.id, seq),
-      incidentId: incident.id,
-      kind: "incident-edit",
-      channel: "telegram",
-      status: "pending",
-      revision: seq,
-      chatId: first.chatId,
-      messageId: first.messageId,
-    });
-    return "queued";
-  }
+  )
+    return queueEdit(tx, incident.id, seq);
 
   return "none";
 }
