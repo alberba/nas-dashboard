@@ -254,6 +254,36 @@ describe("readRuntimeConfig", () => {
     expect(config.trustedOrigins).toEqual(["http://localhost:3000"]);
   });
 
+  it("defaults the daily digest to 08:00 Europe/Madrid", () => {
+    const config = readRuntimeConfig(
+      env({ DIGEST_TIME: undefined }),
+    ) as unknown as { digestTime?: string };
+    expect(config.digestTime).toBe("08:00");
+  });
+
+  it.each(["23:30", "00:05", "12:00"])(
+    "accepts the configured digest time %s",
+    (value) => {
+      const config = readRuntimeConfig(env({ DIGEST_TIME: value })) as unknown as {
+        digestTime?: string;
+      };
+      expect(config.digestTime).toBe(value);
+    },
+  );
+
+  it.each(["8:00", "24:00", "23:60", "08:00:00", "08-00", "ocho", ""])(
+    "rejects an invalid DIGEST_TIME without echoing it: %s",
+    (value) => {
+      const error = errorFor({ DIGEST_TIME: value });
+      expect(error.issues).toContainEqual({
+        variable: "DIGEST_TIME",
+        reason: "invalid",
+      });
+      expect(error.message).toContain("DIGEST_TIME (invalid)");
+      if (value) expect(error.message).not.toContain(value);
+    },
+  );
+
   it.each([
     "DATABASE_URL",
     "BETTER_AUTH_SECRET",

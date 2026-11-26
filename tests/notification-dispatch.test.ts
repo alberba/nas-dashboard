@@ -1507,6 +1507,36 @@ describe.skipIf(!baseUrl)("notification dispatch", () => {
     }
   });
 
+  it("honours a configured civil time that crosses midnight", async () => {
+    await openDigestWarning();
+    const owner = await lockOwner();
+    const provider = fakeProvider();
+    // 23:30 Europe/Madrid, read from the runtime configuration.
+    const late = {
+      ...digestConfig(),
+      digestTime: "23:30",
+    } as unknown as RuntimeConfig;
+    try {
+      // 00:00 Europe/Madrid on 2026-11-27: yesterday's 23:30 target is still
+      // inside its two-hour window, so the date is served after midnight.
+      const result = await digest.runDigestOnce({
+        client: owner,
+        config: late,
+        now: () => Date.parse("2026-11-26T23:00:00.000Z"),
+        fetchImpl: provider.transport,
+      });
+      expect(result).toMatchObject({ action: "sent", date: "2026-11-26" });
+      expect(provider.calls).toHaveLength(1);
+      const run = await digestRun();
+      expect(run.targetAt.getTime()).toBe(
+        Date.parse("2026-11-26T22:30:00.000Z"),
+      );
+      expect(run.dueAt.getTime()).toBe(Date.parse("2026-11-27T00:30:00.000Z"));
+    } finally {
+      await safeEnd(owner);
+    }
+  });
+
   it("does not send before the configured time and sends once it arrives", async () => {
     await openDigestWarning();
     const owner = await lockOwner();
