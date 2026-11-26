@@ -4,6 +4,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { and, desc, eq, inArray, isNull, lt } from "drizzle-orm";
 import { incidentHref, routeHref } from "../components/views/routes";
 import type { RuntimeConfig } from "./runtime-config";
+import { madridClock } from "./madrid-day";
 import * as schema from "./schema";
 import { incidents, notificationOutbox, type NotificationOutcome } from "./schema";
 import {
@@ -829,6 +830,10 @@ async function recordEditSent(
 function editText(incident: typeof incidents.$inferSelect): string {
   const lines = [incident.title];
   if (incident.detail) lines.push(incident.detail);
+  // Only an open, acknowledged episode shows the moment it was read; a
+  // resolved notice carries its closure state instead.
+  if (!incident.resolvedAt && incident.acknowledgedAt)
+    lines.push(`Reconocida ${madridClock(incident.acknowledgedAt)}`);
   lines.push(
     `${incident.hostId} · ${incident.severity}${
       incident.resolvedAt ? " · resuelta" : ""

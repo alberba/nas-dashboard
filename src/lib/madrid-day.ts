@@ -72,6 +72,29 @@ const wallFormat = new Intl.DateTimeFormat("en-CA", {
   hourCycle: "h23",
 });
 
+const clockFormat = new Intl.DateTimeFormat("en-GB", {
+  timeZone: HUB_TIME_ZONE,
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+/**
+ * `HH:mm` of an instant in Europe/Madrid. `Intl` resolves the zone itself, so
+ * neither the process `TZ` nor a fixed offset can move the label across a
+ * daylight-saving change.
+ */
+export function madridClock(at: number | Date = Date.now()): string {
+  const instant = at instanceof Date ? at : new Date(at);
+  const parts = new Map(
+    clockFormat
+      .formatToParts(instant)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, part.value]),
+  );
+  return `${parts.get("hour")}:${parts.get("minute")}`;
+}
+
 /** Civil date and wall clock of an instant in Europe/Madrid. */
 function wallParts(instant: Date): {
   date: string;
