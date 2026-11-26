@@ -5,6 +5,7 @@ import hmac
 import http.client
 import ipaddress
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -248,6 +249,10 @@ def read_health_check(path=None, now=None, proc=None):
     if (
         isinstance(progress, bool)
         or not isinstance(progress, (int, float))
+        # json.loads accepts the non-standard NaN token: it is neither future
+        # nor stale, so it would pin health forever. The Node probe of the
+        # worker rejects it too.
+        or not math.isfinite(progress)
         or isinstance(pid, bool)
         or not isinstance(pid, int)
         or pid <= 0

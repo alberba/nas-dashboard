@@ -133,6 +133,21 @@ class HealthProbeTest(unittest.TestCase):
         )
         self.assertEqual(self.check(), (False, "identity_unreadable"))
 
+    def test_a_non_finite_progress_mark_is_malformed(self):
+        # json.loads accepts the non-standard NaN and Infinity tokens, which
+        # pass the numeric type check and defeat both freshness comparisons.
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(value=value):
+                server.write_health_mark(
+                    self.file,
+                    {
+                        "progressAt": value,
+                        "pid": self.pid,
+                        "startedAt": self.identity,
+                    },
+                )
+                self.assertEqual(self.check(), (False, "malformed"))
+
     def test_progress_writes_are_rate_limited(self):
         health = self.health(minimum_interval=2)
         self.assertTrue(health.refresh())
