@@ -2,12 +2,15 @@ import http.client
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
+import uuid
 
 import server
 
@@ -220,6 +223,80 @@ class HealthProbeTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("missing", result.stderr)
 
+
+class TrashCleanupTest(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.previous_roots = server.ROOTS
+        server.ROOTS = {"media": self.root}
+
+    def tearDown(self):
+        server.ROOTS = self.previous_roots
+        self.temporary.cleanup()
+
+    def box(self, expires_at):
+        ident = str(uuid.uuid4())
+        box = self.root / ".hub-trash" / ident
+        (box / "data").mkdir(parents=True)
+        (box / "data" / "payload.bin").write_bytes(b"x")
+        (box / "record.json").write_text(
+            json.dumps(
+                {
+                    "id": ident,
+                    "root": "media",
+                    "path": "pelicula",
+                    "name": "pelicula",
+                    "deletedAt": time.time() - 100,
+                    "expiresAt": expires_at,
+                }
+            )
+        )
+        return box
+
+    def test_only_expired_boxes_are_purged(self):
+        expired = self.box(time.time() - 1)
+        live = self.box(time.time() + 86_400)
+
+        server.purge_expired_trash()
+
+        self.assertFalse(expired.exists())
+        self.assertTrue((live / "data" / "payload.bin").is_file())
+
+    def test_the_purge_does_not_hold_the_request_lock(self):
+        self.box(time.time() - 1)
+        inside = threading.Event()
+        release = threading.Event()
+        original = shutil.rmtree
+
+        def slow_rmtree(path, ignore_errors=False):
+            inside.set()
+            self.assertTrue(release.wait(5))
+            original(path, ignore_errors=ignore_errors)
+
+        with mock.patch("shutil.rmtree", side_effect=slow_rmtree):
+            worker = threading.Thread(target=server.purge_expired_trash, daemon=True)
+            worker.start()
+            try:
+                self.assertTrue(inside.wait(5))
+                # The serve loop publishes health with LOCK.acquire(False):
+                # a delete that takes hours must not hold the lock.
+                self.assertTrue(server.LOCK.acquire(blocking=False))
+                server.LOCK.release()
+            finally:
+                release.set()
+                worker.join(5)
+        self.assertFalse(worker.is_alive())
+
+    def test_a_delete_interrupted_after_the_claim_finishes_on_the_next_pass(self):
+        ident = str(uuid.uuid4())
+        leftover = self.root / ".hub-trash" / (ident + server.PURGE_SUFFIX)
+        (leftover / "data").mkdir(parents=True)
+        (leftover / "data" / "payload.bin").write_bytes(b"x")
+
+        server.purge_expired_trash()
+
+        self.assertFalse(leftover.exists())
 
 
 class FakeHost:

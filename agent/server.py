@@ -435,6 +435,57 @@ def trash_records():
     return sorted(records, key=lambda x: x["deletedAt"], reverse=True)
 
 
+# A box keeps its identity while it waits, and takes this suffix when it is
+# being deleted. The rename is the claim: the box disappears from trash_records
+# and no request can restore or purge it while the recursive delete runs.
+PURGE_SUFFIX = ".purge"
+
+
+def claim_expired_box(root, ident):
+    """Renames one expired box out of the trash; the caller deletes it outside LOCK."""
+    with LOCK:
+        base = trash_base(root)
+        box = base / ident
+        if box.is_symlink() or not box.is_dir():
+            return None
+        claimed = base / (ident + PURGE_SUFFIX)
+        os.rename(box, claimed)
+        return claimed
+
+
+def discard_orphaned_purges():
+    """Finishes deletes left by an interrupted sweep; never holds LOCK."""
+    for root in ROOTS:
+        base = ROOTS[root] / ".hub-trash"
+        if not base.is_dir() or base.is_symlink():
+            continue
+        for box in base.iterdir():
+            if box.is_symlink() or not re.fullmatch(
+                r"[a-f0-9-]{36}%s" % re.escape(PURGE_SUFFIX), box.name
+            ):
+                continue
+            shutil.rmtree(box, ignore_errors=True)
+
+
+def purge_expired_trash():
+    """One reaping pass.
+
+    Only the rename runs under LOCK: the recursive delete of a large payload
+    can take minutes or hours, and while it holds the lock the serve loop
+    cannot publish its health mark (``service_actions`` publishes only when
+    ``LOCK.acquire(blocking=False)`` succeeds), so a healthy agent would be
+    probed as stale. The atomic claim keeps a concurrent restore or purge of
+    the same record from racing with the delete.
+    """
+    for record in trash_records():
+        if record["expiresAt"] > time.time():
+            continue
+        claimed = claim_expired_box(record["root"], record["id"])
+        if claimed is not None:
+            shutil.rmtree(claimed, ignore_errors=True)
+    discard_orphaned_purges()
+
+
 def trash_action(root, ident, restore):
     if root not in ROOTS or not re.fullmatch(r"[a-f0-9-]{36}", ident):
         raise ValueError("Elemento de papelera no válido")
@@ -768,10 +819,7 @@ class Handler(BaseHTTPRequestHandler):
 def cleanup_loop():
     while True:
         try:
-            with LOCK:
-                for record in trash_records():
-                    if record["expiresAt"] <= time.time():
-                        trash_action(record["root"], record["id"], False)
+            purge_expired_trash()
         except Exception:
             print("No se pudo completar la limpieza de la papelera", flush=True)
         time.sleep(3600)
