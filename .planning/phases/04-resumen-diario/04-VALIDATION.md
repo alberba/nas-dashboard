@@ -1,9 +1,9 @@
 ---
 phase: "04"
 slug: resumen-diario
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: validated
+nyquist_compliant: true
+wave_0_complete: true
 created: "2026-11-26"
 ---
 
@@ -31,14 +31,14 @@ La [investigación](04-RESEARCH.md#validation-architecture) registra 16 pruebas 
 
 | Tarea | Plan | Ola | Requisito | Amenaza | Evidencia | Tipo | Comando | Archivo de prueba | Estado |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 04-01-01 | 01 | 1 | DIG-01, DIG-05 | T-04-01 | Primera entrega y enlace, continuidad de la migración, takeover con y sin intento y commit que cruza el vencimiento sin invocar el transporte. | Integración | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/migrations.test.ts tests/notification-dispatch.test.ts` | Existe | Pendiente |
-| 04-01-02 | 01 | 1 | DIG-01, DIG-02, DIG-05 | T-04-01, T-04-02 | Hora normal y configurable, salto y solapamiento, medianoche, cambio de configuración y dos horas exactas. | Unidad e integración | `TZ=Pacific/Honolulu HUB_REQUIRE_TEST_DB=1 pnpm test tests/madrid-day.test.ts tests/runtime-config.test.ts tests/notification-dispatch.test.ts && pnpm typecheck` | Existe | Pendiente |
-| 04-01-03 | 01 | 1 | DIG-01, DIG-05 | T-04-02 | Cooldown compartido, 429 confirmado antes y después de encolar, push durante la pausa y texto congelado. | Integración | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/notification-dispatch.test.ts tests/telegram.test.ts` | Existe | Pendiente |
-| 04-02-01 | 02 | 2 | DIG-03, DIG-04 | T-04-03, T-04-04 | Cohortes, límites, contadores, elegibilidad durable, solo pie, vacío y continuidad de entrega individual. | Integración | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/notification-dispatch.test.ts` | Existe | Pendiente |
-| 04-02-02 | 02 | 2 | DIG-03, DIG-06 | T-04-03, T-04-04 | Pie y +N dentro de 4096, Unicode, orden estable y texto íntegro al repetir. | Unidad e integración | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/notification-dispatch.test.ts tests/telegram.test.ts && pnpm typecheck` | Existe | Pendiente |
-| 04-03-01 | 03 | 3 | CONT-03 | T-04-05 | Fallido, vencido, incierto, acceso autenticado, estado global, log acotado y respuesta sin datos privados. | Integración | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/api-incidents.test.ts tests/notification-dispatch.test.ts` | Existe | Pendiente |
-| 04-03-02 | 03 | 3 | CONT-03 | T-04-06 | Marca vieja con proceso vivo, marca reciente con PID reutilizado, idle real, corrupción, pérdida de lock y recuperación. | Unidad e integración | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/notification-dispatch.test.ts && pnpm typecheck` | Existe | Pendiente |
-| 04-03-03 | 03 | 3 | CONT-03 | T-04-06, T-04-07 | Lock ocupado en otra hebra, pérdida de progreso, PID reutilizado, probe local y retorno a healthy. | Unidad e integración | `pnpm test:agent` | Existe | Pendiente |
+| 04-01-01 | 01 | 1 | DIG-01, DIG-05 | T-04-01 | Primera entrega y enlace, continuidad de la migración, takeover con y sin intento y commit que cruza el vencimiento sin invocar el transporte. | Integración | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/migrations.test.ts tests/notification-dispatch.test.ts` | Existe | Cubierta |
+| 04-01-02 | 01 | 1 | DIG-01, DIG-02, DIG-05 | T-04-01, T-04-02 | Hora normal y configurable, salto y solapamiento, medianoche, cambio de configuración y dos horas exactas. | Unidad e integración | `TZ=Pacific/Honolulu HUB_REQUIRE_TEST_DB=1 pnpm test tests/madrid-day.test.ts tests/runtime-config.test.ts tests/notification-dispatch.test.ts && pnpm typecheck` | Existe | Cubierta |
+| 04-01-03 | 01 | 1 | DIG-01, DIG-05 | T-04-02 | Cooldown compartido, 429 confirmado antes y después de encolar, push durante la pausa y texto congelado. | Integración | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/notification-dispatch.test.ts tests/telegram.test.ts` | Existe | Cubierta |
+| 04-02-01 | 02 | 2 | DIG-03, DIG-04 | T-04-03, T-04-04 | Cohortes, límites, contadores, elegibilidad durable, solo pie, vacío y continuidad de entrega individual. | Integración | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/notification-dispatch.test.ts` | Existe | Cubierta |
+| 04-02-02 | 02 | 2 | DIG-03, DIG-06 | T-04-03, T-04-04 | Pie y +N dentro de 4096, Unicode, orden estable y texto íntegro al repetir. | Unidad e integración | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/notification-dispatch.test.ts tests/telegram.test.ts && pnpm typecheck` | Existe | Cubierta |
+| 04-03-01 | 03 | 3 | CONT-03 | T-04-05 | Fallido, vencido, incierto, acceso autenticado, estado global, log acotado y respuesta sin datos privados. | Integración | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/api-incidents.test.ts tests/notification-dispatch.test.ts` | Existe | Cubierta |
+| 04-03-02 | 03 | 3 | CONT-03 | T-04-06 | Marca vieja con proceso vivo, marca reciente con PID reutilizado, idle real, corrupción, pérdida de lock y recuperación. | Unidad e integración | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/notification-dispatch.test.ts && pnpm typecheck` | Existe | Cubierta |
+| 04-03-03 | 03 | 3 | CONT-03 | T-04-06, T-04-07 | Lock ocupado en otra hebra, pérdida de progreso, PID reutilizado, probe local y retorno a healthy. | Unidad e integración | `pnpm test:agent` | Existe | Cubierta |
 
 ## Ola 0
 
@@ -54,10 +54,18 @@ La infraestructura y las suites invocadas existen. Cada tarea añade los casos q
 
 ## Cierre de la validación
 
-- [ ] Todos los comandos focalizados ejecutados y resultados registrados.
-- [ ] Validación del calendario con TZ ajena a Madrid y el Node 26 de CI.
-- [ ] Migración y persistencia verificadas con PostgreSQL 18.
-- [ ] Playwright y los probes en Docker registrados con evidencia.
-- [ ] Frecuencia observada y cumplimiento Nyquist revisados al cerrar la fase.
+- [x] Todos los comandos focalizados ejecutados y resultados registrados.
+- [x] Validación del calendario con `TZ=Pacific/Honolulu`; el Node 26 queda pendiente de la matriz de CI.
+- [x] Migración y persistencia verificadas con PostgreSQL 18.
+- [x] Playwright y los probes en Docker registrados con evidencia.
+- [x] Frecuencia observada y cumplimiento Nyquist revisados al cerrar la fase.
 
-**Aprobación** Pendiente.
+**Aprobación** Nyquist-compliant: los 8 requisitos tienen verificación automatizada ejecutada. Node 26 se revalida en CI.
+
+## Validation Audit 2026-11-26
+
+| Metric | Count |
+|---|---|
+| Gaps found | 0 |
+| Resolved | 0 |
+| Escalated | 0 |
