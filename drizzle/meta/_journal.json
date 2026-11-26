@@ -43,6 +43,13 @@
       "when": 1795612907396,
       "tag": "0005_incident_context",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795678700685,
+      "tag": "0006_digest_runs",
+      "breakpoints": true
     }
   ]
 }

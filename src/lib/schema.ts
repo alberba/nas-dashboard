@@ -255,6 +255,63 @@ export const notificationOutbox = pgTable(
     index("notification_outbox_owner_idx").on(t.ownerUserId),
   ],
 );
+
+/**
+ * One row per Europe/Madrid civil date: the durable daily digest queue. It is
+ * the authority for that date, so `notification_outbox` keeps individual
+ * deliveries only. `dueAt` freezes the recovery window (`targetAt + 2 h`) even
+ * when the operator changes `DIGEST_TIME` later.
+ */
+export const digestRuns = pgTable(
+  "digest_runs",
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    /** Civil date in Europe/Madrid, `YYYY-MM-DD`; unique. */
+    date: text().notNull(),
+    /** Instant this digest is scheduled for, resolved from `DIGEST_TIME`. */
+    targetAt: timestamp({ withTimezone: true }).notNull(),
+    /** Previous target: the start of the period its sections fold. */
+    periodStartAt: timestamp({ withTimezone: true }).notNull(),
+    /** Exclusive end of the recovery window. */
+    dueAt: timestamp({ withTimezone: true }).notNull(),
+    /**
+     * `prepared`, `claimed`, `sent`, `empty`, `unconfigured`, `expired`,
+     * `failed` or `uncertain`. The durable attempt mark is a column, not a
+     * state, so a claim before it stays safely reclaimable.
+     */
+    status: text().notNull().default("prepared"),
+    /** Plain text frozen before the first request; never rebuilt afterwards. */
+    payload: text(),
+    result: jsonb().$type<NotificationOutcome>(),
+    /** Finite reason of the current terminal or waiting state. */
+    reason: text(),
+    nextAttemptAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    claimToken: text(),
+    leaseUntil: timestamp({ withTimezone: true }),
+    attemptStartedAt: timestamp({ withTimezone: true }),
+    attempts: integer().notNull().default(0),
+    preparedAt: timestamp({ withTimezone: true }),
+    finishedAt: timestamp({ withTimezone: true }),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("digest_runs_date_idx").on(t.date),
+    index("digest_runs_due_idx").on(t.status, t.nextAttemptAt),
+  ],
+);
+
+/**
+ * Single durable pause shared by every Telegram delivery of this bot: openings,
+ * edits and the daily digest. No row means no pause; push never reads it.
+ */
+export const telegramCooldown = pgTable("telegram_cooldown", {
+  /** One row per channel; only `telegram` exists today. */
+  channel: text().primaryKey(),
+  until: timestamp({ withTimezone: true }).notNull(),
+  reason: text().notNull(),
+  updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+});
 export const operations = pgTable(
   "operations",
   {

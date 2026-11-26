@@ -99,6 +99,36 @@ function workerDb(client: Client) {
   return drizzle(client, { schema });
 }
 
+/** Row key of the single durable Telegram pause shared by every delivery. */
+export const TELEGRAM_COOLDOWN_CHANNEL = "telegram";
+
+/**
+ * Extends the shared Telegram pause to at least `until`. Called on every
+ * confirmed 429 so a row inserted after the response can never start a request
+ * before the provider allows it, and so the pause survives a restart.
+ */
+export async function beginTelegramCooldown(
+  client: Client,
+  until: number,
+  reason: string,
+  now: number,
+): Promise<void> {
+  await client.query(
+    `INSERT INTO telegram_cooldown (channel, "until", reason, "updatedAt")
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (channel) DO UPDATE
+       SET "until" = GREATEST(telegram_cooldown."until", EXCLUDED."until"),
+           reason = EXCLUDED.reason,
+           "updatedAt" = EXCLUDED."updatedAt"`,
+    [
+      TELEGRAM_COOLDOWN_CHANNEL,
+      new Date(until),
+      reason,
+      new Date(now),
+    ],
+  );
+}
+
 /** Stable per-episode label shared with the service worker and 02-05. */
 export function incidentTag(hostId: string, incidentId: number): string {
   return `hub:incident:${hostId}:${incidentId}`;

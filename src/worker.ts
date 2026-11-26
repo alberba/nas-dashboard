@@ -12,6 +12,7 @@ import {
   releaseCollectionLock,
   runDispatchOnce,
 } from "./lib/notification-dispatch";
+import { runDigestOnce } from "./lib/digest-runs";
 import { sampleInterval } from "./lib/validation";
 
 let lastCollection = 0;
@@ -42,7 +43,11 @@ function delay(ms: number): Promise<void> {
   });
 }
 
-/** Drains a bounded batch so delivery never starves collection. */
+/**
+ * Drains a bounded batch so delivery never starves collection. Every turn
+ * dispatches at most one individual job and then offers the daily digest one
+ * opportunity: a long batch can never hide the moment its window closes.
+ */
 async function drain(
   config: ReturnType<typeof readRuntimeConfig>,
   lock: PoolClient,
@@ -53,7 +58,12 @@ async function drain(
       config,
       signal: shutdown.signal,
     });
-    if (result.action === "idle") return;
+    const digest = await runDigestOnce({
+      client: lock,
+      config,
+      signal: shutdown.signal,
+    });
+    if (result.action === "idle" && digest.action === "idle") return;
   }
 }
 

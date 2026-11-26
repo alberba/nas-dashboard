@@ -61,6 +61,7 @@ describe.skipIf(!baseUrl)("notification dispatch", () => {
   let tables: typeof import("@/lib/schema");
   let store: typeof import("@/lib/incident-store");
   let dispatch: typeof import("@/lib/notification-dispatch");
+  let digest: typeof import("@/lib/digest-runs");
   let config: RuntimeConfig;
   const openClients = new Set<Client>();
 
@@ -75,6 +76,7 @@ describe.skipIf(!baseUrl)("notification dispatch", () => {
     tables = await import("@/lib/schema");
     store = await import("@/lib/incident-store");
     dispatch = await import("@/lib/notification-dispatch");
+    digest = await import("@/lib/digest-runs");
     config = {
       databaseUrl: context.url,
       betterAuthSecret: "b".repeat(32),
@@ -99,6 +101,8 @@ describe.skipIf(!baseUrl)("notification dispatch", () => {
   });
 
   beforeEach(async () => {
+    await db.delete(tables.digestRuns);
+    await db.delete(tables.telegramCooldown);
     await db.delete(tables.notificationOutbox);
     await db.delete(tables.incidentEvents);
     await db.delete(tables.incidents);
@@ -1190,6 +1194,365 @@ describe.skipIf(!baseUrl)("notification dispatch", () => {
       .from(tables.notificationOutbox)
       .where(eq(tables.notificationOutbox.incidentId, live.id));
     expect(remainingOutbox).toHaveLength(1);
+  });
+
+  // 2026-11-26 08:00 Europe/Madrid (CET). The whole digest lane runs on this
+  // fixed clock so the window boundaries are reproducible.
+  const DIGEST_DAY = "2026-11-26";
+  const DIGEST_TARGET = Date.parse("2026-11-26T07:00:00.000Z");
+  const DIGEST_DUE = DIGEST_TARGET + 2 * 3_600_000;
+
+  /** Configured hosts are the only ones the snapshot may read. */
+  function digestConfig(): RuntimeConfig {
+    return {
+    ...config,
+    hosts: [
+      {
+        id: "nas-home",
+        name: "NAS-HOME",
+        role: "instance",
+        url: "http://127.0.0.1:9450",
+        token: "t".repeat(32),
+      },
+    ],
+    };
+  }
+
+  async function openDigestWarning(): Promise<number> {
+    const opened = await store.recordIncidentObservation({
+      hostId: "nas-home",
+      key: "disk",
+      failing: true,
+      severity: "warning",
+      title: "Disco casi lleno",
+      detail: "sda1 al 91%",
+      now: DIGEST_TARGET - 60_000,
+      delivery: { channel: "digest", reason: "digest_pending" },
+    });
+    expect(opened.action).toBe("opened");
+    expect(opened.delivery).toBe("none");
+    return opened.incidentId!;
+  }
+
+  async function digestRun() {
+    const [row] = await db.select().from(tables.digestRuns);
+    return row;
+  }
+
+  it("sends one digest per Madrid date with frozen content and keeps it after a restart", async () => {
+    await openDigestWarning();
+    const provider = fakeProvider();
+    let owner = await lockOwner();
+    try {
+      const first = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 60_000,
+        fetchImpl: provider.transport,
+      });
+      expect(first).toMatchObject({ action: "sent", date: DIGEST_DAY });
+      expect(provider.calls).toHaveLength(1);
+      const [call] = provider.calls;
+      expect(call.url).toBe(
+        `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
+      );
+      expect(call.body.chat_id).toBe(CHAT_ID);
+      expect(call.body).not.toHaveProperty("parse_mode");
+
+      const run = await digestRun();
+      expect(run).toMatchObject({
+        date: DIGEST_DAY,
+        status: "sent",
+        attempts: 1,
+        claimToken: null,
+        leaseUntil: null,
+      });
+      expect(run.targetAt.getTime()).toBe(DIGEST_TARGET);
+      expect(run.dueAt.getTime()).toBe(DIGEST_DUE);
+      expect(run.preparedAt).not.toBeNull();
+      // The wire text is exactly the frozen payload, footer included.
+      expect(String(call.body.text)).toBe(run.payload);
+      expect(run.payload).toContain("Disco casi lleno");
+      const link = new URL(run.payload!.split("\n").at(-1)!);
+      expect(link.origin).toBe(BETTER_AUTH_URL);
+      expect(link.searchParams.get("view")).toBe("alerts");
+
+      // A restart around the hour reuses the confirmed row: no second POST.
+      await safeEnd(owner);
+      owner = await lockOwner();
+      const resumed = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 120_000,
+        fetchImpl: provider.transport,
+      });
+      expect(resumed.action).toBe("idle");
+      expect(provider.calls).toHaveLength(1);
+      expect(await db.select().from(tables.digestRuns)).toHaveLength(1);
+    } finally {
+      await safeEnd(owner);
+    }
+  });
+
+  it("does not let a competing session deliver the same date", async () => {
+    await openDigestWarning();
+    const provider = fakeProvider();
+    const owner = await lockOwner();
+    const competitor = await connect();
+    try {
+      await expect(
+        digest.runDigestOnce({
+          client: competitor,
+          config: digestConfig(),
+          now: () => DIGEST_TARGET + 60_000,
+          fetchImpl: provider.transport,
+        }),
+      ).rejects.toBeInstanceOf(dispatch.CollectionLockLost);
+      expect(provider.calls).toHaveLength(0);
+
+      const sent = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 60_000,
+        fetchImpl: provider.transport,
+      });
+      expect(sent.action).toBe("sent");
+      expect(provider.calls).toHaveLength(1);
+
+      await dispatch.releaseCollectionLock(owner);
+      expect(await dispatch.acquireCollectionLock(competitor)).toBe(true);
+      const again = await digest.runDigestOnce({
+        client: competitor,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 90_000,
+        fetchImpl: provider.transport,
+      });
+      expect(again.action).toBe("idle");
+      expect(provider.calls).toHaveLength(1);
+      expect(await db.select().from(tables.digestRuns)).toHaveLength(1);
+    } finally {
+      await dispatch.releaseCollectionLock(owner).catch(() => {});
+      await safeEnd(owner);
+      await safeEnd(competitor);
+    }
+  });
+
+  it("recovers a claim that expired before the attempt started", async () => {
+    await openDigestWarning();
+    const owner = await lockOwner();
+    await digest.prepareDigestRuns({
+      client: owner,
+      config: digestConfig(),
+      now: () => DIGEST_TARGET + 60_000,
+    });
+    const claimed = await digest.claimDigestRun(
+      owner,
+      "stale-token",
+      DIGEST_TARGET + 60_000,
+      1_000,
+    );
+    expect(claimed).not.toBeNull();
+    expect(claimed!.attemptStartedAt).toBeNull();
+    await safeEnd(owner);
+
+    const next = await lockOwner();
+    const provider = fakeProvider();
+    try {
+      const result = await digest.runDigestOnce({
+        client: next,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 90_000,
+        fetchImpl: provider.transport,
+      });
+      expect(result.action).toBe("sent");
+      expect(provider.calls).toHaveLength(1);
+      expect(await digestRun()).toMatchObject({ status: "sent", attempts: 1 });
+    } finally {
+      await safeEnd(next);
+    }
+  });
+
+  it("keeps an attempt-started lease uncertain without a resend", async () => {
+    await openDigestWarning();
+    const owner = await lockOwner();
+    await digest.prepareDigestRuns({
+      client: owner,
+      config: digestConfig(),
+      now: () => DIGEST_TARGET + 60_000,
+    });
+    const claimed = await digest.claimDigestRun(
+      owner,
+      "started-token",
+      DIGEST_TARGET + 60_000,
+      1_000,
+    );
+    expect(claimed).not.toBeNull();
+    const attempts = await digest.beginDigestAttempt(
+      owner,
+      claimed!.id,
+      "started-token",
+      DIGEST_TARGET + 60_000,
+    );
+    expect(attempts).toBe(1);
+    await safeEnd(owner);
+
+    const next = await lockOwner();
+    const provider = fakeProvider();
+    try {
+      const first = await digest.runDigestOnce({
+        client: next,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 120_000,
+        fetchImpl: provider.transport,
+      });
+      expect(first.action).not.toBe("sent");
+      expect(provider.calls).toHaveLength(0);
+      const run = await digestRun();
+      expect(run).toMatchObject({
+        status: "uncertain",
+        attempts: 1,
+        claimToken: null,
+        leaseUntil: null,
+      });
+      expect(run.reason).toBe("lease_expired_after_attempt");
+
+      const second = await digest.runDigestOnce({
+        client: next,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 180_000,
+        fetchImpl: provider.transport,
+      });
+      expect(second.action).toBe("idle");
+      expect(provider.calls).toHaveLength(0);
+      expect(await db.select().from(tables.digestRuns)).toHaveLength(1);
+    } finally {
+      await safeEnd(next);
+    }
+  });
+
+  it("expires when the clock crosses the deadline during the start mark", async () => {
+    await openDigestWarning();
+    const owner = await lockOwner();
+    const provider = fakeProvider();
+    try {
+      // Freeze the run first so the tick below only reaches the start mark.
+      await digest.prepareDigestRuns({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 60_000,
+      });
+      expect((await digestRun()).payload).not.toBeNull();
+
+      let reads = 0;
+      const times = [DIGEST_TARGET + 120_000, DIGEST_DUE];
+      const result = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => times[Math.min(reads++, times.length - 1)],
+        fetchImpl: provider.transport,
+      });
+      expect(result).toMatchObject({
+        action: "expired",
+        date: DIGEST_DAY,
+        reason: "window_closed",
+      });
+      expect(provider.calls).toHaveLength(0);
+      const run = await digestRun();
+      expect(run).toMatchObject({ status: "expired", attempts: 1 });
+      expect(run.reason).toBe("window_closed");
+    } finally {
+      await safeEnd(owner);
+    }
+  });
+
+  it("closes an empty cut without a request", async () => {
+    const owner = await lockOwner();
+    const provider = fakeProvider();
+    try {
+      const result = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 60_000,
+        fetchImpl: provider.transport,
+      });
+      expect(result.action).toBe("idle");
+      expect(provider.calls).toHaveLength(0);
+      const run = await digestRun();
+      expect(run).toMatchObject({ status: "empty", attempts: 0 });
+      expect(run.reason).toBe("digest_empty");
+      expect(run.payload).toBeNull();
+    } finally {
+      await safeEnd(owner);
+    }
+  });
+
+  it("closes the date as unconfigured when Telegram is absent", async () => {
+    await openDigestWarning();
+    const owner = await lockOwner();
+    const provider = fakeProvider();
+    try {
+      await digest.runDigestOnce({
+        client: owner,
+        config: { ...config, telegram: null },
+        now: () => DIGEST_TARGET + 60_000,
+        fetchImpl: provider.transport,
+      });
+      expect(provider.calls).toHaveLength(0);
+      const run = await digestRun();
+      expect(run).toMatchObject({ status: "unconfigured", attempts: 0 });
+      expect(run.reason).toBe("telegram_disabled");
+      expect(run.payload).toBeNull();
+    } finally {
+      await safeEnd(owner);
+    }
+  });
+
+  it("does not send before the configured time and sends once it arrives", async () => {
+    await openDigestWarning();
+    const owner = await lockOwner();
+    const provider = fakeProvider();
+    try {
+      const early = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET - 60_000,
+        fetchImpl: provider.transport,
+      });
+      expect(early.action).toBe("idle");
+      expect(provider.calls).toHaveLength(0);
+      expect(await db.select().from(tables.digestRuns)).toHaveLength(0);
+
+      const onTime = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 1_000,
+        fetchImpl: provider.transport,
+      });
+      expect(onTime.action).toBe("sent");
+      expect(provider.calls).toHaveLength(1);
+    } finally {
+      await safeEnd(owner);
+    }
+  });
+
+  it("never starts a request at the exact end of the window", async () => {
+    await openDigestWarning();
+    const owner = await lockOwner();
+    const provider = fakeProvider();
+    try {
+      const result = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_DUE,
+        fetchImpl: provider.transport,
+      });
+      expect(result.action).toBe("idle");
+      expect(provider.calls).toHaveLength(0);
+      // No live candidate covers that date, so nothing is scheduled for it.
+      expect(await db.select().from(tables.digestRuns)).toHaveLength(0);
+    } finally {
+      await safeEnd(owner);
+    }
   });
 
 });

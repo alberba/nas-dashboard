@@ -338,9 +338,12 @@ describe.skipIf(!baseUrl)("incidents migration 0004", () => {
 
   it("keeps SQL, snapshot and journal aligned", async () => {
     const entries = journal().entries;
-    const last = entries.at(-1)!;
-    expect(last.tag).toBe("0005_incident_context");
-    expect(last.when).toBeGreaterThan(entries.at(-2)!.when);
+    const index = entries.findIndex(
+      (entry) => entry.tag === "0005_incident_context",
+    );
+    // The historical migration keeps its own check even after a new advance.
+    expect(index).toBeGreaterThan(0);
+    expect(entries[index].when).toBeGreaterThan(entries[index - 1].when);
 
     const current = snapshot("0005_incident_context");
     expect(current.prevId).toBe(snapshot("0004_incidents").id);
@@ -485,7 +488,126 @@ describe.skipIf(!baseUrl)("incidents migration 0005", () => {
       expect(applied.rows.map((row) => Number(row.created_at))).toEqual(
         journal().entries.map((entry) => entry.when),
       );
-      expect(journal().entries.at(-1)!.tag).toBe("0005_incident_context");
+      expect(
+        journal().entries.some(
+          (entry) => entry.tag === "0005_incident_context",
+        ),
+      ).toBe(true);
+    } finally {
+      await client.end();
+      await dropTestDatabase(context);
+    }
+  });
+});
+
+describe.skipIf(!baseUrl)("digest migration 0006", () => {
+  it("adds the daily queue and the shared pause without rewriting delivery", async () => {
+    const context = await createTestDatabase(baseUrl!);
+    const client = new Client({ connectionString: context.url });
+    await client.connect();
+    try {
+      await migrateThrough(client, 5);
+      const seeded = await client.query<{ id: number; title: string }>(`
+        INSERT INTO incidents ("hostId", key, title, detail, severity, at, "resolvedAt", fingerprint, seq, origin)
+        VALUES
+          ('nas-home','disk','Disco lleno','', 'warning', now() - interval '1 hour', NULL, 'fp-digest', 1, 'live'),
+          ('apps','connection','Apps caído','', 'critical', now() - interval '2 hours', now() - interval '1 hour', 'fp-closed', 2, 'live')
+        RETURNING id, title
+      `);
+      const open = seeded.rows.find((row) => row.title === "Disco lleno")!;
+      await client.query(
+        `INSERT INTO notification_outbox (key, "incidentId", kind, channel, status, result)
+         VALUES ($1, $2, 'incident-open', 'digest', 'suppressed',
+           '{"state":"suppressed","reason":"digest_pending","at":"2026-11-26T06:00:00.000Z"}'::jsonb)`,
+        [`incident:${open.id}:open`, open.id],
+      );
+
+      await migrateAll(client);
+
+      // Delivery rows and episodes survive the additive migration untouched.
+      const outbox = await client.query<{
+        key: string;
+        channel: string;
+        status: string;
+        reason: string;
+      }>(
+        `SELECT key, channel, status, result->>'reason' AS reason
+           FROM notification_outbox ORDER BY id`,
+      );
+      expect(outbox.rows).toEqual([
+        {
+          key: `incident:${open.id}:open`,
+          channel: "digest",
+          status: "suppressed",
+          reason: "digest_pending",
+        },
+      ]);
+      const incidents = await client.query<{ count: number }>(
+        "SELECT count(*)::int AS count FROM incidents",
+      );
+      expect(incidents.rows[0].count).toBe(2);
+
+      // One row per Madrid civil date, enforced by the unique index.
+      await client.query(
+        `INSERT INTO digest_runs ("date", "targetAt", "periodStartAt", "dueAt")
+         VALUES ('2026-11-26', now(), now(), now() + interval '2 hours')`,
+      );
+      await expect(
+        client.query(
+          `INSERT INTO digest_runs ("date", "targetAt", "periodStartAt", "dueAt")
+           VALUES ('2026-11-26', now(), now(), now() + interval '2 hours')`,
+        ),
+      ).rejects.toMatchObject({ code: "23505" });
+      const runs = await client.query<{ status: string; attempts: number }>(
+        "SELECT status, attempts FROM digest_runs",
+      );
+      expect(runs.rows).toEqual([{ status: "prepared", attempts: 0 }]);
+
+      // The pause is a single row: absence means no pause and the upsert
+      // extends the known deadline instead of appending a second one.
+      await client.query(
+        `INSERT INTO telegram_cooldown (channel, "until", reason)
+         VALUES ('telegram', now(), 'rate_limited')`,
+      );
+      await client.query(
+        `INSERT INTO telegram_cooldown (channel, "until", reason)
+         VALUES ('telegram', now() + interval '1 minute', 'rate_limited')
+         ON CONFLICT (channel) DO UPDATE SET "until" = EXCLUDED."until"`,
+      );
+      const cooldown = await client.query<{ count: number }>(
+        "SELECT count(*)::int AS count FROM telegram_cooldown",
+      );
+      expect(cooldown.rows[0].count).toBe(1);
+
+      // Re-running the real migrator applies nothing twice.
+      await migrateAll(client);
+      const reapplied = await client.query<{ count: number }>(
+        "SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations",
+      );
+      expect(reapplied.rows[0].count).toBe(journal().entries.length);
+
+      const current = snapshot("0006_digest_runs");
+      expect(current.prevId).toBe(snapshot("0005_incident_context").id);
+      for (const table of ["digest_runs", "telegram_cooldown"] as const) {
+        const expected = current.tables[`public.${table}`];
+        expect(expected).toBeDefined();
+        const columns = await liveColumns(client, table);
+        expect(columns.map((column) => column.column_name).sort()).toEqual(
+          Object.keys(expected.columns).sort(),
+        );
+        const nullability = new Map(
+          columns.map((column) => [column.column_name, column.is_nullable]),
+        );
+        for (const column of Object.values(expected.columns)) {
+          expect(nullability.get(column.name)).toBe(
+            column.notNull ? "NO" : "YES",
+          );
+        }
+        const actualIndexes = (await liveIndexes(client, table))
+          .filter((name) => !name.endsWith("_pkey"))
+          .sort();
+        expect(actualIndexes).toEqual(Object.keys(expected.indexes).sort());
+      }
     } finally {
       await client.end();
       await dropTestDatabase(context);
