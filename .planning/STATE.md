@@ -1,18 +1,18 @@
 ---
 gsd_state_version: "1.0"
-current_phase: 5
+current_phase: 05
 current_phase_name: Bot de lectura y reconocimiento
 status: executing
-stopped_at: Phase 5 context gathered
-last_updated: "2026-11-26T12:43:42.501Z"
+stopped_at: Completed 05-01-PLAN.md
+last_updated: "2026-11-26T13:40:19.666Z"
 last_activity: 2026-11-26
-last_activity_desc: Phase 04 complete, transitioned to Phase 5
-state_head: fa0143c03418da68cd163751d8f7497cd6bcaf73
+last_activity_desc: Phase 05 execution started
+state_head: b117d7aa775f4e9ca3d5e9b3353873212f860a72
 progress:
   total_phases: 8
   completed_phases: 4
   total_plans: 20
-  completed_plans: 14
+  completed_plans: 15
   percent: 50
 ---
 
@@ -23,14 +23,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-26)
 
 **Core value:** Saber en segundos qué está pasando en los dos servidores y poder actuar sobre ellos sin abrir una consola.
-**Current focus:** Phase 5 — Bot de lectura y reconocimiento
+**Current focus:** Phase 05 — Bot de lectura y reconocimiento
 
 ## Current Position
 
-Phase: 5 (Bot de lectura y reconocimiento) — READY TO EXECUTE
-Plan: Not started
+Phase: 05 (Bot de lectura y reconocimiento) — EXECUTING
+Plan: 2 of 6
 Status: Ready to execute
-Last activity: 2026-11-26 — Phase 04 complete, transitioned to Phase 5
+Last activity: 2026-11-26 — Phase 05 execution started
 
 Progress: [█████░░░░░] 50%
 
@@ -65,6 +65,7 @@ Progress: [█████░░░░░] 50%
 | Phase 04 P04-01 | 24 min | 3 tasks | 16 files |
 | Phase 04 P04-02 | 17 min | 2 tasks | 4 files |
 | Phase 04 P04-03 | 45 min | 3 tasks | 16 files |
+| Phase 05 P01 | 48 min | 2 tasks | 17 files |
 
 ## Accumulated Context
 
@@ -92,6 +93,8 @@ Recent decisions affecting current work:
 - [Phase 04]: El resumen es una proyección global del hub: el mismo estado responde para todos los hosts y sobrevive al cambio de host
 - [Phase 04]: Solo las transiciones durables registradas por el tick emiten log; releer una fila terminal no repite el aviso
 - [Phase 04]: Ambas sondas rechazan marcas ausentes, futuras, obsoletas, de PID muerto o reutilizado; la marca del worker solo avanza tras hitos del bucle dueño del lock
+- [Phase 05]: El token de callback se consume, el efecto se aplica y el offset avanza en una sola transacción del pool; solo vive el hash en la base
+- [Phase 05]: El carril de updates solo arranca con chat privado positivo y sustituye el reposo del worker; un fallo no renueva la marca de salud
 
 ### Pending Todos
 
@@ -112,6 +115,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-26T11:31:24.509Z
-Stopped at: Phase 5 context gathered
-Resume file: .planning/phases/05-bot-de-lectura-y-reconocimiento/05-CONTEXT.md
+Last session: 2026-11-26T13:40:19.348Z
+Stopped at: Completed 05-01-PLAN.md
+Resume file: None
