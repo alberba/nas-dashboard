@@ -17,6 +17,8 @@ import {
 } from "./database";
 import { createFakeBotApi } from "./telegram-fake";
 import type { RuntimeConfig } from "@/lib/runtime-config";
+import type { TelegramTransport } from "@/lib/telegram";
+import type { Metrics } from "@/lib/types";
 
 const baseUrl = testDatabaseUrl();
 const BOT_TOKEN = "123456:abcdefghijklmnopqrstuvwxyzABCDEFGH";
@@ -650,6 +652,458 @@ describe.skipIf(!baseUrl)("incident why", () => {
       expect(outcomes.filter((value) => value === "queued")).toHaveLength(1);
       expect(outcomes.filter((value) => value === "duplicate")).toHaveLength(1);
       expect(await whyRows(incidentId)).toHaveLength(1);
+    } finally {
+      await safeEnd(client);
+    }
+  });
+
+  function sample(
+    overrides: {
+      cpu?: number | null;
+      memory?: { total: number; used: number };
+      disks?: { name: string; root: string; total: number; used: number; free: number }[];
+      temperatures?: { name: string; value: number }[];
+    } = {},
+  ): Metrics {
+    return {
+      timestamp: Math.floor(START / 1_000),
+      hostname: "nas-home",
+      cpu: overrides.cpu ?? 12,
+      memory: overrides.memory ?? { total: 16_000, used: 4_000 },
+      network: { rx: 0, tx: 0 },
+      io: { read: 0, write: 0 },
+      uptime: 1,
+      disks: overrides.disks ?? [],
+      temperatures: overrides.temperatures ?? [],
+      containers: [],
+    };
+  }
+
+  async function seedSample(data: Metrics) {
+    await db.insert(tables.samples).values({
+      hostId: "nas-home",
+      at: new Date(START),
+      data,
+    });
+  }
+
+  async function tick(
+    fake: ReturnType<typeof createFakeBotApi>,
+    client: Client,
+    at: number,
+  ) {
+    return dispatch.runDispatchOnce({
+      client,
+      config,
+      now: () => at,
+      fetchImpl: fake.transport,
+    });
+  }
+
+  /** Runs ticks until `done`, because an edit may be due before the reply. */
+  async function tickUntil(
+    fake: ReturnType<typeof createFakeBotApi>,
+    client: Client,
+    at: number,
+    done: () => Promise<boolean>,
+    attempts = 5,
+  ): Promise<void> {
+    for (let index = 0; index < attempts; index += 1) {
+      if (await done()) return;
+      await tick(fake, client, at + index);
+    }
+    expect(await done()).toBe(true);
+  }
+
+  function replyCalls(fake: ReturnType<typeof createFakeBotApi>) {
+    return sends(fake).filter((call) => call.body.reply_parameters !== undefined);
+  }
+
+  it("sends the reply quoting the notice, without sound and with the rule and the reading", async () => {
+    const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
+    const client = await lockOwner();
+    try {
+      const incidentId = await sendOpening(fake, client);
+      await seedSample(
+        sample({
+          temperatures: [
+            { name: "cpu", value: 62 },
+            { name: "nvme", value: 74 },
+          ],
+        }),
+      );
+      const at = START + 60_000;
+      expect(
+        await press(fake, client, {
+          token: await issueToken(incidentId, "why"),
+          updateId: 201,
+          at,
+        }),
+      ).toMatchObject({ handled: 1 });
+
+      const sent = await tick(fake, client, at + 60_000);
+      expect(sent).toMatchObject({ action: "sent", kind: "incident-why" });
+
+      const replies = replyCalls(fake);
+      expect(replies).toHaveLength(1);
+      const [reply] = replies;
+      expect(reply.body.reply_parameters).toEqual({
+        message_id: OPEN_MESSAGE_ID,
+        allow_sending_without_reply: true,
+      });
+      expect(reply.body.disable_notification).toBe(true);
+      expect(reply.body).not.toHaveProperty("reply_markup");
+      expect(reply.body.chat_id).toBe(CHAT_ID);
+
+      const text = String(reply.body.text ?? "");
+      // The highest sensor, the threshold of the rule, and the severity.
+      expect(text).toContain("74");
+      expect(text).toContain("Algún sensor supera 70 °C");
+      expect(text).toContain("warning");
+
+      const [row] = await whyRows(incidentId);
+      expect(row.status).toBe("sent");
+      expect(row.messageId).toBe(String(OPEN_MESSAGE_ID));
+      expect(row.result?.state).toBe("sent");
+      expect(JSON.stringify(row.result)).not.toContain(BOT_TOKEN);
+      expect(reply.url).not.toContain(BOT_TOKEN);
+    } finally {
+      await safeEnd(client);
+    }
+  });
+
+  it("explains each key with its own reading and none without a measurement", async () => {
+    const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
+    const client = await lockOwner();
+    try {
+      await seedSample(
+        sample({
+          cpu: 42,
+          memory: { total: 16_000, used: 4_000 },
+          disks: [
+            { name: "data", root: "/data", total: 100, used: 80, free: 20 },
+            { name: "system", root: "/", total: 100, used: 30, free: 70 },
+          ],
+          temperatures: [{ name: "cpu", value: 61 }],
+        }),
+      );
+
+      const cases: Array<{ key: string; reading: string | null }> = [
+        { key: "cpu", reading: "42" },
+        { key: "memory", reading: "25" },
+        { key: "disk", reading: "80" },
+        { key: "container:plex", reading: null },
+        { key: "backup-failed", reading: null },
+      ];
+      let updateId = 300;
+      for (const { key, reading } of cases) {
+        const incidentId = await sendOpening(fake, client, { key });
+        const at = START + 60_000 + updateId * 1_000;
+        expect(
+          await press(fake, client, {
+            token: await issueToken(incidentId, "why"),
+            updateId,
+            at,
+          }),
+        ).toMatchObject({ handled: 1 });
+        await tickUntil(fake, client, at + 30_000, async () =>
+          (await whyRows(incidentId)).some((row) => row.status === "sent"),
+        );
+
+        const reply = replyCalls(fake).at(-1)!;
+        const text = String(reply.body.text ?? "");
+        if (reading === null) {
+          // A key without a measurement explains rule and channel, no value.
+          expect(text).not.toContain("42");
+          expect(text).not.toContain("25");
+          expect(text).not.toContain("80");
+        } else {
+          expect(text).toContain(reading);
+        }
+        updateId += 1;
+      }
+    } finally {
+      await safeEnd(client);
+    }
+  });
+
+  it("explains a resolved notice without a reading", async () => {
+    const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
+    const client = await lockOwner();
+    try {
+      const incidentId = await sendOpening(fake, client);
+      await seedSample(sample({ temperatures: [{ name: "cpu", value: 74 }] }));
+      const closed = await store.recordIncidentObservation({
+        hostId: "nas-home",
+        key: "temperature",
+        failing: false,
+        now: START + 30_000,
+      });
+      expect(closed.action).toBe("resolved");
+
+      const at = START + 60_000;
+      expect(
+        await press(fake, client, {
+          token: await issueToken(incidentId, "why"),
+          updateId: 401,
+          at,
+        }),
+      ).toMatchObject({ handled: 1 });
+      await tickUntil(fake, client, at + 30_000, async () =>
+        (await whyRows(incidentId)).some((row) => row.status === "sent"),
+      );
+
+      const reply = replyCalls(fake).at(-1)!;
+      const text = String(reply.body.text ?? "");
+      expect(text).not.toContain("74");
+      expect(text).toContain("Algún sensor supera 70 °C");
+    } finally {
+      await safeEnd(client);
+    }
+  });
+
+  it("reflects an escalation in the severity of the text, one message per state", async () => {
+    const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
+    const client = await lockOwner();
+    try {
+      const incidentId = await sendOpening(fake, client);
+      const at = START + 60_000;
+      expect(
+        await press(fake, client, {
+          token: await issueToken(incidentId, "why"),
+          updateId: 501,
+          at,
+        }),
+      ).toMatchObject({ handled: 1 });
+      await tickUntil(fake, client, at + 30_000, async () =>
+        (await whyRows(incidentId)).some((row) => row.status === "sent"),
+      );
+      const first = String(replyCalls(fake).at(-1)!.body.text ?? "");
+      expect(first).toContain("warning");
+
+      const escalated = await store.recordIncidentObservation({
+        hostId: "nas-home",
+        key: "temperature",
+        failing: true,
+        severity: "critical",
+        title: "Temperatura elevada en nas-home",
+        detail: "Algún sensor supera 70 °C.",
+        now: at + 40_000,
+        delivery: { channel: "telegram", reason: "policy_immediate" },
+      });
+      expect(escalated.action).toBe("escalated");
+
+      expect(
+        await press(fake, client, {
+          token: await issueToken(incidentId, "why"),
+          updateId: 502,
+          at: at + 60_000,
+        }),
+      ).toMatchObject({ handled: 1 });
+      const repliesBefore = replyCalls(fake).length;
+      await tickUntil(fake, client, at + 90_000, async () =>
+        (await whyRows(incidentId)).every((row) => row.status === "sent"),
+      );
+      const replies = replyCalls(fake);
+      // One reply per state: the second press added exactly one message.
+      expect(replies.length).toBe(repliesBefore + 1);
+      expect(String(replies.at(-1)!.body.text ?? "")).toContain("critical");
+    } finally {
+      await safeEnd(client);
+    }
+  });
+
+  it("never resends an uncertain confirmation", async () => {
+    const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
+    const client = await lockOwner();
+    let attempts = 0;
+    const failing: TelegramTransport = async () => {
+      attempts += 1;
+      throw new Error("network down");
+    };
+    try {
+      const incidentId = await sendOpening(fake, client);
+      const at = START + 60_000;
+      expect(
+        await press(fake, client, {
+          token: await issueToken(incidentId, "why"),
+          updateId: 601,
+          at,
+        }),
+      ).toMatchObject({ handled: 1 });
+
+      expect(
+        await dispatch.runDispatchOnce({
+          client,
+          config,
+          now: () => at + 30_000,
+          fetchImpl: failing,
+        }),
+      ).toMatchObject({ action: "uncertain" });
+      expect(attempts).toBe(1);
+      const [row] = await whyRows(incidentId);
+      expect(row.status).toBe("uncertain");
+
+      expect(
+        await dispatch.runDispatchOnce({
+          client,
+          config,
+          now: () => at + 60_000,
+          fetchImpl: failing,
+        }),
+      ).toMatchObject({ action: "idle" });
+      expect(attempts).toBe(1);
+    } finally {
+      await safeEnd(client);
+    }
+  });
+
+  it("honours the shared pause after a 429 and sends the reply once", async () => {
+    const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
+    const client = await lockOwner();
+    try {
+      const incidentId = await sendOpening(fake, client);
+      const at = START + 60_000;
+      expect(
+        await press(fake, client, {
+          token: await issueToken(incidentId, "why"),
+          updateId: 701,
+          at,
+        }),
+      ).toMatchObject({ handled: 1 });
+
+      const limiting = createFakeBotApi({
+        chatId: Number(CHAT_ID),
+        failOnce: { sendMessage: "rate_limited" },
+      });
+      const first = await dispatch.runDispatchOnce({
+        client,
+        config,
+        now: () => at + 30_000,
+        fetchImpl: limiting.transport,
+      });
+      expect(first).toMatchObject({ action: "retry", reason: "rate_limited" });
+      const [retried] = await whyRows(incidentId);
+      expect(retried.status).toBe("pending");
+      const cooldowns = await db.select().from(tables.telegramCooldown);
+      expect(cooldowns).toHaveLength(1);
+      expect(cooldowns[0].until.getTime()).toBeGreaterThan(at + 30_000);
+
+      const second = await dispatch.runDispatchOnce({
+        client,
+        config,
+        now: () => at + 40_000,
+        fetchImpl: limiting.transport,
+      });
+      expect(second).toMatchObject({ action: "sent" });
+      expect(
+        limiting.calls.filter((call) => call.method === "sendMessage"),
+      ).toHaveLength(2);
+      const [sent] = await whyRows(incidentId);
+      expect(sent.status).toBe("sent");
+    } finally {
+      await safeEnd(client);
+    }
+  });
+
+  it("leaves a confirmed rejection failed and never falls back to push", async () => {
+    const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
+    const client = await lockOwner();
+    const rejecting: TelegramTransport = async () =>
+      new Response(JSON.stringify({ ok: false }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    try {
+      const incidentId = await sendOpening(fake, client);
+      const at = START + 60_000;
+      expect(
+        await press(fake, client, {
+          token: await issueToken(incidentId, "why"),
+          updateId: 801,
+          at,
+        }),
+      ).toMatchObject({ handled: 1 });
+
+      expect(
+        await dispatch.runDispatchOnce({
+          client,
+          config,
+          now: () => at + 30_000,
+          fetchImpl: rejecting,
+        }),
+      ).toMatchObject({ action: "failed" });
+      const [row] = await whyRows(incidentId);
+      expect(row.status).toBe("failed");
+
+      const pushRows = await db
+        .select()
+        .from(tables.notificationOutbox)
+        .where(
+          and(
+            eq(tables.notificationOutbox.incidentId, incidentId),
+            eq(tables.notificationOutbox.kind, "incident-push"),
+          ),
+        );
+      expect(pushRows).toHaveLength(0);
+    } finally {
+      await safeEnd(client);
+    }
+  });
+
+  it("sends the reply while a silence is active", async () => {
+    const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
+    const client = await lockOwner();
+    try {
+      const incidentId = await sendOpening(fake, client);
+      const at = START + 60_000;
+      expect(
+        await runAction({
+          action: "snooze",
+          hours: 1,
+          incidentId,
+          via: "telegram",
+          now: at,
+        }),
+      ).toBe("applied");
+      expect(
+        await press(fake, client, {
+          token: await issueToken(incidentId, "why"),
+          updateId: 901,
+          at: at + 1_000,
+        }),
+      ).toMatchObject({ handled: 1 });
+
+      await tickUntil(fake, client, at + 30_000, async () =>
+        (await whyRows(incidentId)).some((row) => row.status === "sent"),
+      );
+      expect(replyCalls(fake)).toHaveLength(1);
+    } finally {
+      await safeEnd(client);
+    }
+  });
+
+  it("does not change the delivery the hub publishes", async () => {
+    const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
+    const client = await lockOwner();
+    try {
+      const incidentId = await sendOpening(fake, client);
+      const before = await store.projectIncidents([await incidentOf(incidentId)]);
+      const at = START + 60_000;
+      expect(
+        await press(fake, client, {
+          token: await issueToken(incidentId, "why"),
+          updateId: 1_001,
+          at,
+        }),
+      ).toMatchObject({ handled: 1 });
+      await tickUntil(fake, client, at + 30_000, async () =>
+        (await whyRows(incidentId)).some((row) => row.status === "sent"),
+      );
+
+      const after = await store.projectIncidents([await incidentOf(incidentId)]);
+      expect(after[0].delivery).toEqual(before[0].delivery);
+      expect(after[0].lastUpdate).toEqual(before[0].lastUpdate);
     } finally {
       await safeEnd(client);
     }
