@@ -29,7 +29,22 @@ La [investigación](05-RESEARCH.md#validation-architecture) registra 20 pruebas 
 
 ## Matriz de verificación por tarea
 
-Se completa al cerrar la planificación, con una fila por tarea de los PLAN.md de la fase.
+Una fila por tarea de los cinco PLAN.md. Todas se ejecutan con PostgreSQL 18 desechable y `HUB_REQUIRE_TEST_DB=1`, salvo la prueba de Avisos, que además necesita el build, la base migrada y Chromium.
+
+| Plan | Tarea | Requisitos | Prueba | Comando |
+| --- | --- | --- | --- | --- |
+| 05-01 | 1 (tracer) | BOT-02, BOT-04, BOT-06, BOT-10 | `tests/telegram-updates.test.ts`, `tests/telegram.test.ts` | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/telegram-updates.test.ts tests/telegram.test.ts tests/incident-store.test.ts tests/notification-dispatch.test.ts && pnpm typecheck` |
+| 05-01 | 2 | BOT-04, BOT-06 | `tests/incident-actions.test.ts`, `tests/madrid-day.test.ts`, `tests/migrations.test.ts` | `TZ=Pacific/Honolulu HUB_REQUIRE_TEST_DB=1 pnpm test tests/madrid-day.test.ts tests/incident-actions.test.ts tests/migrations.test.ts tests/notification-dispatch.test.ts && pnpm typecheck` |
+| 05-02 | 1 | BOT-04, BOT-06 | `tests/incident-snooze.test.ts` | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/incident-snooze.test.ts tests/incident-actions.test.ts tests/telegram-updates.test.ts && pnpm typecheck` |
+| 05-02 | 2 | BOT-04 | `tests/snooze-delivery.test.ts` | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/snooze-delivery.test.ts tests/incident-store.test.ts tests/notification-dispatch.test.ts tests/incident-push.test.ts && pnpm typecheck` |
+| 05-03 | 1 | BOT-05, BOT-06 | `tests/incident-why.test.ts` | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/incident-why.test.ts tests/incident-snooze.test.ts tests/telegram-updates.test.ts && pnpm typecheck` |
+| 05-03 | 2 | BOT-05, BOT-06 | `tests/incident-why.test.ts`, `tests/telegram.test.ts` | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/incident-why.test.ts tests/telegram.test.ts tests/notification-dispatch.test.ts tests/snooze-delivery.test.ts && pnpm typecheck` |
+| 05-04 | 1 | BOT-04 | `tests/api-incidents.test.ts` | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/api-incidents.test.ts tests/incident-store.test.ts && pnpm typecheck` |
+| 05-04 | 2 | BOT-04 | `tests/e2e/incidents.spec.ts` | `pnpm typecheck && pnpm lint && pnpm build && pnpm test:e2e tests/e2e/incidents.spec.ts` |
+| 05-04 | 3 | BOT-04 | `tests/digest-ack-labels.test.ts` | `TZ=Pacific/Honolulu HUB_REQUIRE_TEST_DB=1 pnpm test tests/digest-ack-labels.test.ts tests/notification-dispatch.test.ts tests/telegram.test.ts && pnpm typecheck` |
+| 05-05 | 1 | BOT-06 | `tests/telegram-lane-hardening.test.ts` | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/telegram-lane-hardening.test.ts tests/telegram-updates.test.ts && pnpm typecheck` más el recuento de `cleanupTelegramState` en `src/worker.ts` |
+| 05-05 | 2 | BOT-02, BOT-06 | `tests/telegram-contract.test.ts`, `tests/telegram-replays.test.ts` | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/telegram-contract.test.ts tests/telegram-replays.test.ts tests/telegram-updates.test.ts tests/incident-actions.test.ts && pnpm typecheck` |
+| 05-05 | 3 | BOT-10 | `tests/telegram-redaction.test.ts` | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/telegram-redaction.test.ts tests/telegram.test.ts && pnpm typecheck && pnpm lint`, más la comprobación manual con el bot real |
 
 ## Ola 0
 

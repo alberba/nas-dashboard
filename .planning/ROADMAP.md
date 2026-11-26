@@ -145,12 +145,21 @@ Plans:
   3. "Por qué me llegó esto" responde desde el propio mensaje.
   4. Un callback repetido o caducado no ejecuta dos veces la acción ni rompe el bot.
   5. El token del bot no aparece en logs ni en respuestas.
-**Plans**: 3 plans
+**Plans**: 5 plans
 
 Plans:
-- [ ] 05-01: Long polling con offset persistido, `deleteWebhook` y allowlist doble de `from.id` y `chat.id`
-- [ ] 05-02: Tokens opacos de callback, ack/snooze/resolver y "por qué me llegó esto"
-- [ ] 05-03: Contrato del `Update`, redacción del token y pruebas de callback repetido o caducado
+**Wave 1**
+- [ ] 05-01: Reconocer desde Telegram de punta a punta: long polling con offset persistido, allowlist doble, token opaco de un solo uso y edición silenciosa del aviso
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 05-02: Silenciar 1 h o 24 h y quitar el silencio por host y clave, con supresión de aperturas, escaladas, trabajo encolado y push de respaldo
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 05-03: "Por qué me llegó esto" como respuesta citada, una por estado del aviso
+- [ ] 05-04: Estado y acciones de reconocimiento y silencio en Avisos y etiquetas del resumen diario
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 05-05: Contrato del `Update`, replays de cada acción, update veneno y token fuera de logs y respuestas
 
 **Repo:** hub
 **Research flag:** No — Bot API estable; hace falta un test de contrato del `Update`, no un spike.
@@ -226,7 +235,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 2. Incidencias y entrega única | 5/5 | Complete    | 2026-11-25 |
 | 3. Agrupación, inventario y ayudantes | 3/3 | Complete    | 2026-11-25 |
 | 4. Resumen diario | 3/3 | Complete    | 2026-11-26 |
-| 5. Bot de lectura y reconocimiento | 0/3 | Not started | - |
+| 5. Bot de lectura y reconocimiento | 0/5 | Not started | - |
 | 6. Puerta de seguridad | 0/3 | Not started | - |
 | 7. Acciones verificadas desde Telegram | 0/3 | Not started | - |
 | 8. Cutover de media-stack y consolidación | 0/3 | Not started | - |
