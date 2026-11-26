@@ -526,6 +526,77 @@ describe.skipIf(!baseUrl)("snooze delivery", () => {
     }
   });
 
+  it("also holds back a push claimed before the silence arrives", async () => {
+    const pushCalls: string[] = [];
+    const pushTransport: PushTransport = async (subscription) => {
+      pushCalls.push(subscription.endpoint);
+    };
+    const vapidConfig: RuntimeConfig = {
+      ...config,
+      vapid: { publicKey: "test-public-key", privateKey: "test-private-key" },
+    };
+    const client = await lockOwner();
+    try {
+      const opened = await store.recordIncidentObservation({
+        hostId: "nas-home",
+        key: "disk",
+        failing: true,
+        severity: "warning",
+        title: "Disco lleno",
+        detail: "92 %",
+        now: START,
+        delivery: { channel: "push", reason: "policy_immediate" },
+      });
+      expect(opened.delivery).toBe("queued");
+
+      let injected = false;
+      const proxied = new Proxy(client, {
+        get(target, property) {
+          if (property !== "query")
+            return Reflect.get(target, property, target) as unknown;
+          return async (...args: unknown[]) => {
+            const result = await (
+              Reflect.get(target, "query") as (
+                ...inner: unknown[]
+              ) => Promise<unknown>
+            ).apply(target, args);
+            const first = args[0];
+            const text =
+              typeof first === "string"
+                ? first
+                : String((first as { text?: string } | undefined)?.text ?? "");
+            if (!injected && text.includes("status = 'claimed'")) {
+              injected = true;
+              await db.insert(tables.incidentSnoozes).values({
+                hostId: "nas-home",
+                key: "disk",
+                until: new Date(START + 2 * HOUR_MS),
+                setAt: new Date(START),
+                setVia: "telegram",
+              });
+            }
+            return result;
+          };
+        },
+      });
+
+      const outcome = await dispatch.runDispatchOnce({
+        client: proxied,
+        config: vapidConfig,
+        now: () => START + 1_000,
+        pushTransport,
+      });
+      expect(injected).toBe(true);
+      expect(outcome).toMatchObject({ action: "suppressed", reason: "snoozed" });
+      expect(pushCalls).toHaveLength(0);
+      const [row] = await outboxOf(opened.incidentId!);
+      expect(row).toMatchObject({ status: "suppressed" });
+      expect(row.result?.reason).toBe("snoozed");
+    } finally {
+      await safeEnd(client);
+    }
+  });
+
   it("still edits a sent notice while silent and offers to remove the silence", async () => {
     const fake = fakeProvider();
     const client = await lockOwner();

@@ -557,6 +557,28 @@ describe.skipIf(!baseUrl)("incident snooze", () => {
         ).toEqual([]);
   });
 
+  it("refuses any silence duration outside the closed set", async () => {
+    const snooze = await import("@/lib/incident-snooze");
+    expect(() => snooze.snoozeDeadline(START, 2)).toThrow(RangeError);
+    expect(() => snooze.snoozeDeadline(START, 0)).toThrow(RangeError);
+    expect(snooze.snoozeDeadline(START, 1).getTime()).toBe(START + HOUR_MS);
+    expect(snooze.snoozeDeadline(START, 24).getTime()).toBe(START + 24 * HOUR_MS);
+
+    // A caller that bypassed the type still cannot persist an indefinite one.
+    const incidentId = await openCritical();
+    const invalid = {
+      action: "snooze",
+      hours: 2,
+      incidentId,
+      via: "telegram",
+      now: START + 10_000,
+    } as unknown as Parameters<typeof actions.applyIncidentAction>[1];
+    await expect(
+      db.transaction((tx) => actions.applyIncidentAction(tx, invalid)),
+    ).rejects.toThrow(RangeError);
+    expect(await snoozeRows()).toHaveLength(0);
+  });
+
   it("ignores a repeated, expired or foreign silence token", async () => {
     const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
     const client = await lockOwner();
