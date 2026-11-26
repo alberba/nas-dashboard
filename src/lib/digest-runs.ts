@@ -543,14 +543,14 @@ async function recordDigestRetry(
     `UPDATE digest_runs
         SET status = 'prepared',
             "nextAttemptAt" = $3,
-            result = jsonb_build_object('state', 'failed', 'reason', 'rate_limited', 'at', $4::text),
+            result = jsonb_build_object('state', 'failed', 'reason', 'rate_limited', 'at', $5::text),
             reason = 'rate_limited',
             "attemptStartedAt" = NULL,
             "claimToken" = NULL,
             "leaseUntil" = NULL,
             "updatedAt" = $4
       WHERE id = $1 AND "claimToken" = $2 AND status = 'claimed'`,
-    [run.id, token, new Date(deadline), at],
+    [run.id, token, new Date(deadline), at, at.toISOString()],
   );
   return { action: "retry", date: run.date, reason: "rate_limited" };
 }

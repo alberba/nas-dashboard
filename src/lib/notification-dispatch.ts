@@ -156,6 +156,29 @@ function boundedBackoffMs(attempts: number): number {
 
 type Job = typeof notificationOutbox.$inferSelect;
 
+/** Backoff or provider delay of a confirmed 429, in milliseconds. */
+function telegramDelayMs(attempts: number, retryAfterMs: number | null): number {
+  return retryAfterMs && retryAfterMs > 0
+    ? retryAfterMs
+    : boundedBackoffMs(attempts);
+}
+
+/**
+ * Starts the shared pause at the reception instant of a confirmed 429. It is
+ * written before the job's own reschedule, so a crash in between pauses every
+ * Telegram delivery instead of letting a new row slip through.
+ */
+async function pauseTelegram(
+  client: Client,
+  now: number,
+  attempts: number,
+  retryAfterMs: number | null,
+): Promise<number> {
+  const delay = telegramDelayMs(attempts, retryAfterMs);
+  await beginTelegramCooldown(client, now + delay, "rate_limited", now);
+  return delay;
+}
+
 /**
  * Resolves leases left behind by a dead owner. A lease that expired before the
  * attempt mark is safe to claim again; a lease that expired after it is an
@@ -234,6 +257,11 @@ export async function claimOutboxJob(
           AND "nextAttemptAt" <= $1
           AND ("leaseUntil" IS NULL OR "leaseUntil" <= $1)
           AND kind IN ('incident-open', 'incident-edit', 'incident-push', 'push-test')
+          AND (
+            channel <> 'telegram' OR NOT EXISTS (
+              SELECT 1 FROM telegram_cooldown c WHERE c."until" > $1
+            )
+          )
         ORDER BY "nextAttemptAt" ASC, id ASC
         FOR UPDATE SKIP LOCKED
         LIMIT 1
@@ -280,6 +308,11 @@ export async function beginOutboxAttempt(
         AND status = 'claimed'
         AND "attemptStartedAt" IS NULL
         AND ("leaseUntil" IS NULL OR "leaseUntil" > $3)
+        AND (
+          channel <> 'telegram' OR NOT EXISTS (
+            SELECT 1 FROM telegram_cooldown c WHERE c."until" > $3
+          )
+        )
       RETURNING attempts`,
     [id, token, at],
   );
@@ -293,10 +326,6 @@ type DispatcherContext = {
   now: number;
   options: DispatcherOptions;
 };
-
-function delayFor(attempts: number): number {
-  return boundedBackoffMs(attempts);
-}
 
 async function loadIncident(
   db: ReturnType<typeof workerDb>,
@@ -412,7 +441,12 @@ async function recordTelegramRetry(
   retryAfterMs: number | null,
 ): Promise<DispatchResult> {
   const db = workerDb(context.client);
-  const delay = retryAfterMs && retryAfterMs > 0 ? retryAfterMs : delayFor(attempts);
+  const delay = await pauseTelegram(
+    context.client,
+    context.now,
+    attempts,
+    retryAfterMs,
+  );
   const nextAttemptAt = new Date(context.now + delay);
   await db.transaction(async (tx) => {
     const [updated] = await tx
@@ -595,12 +629,21 @@ async function dispatchTelegramOpening(
     case "sent":
       return recordTelegramSent(context, job, result.chatId, result.messageId);
     case "retry":
-      if (attempts >= (context.options.maxAttempts ?? MAX_CONFIRMED_ATTEMPTS))
+      if (attempts >= (context.options.maxAttempts ?? MAX_CONFIRMED_ATTEMPTS)) {
+        // The confirmed 429 still owns the bot's shared pause, even though this
+        // opening has exhausted its own budget.
+        await pauseTelegram(
+          context.client,
+          context.now,
+          attempts,
+          result.retryAfterMs,
+        );
         return recordPermanentFailure(
           context,
           job,
           "retry_budget_exhausted",
         );
+      }
       return recordTelegramRetry(
         context,
         job,
@@ -685,13 +728,20 @@ async function recordEditRetry(
   reason: string,
   retryAfterMs: number | null,
 ): Promise<DispatchResult> {
+  // Only a confirmed 429 pauses the whole bot; an ambiguous edit keeps its
+  // bounded backoff and never borrows a deadline it did not receive.
+  const delay =
+    reason === "rate_limited"
+      ? await pauseTelegram(
+          context.client,
+          context.now,
+          attempts,
+          retryAfterMs,
+        )
+      : boundedBackoffMs(attempts);
   if (attempts >= (context.options.maxAttempts ?? MAX_CONFIRMED_ATTEMPTS))
     return recordEditFailure(context, job, "edit_retry_exhausted");
   const db = workerDb(context.client);
-  const delay =
-    retryAfterMs && retryAfterMs > 0
-      ? retryAfterMs
-      : boundedBackoffMs(attempts);
   const [updated] = await db
     .update(notificationOutbox)
     .set({
