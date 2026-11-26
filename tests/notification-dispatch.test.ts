@@ -1613,6 +1613,41 @@ describe.skipIf(!baseUrl)("notification dispatch", () => {
     }
   });
 
+  it("keeps contiguous periods across a schedule change", async () => {
+    await openDigestWarning();
+    const owner = await lockOwner();
+    const provider = fakeProvider();
+    try {
+      await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 60_000,
+        fetchImpl: provider.transport,
+      });
+      // The next day runs at 23:30: its period still starts at the target the
+      // previous date actually used, not at the new schedule.
+      const late: RuntimeConfig = { ...digestConfig(), digestTime: "23:30" };
+      const next = await digest.runDigestOnce({
+        client: owner,
+        config: late,
+        now: () => Date.parse("2026-11-27T22:31:00.000Z"),
+        fetchImpl: provider.transport,
+      });
+      expect(next).toMatchObject({ action: "sent", date: "2026-11-27" });
+      expect(provider.calls).toHaveLength(2);
+      const runs = await db
+        .select()
+        .from(tables.digestRuns)
+        .orderBy(tables.digestRuns.date);
+      expect(runs[1].targetAt.getTime()).toBe(
+        Date.parse("2026-11-27T22:30:00.000Z"),
+      );
+      expect(runs[1].periodStartAt.getTime()).toBe(DIGEST_TARGET);
+    } finally {
+      await safeEnd(owner);
+    }
+  });
+
   it("records one omission after a long stop instead of replaying days", async () => {
     await db.insert(tables.digestRuns).values({
       date: "2026-11-23",
@@ -1704,7 +1739,7 @@ describe.skipIf(!baseUrl)("notification dispatch", () => {
     await createUser("owner");
     await createSubscription("owner", "https://push.example/owner");
     await openDigestWarning();
-    const owner = await lockOwner();
+    let owner = await lockOwner();
     const limited = fakeProvider(() =>
       json(
         { ok: false, error_code: 429, parameters: { retry_after: 120 } },
@@ -1737,6 +1772,18 @@ describe.skipIf(!baseUrl)("notification dispatch", () => {
         fetchImpl: limited.transport,
       });
       expect(blocked.action).toBe("idle");
+      expect(limited.calls).toHaveLength(1);
+
+      // A fresh session reads the same durable pause after a restart.
+      await safeEnd(owner);
+      owner = await lockOwner();
+      const stillBlocked = await dispatch.runDispatchOnce({
+        client: owner,
+        config,
+        now: () => DIGEST_TARGET + 65_000,
+        fetchImpl: limited.transport,
+      });
+      expect(stillBlocked.action).toBe("idle");
       expect(limited.calls).toHaveLength(1);
 
       // Push keeps its own path during the Telegram pause.

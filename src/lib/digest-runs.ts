@@ -209,6 +209,13 @@ export async function prepareDigestRuns(
     await options.client.query("BEGIN");
     try {
       for (const candidate of live) {
+        // A stored previous target keeps the cuts contiguous even when the
+        // operator changed the schedule after that day was prepared.
+        const previous = await options.client.query<{ targetAt: Date }>(
+          `SELECT "targetAt" FROM digest_runs
+            WHERE "date" < $1 ORDER BY "date" DESC LIMIT 1`,
+          [candidate.date],
+        );
         const { rowCount } = await options.client.query(
           `INSERT INTO digest_runs
              ("date", "targetAt", "periodStartAt", "dueAt", "nextAttemptAt",
@@ -218,7 +225,7 @@ export async function prepareDigestRuns(
           [
             candidate.date,
             candidate.target,
-            candidate.periodStart,
+            previous.rows[0]?.targetAt ?? candidate.periodStart,
             candidate.dueAt,
             at,
           ],

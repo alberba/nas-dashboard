@@ -1,5 +1,7 @@
+import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Client } from "pg";
@@ -13,6 +15,38 @@ import {
 } from "./database";
 
 const baseUrl = testDatabaseUrl();
+const repoRoot = join(fileURLToPath(new URL(".", import.meta.url)), "..");
+const tsxBin = join(repoRoot, "node_modules", ".bin", "tsx");
+
+/**
+ * Runs the same entry point as `pnpm db:migrate` (the real command) against
+ * one disposable database, so the deployed path is the tested path.
+ */
+function runMigrator(databaseUrl: string): Promise<{ code: number | null; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(tsxBin, [join(repoRoot, "scripts", "migrate.ts")], {
+      cwd: repoRoot,
+      env: { ...process.env, DATABASE_URL: databaseUrl },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error("db:migrate timed out"));
+    }, 60_000);
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({ code, stderr });
+    });
+  });
+}
 
 type JournalEntry = {
   idx: number;
@@ -516,8 +550,9 @@ describe.skipIf(!baseUrl)("digest migration 0006", () => {
       `);
       const open = seeded.rows.find((row) => row.title === "Disco lleno")!;
       await client.query(
-        `INSERT INTO notification_outbox (key, "incidentId", kind, channel, status, result)
-         VALUES ($1, $2, 'incident-open', 'digest', 'suppressed',
+        `INSERT INTO notification_outbox
+           (key, "incidentId", kind, channel, status, revision, result)
+         VALUES ($1, $2, 'incident-open', 'digest', 'suppressed', 3,
            '{"state":"suppressed","reason":"digest_pending","at":"2026-11-26T06:00:00.000Z"}'::jsonb)`,
         [`incident:${open.id}:open`, open.id],
       );
@@ -529,9 +564,10 @@ describe.skipIf(!baseUrl)("digest migration 0006", () => {
         key: string;
         channel: string;
         status: string;
-        reason: string;
+        revision: number;
+        result: Record<string, unknown>;
       }>(
-        `SELECT key, channel, status, result->>'reason' AS reason
+        `SELECT key, channel, status, revision, result
            FROM notification_outbox ORDER BY id`,
       );
       expect(outbox.rows).toEqual([
@@ -539,7 +575,12 @@ describe.skipIf(!baseUrl)("digest migration 0006", () => {
           key: `incident:${open.id}:open`,
           channel: "digest",
           status: "suppressed",
-          reason: "digest_pending",
+          revision: 3,
+          result: {
+            state: "suppressed",
+            reason: "digest_pending",
+            at: "2026-11-26T06:00:00.000Z",
+          },
         },
       ]);
       const incidents = await client.query<{ count: number }>(
@@ -613,6 +654,70 @@ describe.skipIf(!baseUrl)("digest migration 0006", () => {
       await dropTestDatabase(context);
     }
   });
+});
+
+describe.skipIf(!baseUrl)("digest migration runner", () => {
+  it("applies 0006 to a new database and on top of 0005 with pnpm db:migrate", async () => {
+    const fresh = await createTestDatabase(baseUrl!);
+    try {
+      const first = await runMigrator(fresh.url);
+      expect(first.stderr).toBe("");
+      expect(first.code).toBe(0);
+      const client = new Client({ connectionString: fresh.url });
+      await client.connect();
+      try {
+        const tables = await client.query<{ name: string | null }>(
+          "SELECT to_regclass('public.digest_runs') AS name",
+        );
+        expect(tables.rows[0].name).toBe("digest_runs");
+        const applied = await client.query<{ count: number }>(
+          "SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations",
+        );
+        expect(applied.rows[0].count).toBe(journal().entries.length);
+      } finally {
+        await client.end();
+      }
+      // Re-running the real migrator is a no-op.
+      const again = await runMigrator(fresh.url);
+      expect(again.code).toBe(0);
+    } finally {
+      await dropTestDatabase(fresh);
+    }
+
+    const legacy = await createTestDatabase(baseUrl!);
+    try {
+      const before = new Client({ connectionString: legacy.url });
+      await before.connect();
+      try {
+        await migrateThrough(before, 5);
+        await before.query(
+          `INSERT INTO incidents ("hostId", key, title, detail, severity, fingerprint)
+           VALUES ('nas-home','disk','Disco lleno','', 'warning','fp-runner')`,
+        );
+      } finally {
+        await before.end();
+      }
+      const runner = await runMigrator(legacy.url);
+      expect(runner.stderr).toBe("");
+      expect(runner.code).toBe(0);
+      const after = new Client({ connectionString: legacy.url });
+      await after.connect();
+      try {
+        const tables = await after.query<{ name: string | null }>(
+          "SELECT to_regclass('public.digest_runs') AS name",
+        );
+        expect(tables.rows[0].name).toBe("digest_runs");
+        const incidents = await after.query<{ count: number }>(
+          "SELECT count(*)::int AS count FROM incidents",
+        );
+        expect(incidents.rows[0].count).toBe(1);
+      } finally {
+        await after.end();
+      }
+    } finally {
+      await dropTestDatabase(legacy);
+    }
+  }, 120_000);
 });
 
 describe.skipIf(!baseUrl)("incidents rollback rehearsal", () => {
