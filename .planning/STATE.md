@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 05
 current_phase_name: Bot de lectura y reconocimiento
 status: executing
-stopped_at: Completed 05-02-PLAN.md
-last_updated: "2026-11-26T13:57:15.405Z"
+stopped_at: Completed 05-06-PLAN.md
+last_updated: "2026-11-26T14:28:48.352Z"
 last_activity: 2026-11-26
 last_activity_desc: Phase 05 execution started
-state_head: ec97214cf351ea8d2262921dd6360a5ff8c3b52c
+state_head: 2720a45c46c64a01390a258a7a5e246a84227f57
 progress:
   total_phases: 8
   completed_phases: 4
   total_plans: 20
-  completed_plans: 16
+  completed_plans: 17
   percent: 50
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-26)
 ## Current Position
 
 Phase: 05 (Bot de lectura y reconocimiento) — EXECUTING
-Plan: 3 of 6
+Plan: 4 of 6
 Status: Ready to execute
 Last activity: 2026-11-26 — Phase 05 execution started
 
@@ -67,6 +67,7 @@ Progress: [█████░░░░░] 50%
 | Phase 04 P04-03 | 45 min | 3 tasks | 16 files |
 | Phase 05 P01 | 48 min | 2 tasks | 17 files |
 | Phase 05 P02 | 68 min | 2 tasks | 10 files |
+| Phase 05 P06 | 6 min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -99,6 +100,10 @@ Recent decisions affecting current work:
 - [Phase 05]: El silencio se guarda por (hostId, key) con vencimiento cerrado de 1 h o 24 h y se consulta en la escritura de la incidencia y antes de la marca de intento del despacho
 - [Phase 05]: La idempotencia de Silenciar compara la duración pedida con la del silencio vivo, así que repetir el mismo botón no escribe un segundo evento ni acorta el plazo
 - [Phase 05]: Una fila suprimida por silencio es terminal: al vencer no se reenvía y solo un evento posterior vuelve a interrumpir; las ediciones del mensaje existente nunca se suprimen
+- [Phase 05]: La idempotencia del reconocimiento se prueba sobre applyIncidentAction desde los dos canales, no sobre el carril HTTP: el contrato es la acción compartida
+- [Phase 05]: incident_missing se provoca en una transacción revertida que suprime la FK: la DDL de PostgreSQL se deshace y la base queda con la misma forma
+- [Phase 05]: median(sentAt -> ackAt) se calcula con acknowledgedAt y el result.at de la fila incident-open, sin columna ni migración posterior
+- [Phase 05]: La prueba de la migración 0007 siembra filas en 0006 y demuestra con migrateAll y pnpm db:migrate que no las reescribe y que repetir no aplica nada
 
 ### Pending Todos
 
@@ -119,6 +124,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-26T13:57:15.030Z
-Stopped at: Completed 05-02-PLAN.md
+Last session: 2026-11-26T14:28:48.054Z
+Stopped at: Completed 05-06-PLAN.md
 Resume file: None
