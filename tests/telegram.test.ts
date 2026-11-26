@@ -12,6 +12,7 @@ import {
   TELEGRAM_TEXT_LIMIT,
   editTelegramMessage,
   sendTelegramMessage,
+  sendTelegramReply,
   telegramText,
   type TelegramTransport,
 } from "@/lib/telegram";
@@ -480,5 +481,50 @@ describe("telegram client", () => {
       status: 400,
       reason: "message_missing",
     });
+  });
+
+  it("replies quoting the notice without sound and without a keyboard", async () => {
+    const provider = fakeFetch(() =>
+      json({ ok: true, result: { message_id: 88, chat: { id: -1001234567890 } } }),
+    );
+    const result = await sendTelegramReply(
+      { chatId: CHAT_ID, replyToMessageId: "77", text: "Por qué me llegó" },
+      { botToken: BOT_TOKEN, fetchImpl: provider.transport },
+    );
+
+    expect(provider.calls).toHaveLength(1);
+    const [call] = provider.calls;
+    expect(call.url).toBe(`${TELEGRAM_ORIGIN}/bot${BOT_TOKEN}/sendMessage`);
+    expect(call.body).toMatchObject({
+      chat_id: CHAT_ID,
+      text: "Por qué me llegó",
+      disable_notification: true,
+      reply_parameters: { message_id: 77, allow_sending_without_reply: true },
+    });
+    expect(call.body).not.toHaveProperty("reply_markup");
+    expect(call.body).not.toHaveProperty("parse_mode");
+    expect(result).toEqual({
+      state: "sent",
+      chatId: String(-1001234567890),
+      messageId: "88",
+    });
+    // The token only lives in the URL `botRequest` builds; no result carries it.
+    expect(JSON.stringify(result)).not.toContain(BOT_TOKEN);
+  });
+
+  it("refuses a reply to a message id that is not a safe integer", async () => {
+    const provider = fakeFetch(() =>
+      json({ ok: true, result: { message_id: 1 } }),
+    );
+    for (const replyToMessageId of ["", "abc", "1.5", "-3", "0"]) {
+      expect(
+        await sendTelegramReply(
+          { chatId: CHAT_ID, replyToMessageId, text: "x" },
+          { botToken: BOT_TOKEN, fetchImpl: provider.transport },
+        ),
+      ).toEqual({ state: "rejected", status: 400, reason: "message_missing" });
+    }
+    // A refused reply never reaches the provider.
+    expect(provider.calls).toHaveLength(0);
   });
 });

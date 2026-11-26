@@ -1110,4 +1110,76 @@ describe.skipIf(!baseUrl)("incident why", () => {
       await safeEnd(client);
     }
   });
+
+  it("reads each measurement and nothing else", async () => {
+    const why = await import("@/lib/incident-why");
+    expect(
+      why.readingFor(
+        "temperature",
+        sample({
+          temperatures: [
+            { name: "cpu", value: 61 },
+            { name: "nvme", value: 74 },
+          ],
+        }),
+      ),
+    ).toEqual({ value: 74, unit: "°C" });
+    expect(why.readingFor("cpu", sample({ cpu: 42.4 }))).toEqual({
+      value: 42,
+      unit: "%",
+    });
+    expect(
+      why.readingFor("memory", sample({ memory: { total: 1_000, used: 250 } })),
+    ).toEqual({ value: 25, unit: "%" });
+    expect(
+      why.readingFor(
+        "disk",
+        sample({
+          disks: [
+            { name: "data", root: "/data", total: 100, used: 80, free: 20 },
+            { name: "system", root: "/", total: 100, used: 30, free: 70 },
+          ],
+        }),
+      ),
+    ).toEqual({ value: 80, unit: "%" });
+    expect(why.readingFor("container:plex", sample())).toBeNull();
+    expect(why.readingFor("temperature", sample({ temperatures: [] }))).toBeNull();
+    expect(why.readingFor("temperature", null)).toBeNull();
+  });
+
+  it("builds the facts of the current notice state", async () => {
+    const why = await import("@/lib/incident-why");
+    const incidentId = await openIncident();
+    const incident = await incidentOf(incidentId);
+    const metrics = sample({ temperatures: [{ name: "cpu", value: 74 }] });
+
+    const facts = why.whyFacts({
+      incident,
+      opening: { channel: "telegram" },
+      policy: { channel: "telegram" },
+      snoozed: null,
+      metrics,
+    });
+    expect(facts).toMatchObject({
+      rule: incident.detail,
+      channel: "telegram",
+      severity: "warning",
+      resolved: false,
+      snoozedUntil: null,
+      canSnooze: true,
+    });
+    expect(facts.reading).toEqual({ value: 74, unit: "°C" });
+    expect(why.renderWhyText(facts)).toContain(incident.detail);
+
+    // A live silence keeps the fact but offers no new silence.
+    const silenced = why.whyFacts({
+      incident,
+      opening: { channel: "telegram" },
+      policy: { channel: "telegram" },
+      snoozed: { until: new Date(START + HOUR_MS) },
+      metrics,
+    });
+    expect(silenced.canSnooze).toBe(false);
+    expect(silenced.snoozedUntil?.getTime()).toBe(START + HOUR_MS);
+  });
 });
