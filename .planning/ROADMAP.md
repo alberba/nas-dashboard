@@ -122,8 +122,13 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
+**Wave 1**
 - [ ] 04-01: Calendario de Madrid por instante y reclamación at-most-once del día con `digest_runs`
+
+**Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 04-02: Construir el resumen con secciones, footer de críticas y resueltas, y truncado explícito
+
+**Wave 3** *(blocked on Wave 2 completion)*
 - [ ] 04-03: Healthchecks de agente y worker y visibilidad de "el resumen no salió"
 
 **Repo:** hub (incluye `agent/`)
