@@ -383,10 +383,11 @@ export async function prepareDigestRuns(
       }
       const { rows } = await options.client.query<{
         id: number;
+        date: string;
         targetAt: Date;
         periodStartAt: Date;
       }>(
-        `SELECT id, "targetAt", "periodStartAt"
+        `SELECT id, "date", "targetAt", "periodStartAt"
            FROM digest_runs
           WHERE "date" = ANY($1) AND status = 'prepared' AND payload IS NULL
           ORDER BY "targetAt" ASC, id ASC`,
@@ -415,6 +416,7 @@ export async function prepareDigestRuns(
           client: options.client,
           hostIds,
           hostNames,
+          date: row.date,
           periodStart: row.periodStartAt,
           periodEnd: row.targetAt,
           snapshotAt: at,

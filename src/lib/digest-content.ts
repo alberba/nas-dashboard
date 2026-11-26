@@ -1,6 +1,5 @@
 import type { Client } from "pg";
 import { routeHref } from "../components/views/routes";
-import { madridDateOf } from "./madrid-day";
 import { TELEGRAM_TEXT_LIMIT, telegramText } from "./telegram";
 
 /**
@@ -70,6 +69,12 @@ export type DigestSnapshotInput = {
   hostIds: readonly string[];
   /** Optional display names by configured host id. */
   hostNames?: Readonly<Record<string, string>>;
+  /**
+   * Civil date the run belongs to, `YYYY-MM-DD`. It names the title, so a
+   * delivery that lands after midnight still labels its own day instead of the
+   * next one: the recovery window exists precisely for that crossing.
+   */
+  date: string;
   /** Previous target: start of the period folded by the sections. */
   periodStart: Date;
   /** Current target: exclusive end of that period. */
@@ -375,7 +380,7 @@ export async function buildDigestSnapshot(
     return null;
 
   const rendered = renderDigestSnapshot({
-    date: madridDateOf(input.snapshotAt),
+    date: input.date,
     counts,
     details: row.detail,
     aggregates: row.aggregated,

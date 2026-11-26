@@ -1397,6 +1397,7 @@ describe.skipIf(!baseUrl)("notification dispatch", () => {
   }
 
   function digestSnapshotInput(overrides: {
+    date?: string;
     periodStart?: number;
     periodEnd?: number;
     snapshotAt?: number;
@@ -1405,6 +1406,7 @@ describe.skipIf(!baseUrl)("notification dispatch", () => {
     return {
       hostIds: ["nas-home"],
       hostNames: { "nas-home": "NAS-HOME" },
+      date: overrides.date ?? DIGEST_DAY,
       periodStart: new Date(overrides.periodStart ?? DIGEST_PERIOD_START),
       periodEnd: new Date(overrides.periodEnd ?? DIGEST_TARGET),
       snapshotAt: new Date(overrides.snapshotAt ?? DIGEST_TARGET + 60_000),
@@ -2200,11 +2202,18 @@ describe.skipIf(!baseUrl)("notification dispatch", () => {
       });
       expect(result).toMatchObject({ action: "sent", date: "2026-11-26" });
       expect(provider.calls).toHaveLength(1);
+      // The message names the civil date of the run, not the next day the
+      // prepare instant happens to fall on.
+      expect(String(provider.calls[0].body.text)).toContain(
+        "Resumen diario · 2026-11-26",
+      );
+      expect(String(provider.calls[0].body.text)).not.toContain("2026-11-27");
       const run = await digestRun();
       expect(run.targetAt.getTime()).toBe(
         Date.parse("2026-11-26T22:30:00.000Z"),
       );
       expect(run.dueAt.getTime()).toBe(Date.parse("2026-11-27T00:30:00.000Z"));
+      expect(run.payload).toBe(provider.calls[0].body.text);
     } finally {
       await safeEnd(owner);
     }
