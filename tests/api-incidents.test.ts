@@ -320,6 +320,7 @@ describe.skipIf(!baseUrl)("incidents API", () => {
     sessionState.authenticated = true;
     await db.delete(tables.notificationOutbox);
     await db.delete(tables.incidentEvents);
+    await db.delete(tables.incidentSnoozes);
     await db.delete(tables.incidents);
     await db.delete(tables.digestRuns);
     await db.delete(tables.operations);
@@ -1727,5 +1728,318 @@ describe.skipIf(!baseUrl)("incidents API", () => {
     const raw = await response.text();
     expect(raw).not.toContain("digest");
     expect(raw).not.toContain("texto que no debe salir");
+  });
+
+  const hubOrigin = { Origin: "http://localhost:3000" };
+
+  function hubAction(
+    incidentId: number | string,
+    action: "acknowledge" | "snooze" | "unsnooze",
+    body: unknown,
+    headers: Record<string, string> = hubOrigin,
+  ) {
+    return api("POST", `/api/incidents/${incidentId}/${action}`, {
+      body,
+      headers,
+    });
+  }
+
+  async function incidentEvents(incidentId: number) {
+    return (await db.select().from(tables.incidentEvents)).filter(
+      (event) => event.incidentId === incidentId,
+    );
+  }
+
+  async function silenceOf(hostId: string, key: string) {
+    const [row] = await db
+      .select()
+      .from(tables.incidentSnoozes)
+      .where(
+        and(
+          eq(tables.incidentSnoozes.hostId, hostId),
+          eq(tables.incidentSnoozes.key, key),
+        ),
+      );
+    return row ?? null;
+  }
+
+  it("applies acknowledge, snooze and unsnooze from the hub once per state", async () => {
+    const incidentId = await openIncident("nas-home");
+    await markSent(incidentId);
+
+    const before = Date.now();
+    const acknowledged = await hubAction(incidentId, "acknowledge", {
+      host: "nas-home",
+    });
+    expect(acknowledged.status).toBe(200);
+    expect(await acknowledged.json()).toMatchObject({
+      outcome: "applied",
+      incident: {
+        id: incidentId,
+        acknowledged: { via: "hub", by: "Test" },
+        snooze: null,
+      },
+    });
+    const [acked] = await db
+      .select()
+      .from(tables.incidents)
+      .where(eq(tables.incidents.id, incidentId));
+    expect(acked).toMatchObject({
+      acknowledgedVia: "hub",
+      acknowledgedBy: "Test",
+      seq: 2,
+    });
+    expect(acked.acknowledgedAt).toBeInstanceOf(Date);
+
+    const repeated = await hubAction(incidentId, "acknowledge", {
+      host: "nas-home",
+    });
+    expect(repeated.status).toBe(200);
+    expect(await repeated.json()).toMatchObject({ outcome: "unchanged" });
+
+    const snoozed = await hubAction(incidentId, "snooze", {
+      host: "nas-home",
+      hours: 24,
+    });
+    expect(snoozed.status).toBe(200);
+    expect(await snoozed.json()).toMatchObject({
+      outcome: "applied",
+      incident: { snooze: { via: "hub" } },
+    });
+    const after = Date.now();
+    const silence = await silenceOf("nas-home", containerKey);
+    expect(silence).toMatchObject({ setVia: "hub", setBy: "Test" });
+    expect(silence!.until.getTime()).toBeGreaterThanOrEqual(
+      before + 86_400_000,
+    );
+    expect(silence!.until.getTime()).toBeLessThanOrEqual(after + 86_400_000);
+
+    const repeatedSnooze = await hubAction(incidentId, "snooze", {
+      host: "nas-home",
+      hours: 24,
+    });
+    expect(repeatedSnooze.status).toBe(200);
+    expect(await repeatedSnooze.json()).toMatchObject({ outcome: "unchanged" });
+
+    const cleared = await hubAction(incidentId, "unsnooze", {
+      host: "nas-home",
+    });
+    expect(cleared.status).toBe(200);
+    expect(await cleared.json()).toMatchObject({
+      outcome: "applied",
+      incident: { snooze: null },
+    });
+    expect(await silenceOf("nas-home", containerKey)).toBeNull();
+
+    const edits = (await db.select().from(tables.notificationOutbox)).filter(
+      (row) => row.kind === "incident-edit",
+    );
+    expect(edits.map((row) => row.revision).sort()).toEqual([2, 3, 4]);
+    expect((await incidentEvents(incidentId)).map((event) => event.kind))
+      .toEqual(["opened", "acknowledged", "snoozed", "unsnoozed"]);
+  });
+
+  it("queues no edit when the episode never had a Telegram notice", async () => {
+    const opened = await store.recordIncidentObservation({
+      hostId: "nas-home",
+      key: "condition:disk",
+      failing: true,
+      severity: "warning",
+      title: "Disco lleno",
+      detail: "",
+      now: Date.now(),
+      delivery: { channel: "digest", reason: "digest_pending" },
+    });
+    const incidentId = opened.incidentId!;
+
+    const response = await hubAction(incidentId, "acknowledge", {
+      host: "nas-home",
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ outcome: "applied" });
+    expect(
+      (await db.select().from(tables.notificationOutbox)).filter(
+        (row) => row.kind === "incident-edit",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("never acts on another host's episode", async () => {
+    const nasIncident = await openIncident("nas-home");
+    const appsIncident = await openIncident("apps");
+    await markSent(appsIncident);
+    const rowsBefore = (await db.select().from(tables.incidents)).map((row) => [
+      row.id,
+      row.seq,
+      row.acknowledgedAt,
+    ]);
+    const outboxBefore = await db.select().from(tables.notificationOutbox);
+
+    expect(
+      (await hubAction(appsIncident, "acknowledge", { host: "nas-home" }))
+        .status,
+    ).toBe(404);
+    expect(
+      (await hubAction(999_999, "acknowledge", { host: "nas-home" })).status,
+    ).toBe(404);
+    expect(
+      (await hubAction(nasIncident, "acknowledge", { host: "ghost" })).status,
+    ).toBe(404);
+
+    expect(
+      (await db.select().from(tables.incidents)).map((row) => [
+        row.id,
+        row.seq,
+        row.acknowledgedAt,
+      ]),
+    ).toEqual(rowsBefore);
+    expect(await db.select().from(tables.incidentSnoozes)).toHaveLength(0);
+    expect(await db.select().from(tables.notificationOutbox)).toHaveLength(
+      outboxBefore.length,
+    );
+    expect(await incidentEvents(appsIncident)).toHaveLength(1);
+  });
+
+  it("refuses a resolved episode and any body outside the contract", async () => {
+    const incidentId = await openIncident("nas-home");
+    await store.recordIncidentObservation({
+      hostId: "nas-home",
+      key: containerKey,
+      failing: false,
+      now: Date.now(),
+    });
+    const eventsBefore = await incidentEvents(incidentId);
+    const outboxBefore = await db.select().from(tables.notificationOutbox);
+
+    expect(
+      (await hubAction(incidentId, "acknowledge", { host: "nas-home" })).status,
+    ).toBe(409);
+
+    const invalid: unknown[] = [
+      { host: "nas-home", extra: true },
+      {},
+      { host: "" },
+      { host: "nas-home", hours: 6 },
+      { host: "nas-home", hours: 1, other: "x" },
+      { hours: 1 },
+    ];
+    for (const body of invalid) {
+      expect((await hubAction(incidentId, "snooze", body)).status).toBe(400);
+    }
+    expect(
+      (await hubAction(incidentId, "acknowledge", { host: "nas-home", hours: 1 }))
+        .status,
+    ).toBe(400);
+    expect(
+      (await hubAction(incidentId, "unsnooze", { host: "nas-home", hours: 24 }))
+        .status,
+    ).toBe(400);
+
+    expect(await db.select().from(tables.incidentSnoozes)).toHaveLength(0);
+    expect(await incidentEvents(incidentId)).toHaveLength(eventsBefore.length);
+    expect(await db.select().from(tables.notificationOutbox)).toHaveLength(
+      outboxBefore.length,
+    );
+  });
+
+  it("requires a session and an allowed origin for the hub actions", async () => {
+    const incidentId = await openIncident("nas-home");
+
+    expect(
+      (
+        await hubAction(
+          incidentId,
+          "acknowledge",
+          { host: "nas-home" },
+          { Origin: "http://evil.example" },
+        )
+      ).status,
+    ).toBe(403);
+
+    sessionState.authenticated = false;
+    expect(
+      (await hubAction(incidentId, "acknowledge", { host: "nas-home" })).status,
+    ).toBe(401);
+    sessionState.authenticated = true;
+
+    const [row] = await db
+      .select()
+      .from(tables.incidents)
+      .where(eq(tables.incidents.id, incidentId));
+    expect(row.acknowledgedAt).toBeNull();
+    expect(await db.select().from(tables.incidentSnoozes)).toHaveLength(0);
+  });
+
+  it("publishes the hub state and a silence-held opening without Telegram identifiers", async () => {
+    const incidentId = await openIncident("nas-home");
+    await markSent(incidentId);
+    expect(
+      (await hubAction(incidentId, "acknowledge", { host: "nas-home" })).status,
+    ).toBe(200);
+    expect(
+      (await hubAction(incidentId, "snooze", { host: "nas-home", hours: 1 }))
+        .status,
+    ).toBe(200);
+
+    const detail = await (
+      await api("GET", `/api/incidents/${incidentId}?host=nas-home`)
+    ).json();
+    expect(detail.incident).toMatchObject({
+      acknowledged: { via: "hub", by: "Test" },
+      snooze: { via: "hub" },
+    });
+    expect(
+      new Date(detail.incident.snooze.until).getTime(),
+    ).toBeGreaterThan(Date.now());
+    const published = JSON.stringify(detail.incident);
+    expect(published).not.toContain("chatId");
+    expect(published).not.toContain("messageId");
+    expect(published).not.toContain("setBy");
+    expect(published).not.toContain("api.telegram.org");
+
+    // A live silence withholds a new opening and the hub publishes the reason.
+    await db.insert(tables.incidentSnoozes).values({
+      hostId: "nas-home",
+      key: "condition:silencio",
+      until: new Date(Date.now() + 3_600_000),
+      setAt: new Date(),
+      setVia: "hub",
+      setBy: "Test",
+    });
+    const held = await store.recordIncidentObservation({
+      hostId: "nas-home",
+      key: "condition:silencio",
+      failing: true,
+      severity: "warning",
+      title: "Condición silenciada",
+      detail: "",
+      now: Date.now(),
+      delivery: { channel: "telegram", reason: "policy_immediate" },
+    });
+    const heldDetail = await (
+      await api("GET", `/api/incidents/${held.incidentId}?host=nas-home`)
+    ).json();
+    expect(heldDetail.incident).toMatchObject({
+      id: held.incidentId,
+      delivery: {
+        channel: "telegram",
+        state: "suppressed",
+        reason: "snoozed",
+      },
+      acknowledged: null,
+      snooze: { via: "hub" },
+    });
+
+    const overview = await (
+      await api("GET", "/api/overview?host=nas-home")
+    ).json();
+    expect(
+      overview.alerts.find(
+        (alert: { id: number }) => alert.id === held.incidentId,
+      ),
+    ).toMatchObject({
+      delivery: { reason: "snoozed" },
+      snooze: { via: "hub" },
+    });
   });
 });
