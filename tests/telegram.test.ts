@@ -7,6 +7,7 @@ import {
   type DigestDetail,
 } from "@/lib/digest-content";
 import {
+  TELEGRAM_MAX_RETRY_AFTER_MS,
   TELEGRAM_ORIGIN,
   TELEGRAM_TEXT_LIMIT,
   editTelegramMessage,
@@ -360,6 +361,26 @@ describe("telegram client", () => {
       { botToken: BOT_TOKEN, fetchImpl: provider.transport },
     );
     expect(result).toMatchObject({ state: "retry", retryAfterMs: null });
+  });
+
+  it("clamps a provider wait that would leave the representable range", async () => {
+    for (const retryAfter of [TELEGRAM_MAX_RETRY_AFTER_MS, 1e12, 1e308]) {
+      const provider = fakeFetch(() =>
+        json(
+          { ok: false, error_code: 429, parameters: { retry_after: retryAfter } },
+          429,
+        ),
+      );
+      const result = await sendTelegramMessage(
+        { chatId: CHAT_ID, text: "aviso", buttonUrl: incidentHref(BASE_URL, "nas-home", 1) },
+        { botToken: BOT_TOKEN, fetchImpl: provider.transport },
+      );
+      expect(result).toMatchObject({
+        state: "retry",
+        reason: "rate_limited",
+        retryAfterMs: TELEGRAM_MAX_RETRY_AFTER_MS,
+      });
+    }
   });
 
   it("treats 400, 403 and 404 as confirmed permanent rejections", async () => {

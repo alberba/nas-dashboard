@@ -11,6 +11,17 @@
 export const TELEGRAM_ORIGIN = "https://api.telegram.org";
 export const TELEGRAM_TEXT_LIMIT = 4096;
 export const TELEGRAM_REQUEST_TIMEOUT_MS = 10_000;
+/**
+ * Ceiling for a provider-supplied wait, in milliseconds.
+ *
+ * `retry_after` pauses every Telegram delivery of the bot, so it cannot be
+ * left entirely provider-chosen: a value past the representable `Date` range
+ * cannot even be stored, and the statement that would reschedule the delivery
+ * fails after the attempt mark was committed. The cap is the digest recovery
+ * window, so a confirmed 429 is always respected for as long as any queued
+ * digest could still use it; a genuine longer pause simply repeats the 429.
+ */
+export const TELEGRAM_MAX_RETRY_AFTER_MS = 2 * 60 * 60_000;
 
 /** Only the provider origin is reachable, even when a test injects fetch. */
 export type TelegramTransport = (url: string, init: RequestInit) => Promise<Response>;
@@ -77,7 +88,12 @@ function retryAfterMs(envelope: TelegramEnvelope): number | null {
   const seconds = envelope.parameters?.retry_after;
   if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds <= 0)
     return null;
-  return Math.ceil(seconds * 1000);
+  // Clamp after the multiplication as well: a finite `seconds` can still
+  // overflow to Infinity and an unbounded wait cannot be represented.
+  return Math.min(
+    Math.ceil(seconds * 1000),
+    TELEGRAM_MAX_RETRY_AFTER_MS,
+  );
 }
 
 function messageId(envelope: TelegramEnvelope): string | null {

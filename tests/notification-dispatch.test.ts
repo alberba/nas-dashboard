@@ -20,7 +20,10 @@ import {
   type TestDatabase,
 } from "./database";
 import type { RuntimeConfig } from "@/lib/runtime-config";
-import type { TelegramTransport } from "@/lib/telegram";
+import {
+  TELEGRAM_MAX_RETRY_AFTER_MS,
+  type TelegramTransport,
+} from "@/lib/telegram";
 import type { PushTransport } from "@/lib/push";
 
 const baseUrl = testDatabaseUrl();
@@ -2564,6 +2567,43 @@ describe.skipIf(!baseUrl)("notification dispatch", () => {
       expect(cooldown).toHaveLength(1);
       expect(cooldown[0].until.getTime()).toBe(
         DIGEST_TARGET + 60_000 + 7_200_000,
+      );
+    } finally {
+      await safeEnd(owner);
+    }
+  });
+
+  it("bounds an absurd provider wait instead of stranding the date", async () => {
+    await openDigestWarning();
+    const owner = await lockOwner();
+    const limited = fakeProvider(() =>
+      json(
+        { ok: false, error_code: 429, parameters: { retry_after: 1e15 } },
+        429,
+      ),
+    );
+    try {
+      const result = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 60_000,
+        fetchImpl: limited.transport,
+      });
+      // The clamped wait still reaches the end of the window, so the day ends
+      // with its finite reason instead of failing after the attempt mark.
+      expect(result).toMatchObject({
+        action: "failed",
+        date: DIGEST_DAY,
+        reason: "window_closed",
+      });
+      const run = await digestRun();
+      expect(run).toMatchObject({ status: "failed", reason: "window_closed" });
+      expect(run.claimToken).toBeNull();
+      expect(run.leaseUntil).toBeNull();
+      const [cooldown] = await db.select().from(tables.telegramCooldown);
+      expect(Number.isFinite(cooldown.until.getTime())).toBe(true);
+      expect(cooldown.until.getTime()).toBe(
+        DIGEST_TARGET + 60_000 + TELEGRAM_MAX_RETRY_AFTER_MS,
       );
     } finally {
       await safeEnd(owner);
