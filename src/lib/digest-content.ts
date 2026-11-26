@@ -1,5 +1,6 @@
 import type { Client } from "pg";
 import { routeHref } from "../components/views/routes";
+import { madridClock } from "./madrid-day";
 import { TELEGRAM_TEXT_LIMIT, telegramText } from "./telegram";
 
 /**
@@ -42,6 +43,10 @@ export type DigestDetail = {
   severity: string;
   /** Instant used only for a stable order; already bounded by the query. */
   at: number;
+  /** True when the operator acknowledged the episode by any channel. */
+  acknowledged?: boolean;
+  /** Instant of the live silence in epoch milliseconds, or null. */
+  snoozeUntil?: number | null;
 };
 
 export type DigestAggregate = {
@@ -141,7 +146,14 @@ function hostLabel(
 }
 
 function detailLine(detail: DigestDetail, names?: Readonly<Record<string, string>>): string {
-  return `· ${hostLabel(detail.hostId, names)} · ${field(detail.severity, SEVERITY_LIMIT)} · ${field(detail.title, TITLE_LIMIT)}`;
+  // The operator state is a label at the end of the line, never a second row:
+  // acknowledging or silencing does not change what the episode is (D-04).
+  const labels: string[] = [];
+  if (detail.acknowledged) labels.push("Reconocida");
+  if (typeof detail.snoozeUntil === "number")
+    labels.push(`Silenciada hasta ${madridClock(detail.snoozeUntil)}`);
+  const suffix = labels.length ? ` · ${labels.join(" · ")}` : "";
+  return `· ${hostLabel(detail.hostId, names)} · ${field(detail.severity, SEVERITY_LIMIT)} · ${field(detail.title, TITLE_LIMIT)}${suffix}`;
 }
 
 function aggregateLine(
@@ -258,13 +270,18 @@ type DigestQueryRow = {
  *
  * The detail set follows the durable opening disposition, not today's policy:
  * `incident-open` recorded as `channel=digest`, `status=suppressed` and
- * `reason=digest_pending`. A later escalada rewrites that row, so an episode
- * that became an individual notice stops being a digest line. Legacy, silent
- * and individually delivered episodes never become details.
+ * `reason=digest_pending`, or an opening or escalation a live silence withheld
+ * (`status=suppressed`, `reason=snoozed`). D-01 keeps the latter visible: the
+ * digest is the safety net when the individual notice never left. A later
+ * escalada rewrites that row, so an episode that became an individual notice
+ * stops being a digest line. Legacy, silent and individually delivered
+ * episodes never become details.
  *
  * The incident timestamps are stored by Drizzle as UTC wall-clock values, so
  * every comparison normalises them with `AT TIME ZONE 'UTC'` before applying
  * the instant range: the period keeps meaning instants across a DST change.
+ * `acknowledgedAt` and the silence deadline are already `timestamptz`, so they
+ * are compared as instants and never normalised.
  */
 async function readSnapshot(
   input: DigestSnapshotInput,
@@ -279,9 +296,11 @@ async function readSnapshot(
               i."resolvedAt" AS "resolvedAt",
               i.origin,
               i."closedBy" AS "closedBy",
+              i."acknowledgedAt" AS "acknowledgedAt",
               opening.channel AS "openChannel",
               opening.status AS "openStatus",
-              opening.reason AS "openReason"
+              opening.reason AS "openReason",
+              silence.until AS "snoozeUntil"
          FROM incidents i
          LEFT JOIN LATERAL (
            SELECT o.channel, o.status, o.result->>'reason' AS reason
@@ -290,6 +309,14 @@ async function readSnapshot(
             ORDER BY o.id ASC
             LIMIT 1
          ) opening ON true
+         LEFT JOIN LATERAL (
+           SELECT s.until
+             FROM incident_snoozes s
+            WHERE s."hostId" = i."hostId"
+              AND s.key = i.key
+              AND s.until > $4::timestamptz
+            LIMIT 1
+         ) silence ON true
         WHERE i."hostId" = ANY($3::text[])
      ),
      flagged AS MATERIALIZED (
@@ -300,9 +327,11 @@ async function readSnapshot(
                 AND w.at AT TIME ZONE 'UTC' < $2::timestamptz) AS "newInPeriod",
               (w.origin <> 'legacy'
                 AND w."openChannel" IN ('digest', 'telegram', 'push')) AS visible,
-              (w."openChannel" = 'digest'
+              ((w."openChannel" = 'digest'
                 AND w."openStatus" = 'suppressed'
-                AND w."openReason" = 'digest_pending') AS "digestOpen"
+                AND w."openReason" = 'digest_pending')
+               OR (w."openStatus" = 'suppressed'
+                   AND w."openReason" = 'snoozed')) AS "digestOpen"
          FROM watched w
      ),
      totals AS (
@@ -321,7 +350,9 @@ async function readSnapshot(
               f."hostId" AS "hostId",
               f.title,
               f.severity,
-              (extract(epoch FROM (f.at AT TIME ZONE 'UTC')) * 1000)::double precision AS at
+              (extract(epoch FROM (f.at AT TIME ZONE 'UTC')) * 1000)::double precision AS at,
+              (f."acknowledgedAt" IS NOT NULL) AS acknowledged,
+              (extract(epoch FROM f."snoozeUntil") * 1000)::double precision AS "snoozeUntil"
          FROM flagged f
         WHERE f."openNow" AND f."digestOpen"
           AND f.at AT TIME ZONE 'UTC' >= $1::timestamptz
