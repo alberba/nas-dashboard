@@ -555,23 +555,23 @@ const body = {
 | A7 | `media-stack` no consume `getUpdates` ni configura webhook con el mismo token | Pitfall 3 | Un segundo consumidor rompería el polling del hub; se comprueba en el repositorio hermano |
 | A8 | Las ediciones de mensaje no generan notificación en el cliente | Resumen | Es el supuesto del proyecto desde la fase 2 y D-01/D-14 lo dan por hecho; la documentación oficial leída no lo afirma |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **¿De dónde sale el "dato leído" de D-07?**
+1. **¿De dónde sale el "dato leído" de D-07?** RESOLVED: se adopta la recomendación en 05-03.
    - Lo que sabemos: `incident.detail` guarda la regla con su umbral, no la lectura. [VERIFIED: src/lib/collector.ts:518] La lectura existe en `samples`.
    - Lo que falta: si basta la lectura actual (coherente con D-08, "estado actual") o debe fijarse la del instante de apertura.
    - Recomendación: leer la última muestra del host al despachar, omitir la parte de lectura para claves sin métrica y no tocar el esquema de `incidents`. Es la opción de menor coste.
 
-2. **¿Se lista una crítica ya enviada y reconocida en "abiertas ahora"?**
+2. **¿Se lista una crítica ya enviada y reconocida en "abiertas ahora"?** RESOLVED: se adopta la recomendación en 05-04.
    - Lo que sabemos: hoy el listado solo incluye disposiciones de resumen (Pitfall 6).
    - Lo que falta: si D-04 ("como cualquier otra") pide ampliar la inclusión o solo etiquetar lo ya listado.
    - Recomendación: etiquetar solo lo ya listado y añadir las suprimidas por silencio; no reclasificar nada más.
 
-3. **¿Ejecuta `media-stack` `getUpdates` o un webhook con el mismo token?**
+3. **¿Ejecuta `media-stack` `getUpdates` o un webhook con el mismo token?** RESOLVED: se aplaza a la comprobación manual de 05-01 y 05-05.
    - Lo que sabemos: es multi-repo y SEC-05 (fase 8) trata la rotación conjunta del token.
    - Recomendación: una comprobación manual en el otro repo antes de activar el carril en producción; el plan 05-01 debe dejar la comprobación como paso de verificación, no como código.
 
-4. **Chat negativo configurado.**
+4. **Chat negativo configurado.** RESOLVED: se adopta en 05-01.
    - Recomendación ya cerrada: el carril no arranca y deja una línea de log. No cambia `runtime-config`.
 
 ## Environment Availability
