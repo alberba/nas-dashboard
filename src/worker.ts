@@ -14,6 +14,7 @@ import {
 } from "./lib/notification-dispatch";
 import { runDigestOnce, publicDigestReason, type DigestTransition } from "./lib/digest-runs";
 import { createUpdatesLane } from "./lib/telegram-updates";
+import { cleanupTelegramState } from "./lib/telegram-cleanup";
 import { sampleInterval } from "./lib/validation";
 import { WorkerHealth } from "./lib/worker-health";
 import {
@@ -167,6 +168,8 @@ async function main() {
             await cleanupExpiredIncidents(cutoff);
             await db.delete(operations).where(lt(operations.at, cutoff));
             await db.delete(presence).where(lt(presence.expiresAt, new Date()));
+            // Bound the bot state: expired tokens and stale silences only.
+            await cleanupTelegramState(db, new Date());
           },
           updates: updatesLane
             ? (budget) => updatesLane.run({ waitSeconds: budget.waitSeconds })

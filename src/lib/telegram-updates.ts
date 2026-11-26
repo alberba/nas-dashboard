@@ -46,14 +46,14 @@ import { WORKER_IDLE_MS } from "./worker-loop";
 export const TELEGRAM_POLL_STATE_NAME = "updates";
 /**
  * Telegram picks random update ids after a week without updates, so a persisted
- * offset older than this cannot be trusted. The lane then omits it.
+ * offset older than this cannot be trusted. The lane then omits it (A1).
  */
-export const TELEGRAM_POLL_STALE_MS = 6 * 86_400_000;
+export const OFFSET_RESET_AFTER_MS = 6 * 86_400_000;
 /** Failure backoff of the lane: 1 s doubling up to 30 s, reset on success. */
 export const TELEGRAM_UPDATES_BACKOFF_MS = 1_000;
 export const TELEGRAM_UPDATES_MAX_BACKOFF_MS = 30_000;
 /** A deterministic error is skipped after this many attempts, never forever. */
-export const TELEGRAM_UPDATE_MAX_ATTEMPTS = 3;
+export const POISON_MAX_ATTEMPTS = 3;
 const TELEGRAM_UPDATES_LIMIT = 20;
 
 export type UpdatesOutcome = {
@@ -389,7 +389,7 @@ export function createUpdatesLane(input: UpdatesLaneInput): UpdatesLane {
       state?.lastUpdateId !== null &&
       state?.lastUpdateId !== undefined &&
       state.lastUpdateAt !== null &&
-      state.lastUpdateAt.getTime() >= clock() - TELEGRAM_POLL_STALE_MS;
+      state.lastUpdateAt.getTime() >= clock() - OFFSET_RESET_AFTER_MS;
     const offset = fresh && state?.lastUpdateId != null ? state.lastUpdateId + 1 : null;
 
     const poll = await getTelegramUpdates(
@@ -404,7 +404,12 @@ export function createUpdatesLane(input: UpdatesLaneInput): UpdatesLane {
       await openCooldown(poll.retryAfterMs);
       return failure("rate_limited");
     }
-    if (poll.state === "failed") return failure(poll.reason);
+    if (poll.state === "failed") {
+      // A conflict means another consumer or a webhook is back: remove it again
+      // before the next poll, and back off so the lane never polls hot (T-05-17).
+      if (poll.reason === "conflict") webhookDeleted = false;
+      return failure(poll.reason);
+    }
 
     // The lock may have been lost while the long poll was waiting.
     if (!(await holdsCollectionLock(input.client)))
@@ -456,12 +461,13 @@ export function createUpdatesLane(input: UpdatesLaneInput): UpdatesLane {
       } catch (error) {
         if (error instanceof CollectionLockLost) throw error;
         const attempts = (attemptsByUpdate.get(updateId) ?? 0) + 1;
-        if (attempts >= TELEGRAM_UPDATE_MAX_ATTEMPTS) {
-          // A deterministic failure must not block the queue forever.
+        if (attempts >= POISON_MAX_ATTEMPTS) {
+          // A deterministic failure must not block the queue forever. The line
+          // names no update and no content: only the bounded attempt count.
           attemptsByUpdate.delete(updateId);
           await advanceOffset(updateId);
           handled += 1;
-          say(`Update ${updateId} descartado tras ${attempts} intentos`);
+          say(`Update descartado tras ${attempts} intentos`);
           continue;
         }
         attemptsByUpdate.set(updateId, attempts);
