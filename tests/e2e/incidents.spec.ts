@@ -10,6 +10,7 @@ test.describe.configure({ mode: "serial" });
 
 let database: Client;
 let targetId: number;
+let actionId: number;
 const digestDate = "2026-11-26";
 
 async function seedIncidents() {
@@ -87,6 +88,26 @@ async function seedIncidents() {
                                 'endpoint_uncertain', 'at', now()::text),
              '42', '9')`,
     [`incident:${targetId}:edit:2`, targetId],
+  );
+  // A second open episode with a confirmed Telegram notice, reachable by its
+  // own link so the action walk never depends on its position in the list.
+  const actionInserted = await database.query<{ id: number }>(
+    `INSERT INTO incidents
+       ("hostId", key, title, detail, severity, at, fingerprint, seq, origin)
+     VALUES ($1, 'e2e-incident-actions', 'Incidencia accionable', 'Detalle',
+             'warning', now() - interval '2 hours', md5('e2e-actions'), 1, 'live')
+     RETURNING id`,
+    [host],
+  );
+  actionId = actionInserted.rows[0].id;
+  await database.query(
+    `INSERT INTO notification_outbox
+       (key, "incidentId", kind, channel, status, revision, result,
+        "chatId", "messageId")
+     VALUES ($1, $2, 'incident-open', 'telegram', 'sent', 1,
+             jsonb_build_object('state', 'sent', 'reason', NULL,
+                                'at', now()::text), '42', '9')`,
+    [`incident:${actionId}:open`, actionId],
   );
 }
 
@@ -286,4 +307,62 @@ test("INC-E2E-04 keeps the global digest result when the host changes", async ({
   await expect(digest).toHaveAttribute("data-digest-state", "failed");
   await expect(digest).toHaveAttribute("data-digest-date", digestDate);
   await expect(digest).toHaveAttribute("data-digest-target", target!);
+});
+
+test("INC-E2E-05 acknowledges, silences and unsilences an episode from Avisos", async ({
+  page,
+}) => {
+  await page.context().clearCookies();
+  await page.goto(`/?view=alerts&host=${host}&incident=${actionId}`);
+  await loginWithEmail(page);
+  await expect(page.locator('[data-view="alerts"]')).toBeVisible();
+
+  const row = page.locator(`[data-incident="${actionId}"]`);
+  await expect(row).toBeVisible();
+  const state = row.locator("[data-ack-state]");
+  await expect(state).toHaveAttribute("data-ack-state", "none");
+  await expect(state).toHaveAttribute("data-snooze-state", "none");
+  await expect(row.locator('[data-action="acknowledge"]')).toBeVisible();
+  await expect(row.locator('[data-action="snooze-1h"]')).toBeVisible();
+  await expect(row.locator('[data-action="snooze-24h"]')).toBeVisible();
+
+  await row.locator('[data-action="acknowledge"]').click();
+  await expect(state).toHaveAttribute("data-ack-state", "acknowledged");
+  await expect(state).toHaveAttribute("data-ack-via", "hub");
+  await expect(row.locator('[data-action="acknowledge"]')).toHaveCount(0);
+  const acknowledged = await database.query<{
+    acknowledgedVia: string;
+    acknowledgedBy: string;
+  }>(
+    `SELECT "acknowledgedVia", "acknowledgedBy" FROM incidents WHERE id = $1`,
+    [actionId],
+  );
+  expect(acknowledged.rows[0]).toMatchObject({
+    acknowledgedVia: "hub",
+    acknowledgedBy: "Test",
+  });
+
+  const before = Date.now();
+  await row.locator('[data-action="snooze-1h"]').click();
+  await expect(state).toHaveAttribute("data-snooze-state", "active");
+  await expect(row.locator('[data-action="unsnooze"]')).toBeVisible();
+  await expect(row.locator('[data-action="snooze-1h"]')).toHaveCount(0);
+  await expect(row.locator('[data-action="snooze-24h"]')).toHaveCount(0);
+  const until = await state.getAttribute("data-snooze-until");
+  expect(new Date(until!).getTime()).toBeGreaterThan(before);
+  const silenced = await database.query(
+    `SELECT 1 FROM incident_snoozes WHERE "hostId" = $1 AND key = 'e2e-incident-actions'`,
+    [host],
+  );
+  expect(silenced.rowCount).toBe(1);
+
+  await row.locator('[data-action="unsnooze"]').click();
+  await expect(state).toHaveAttribute("data-snooze-state", "none");
+  await expect(row.locator('[data-action="snooze-1h"]')).toBeVisible();
+  await expect(row.locator('[data-action="snooze-24h"]')).toBeVisible();
+  const cleared = await database.query(
+    `SELECT 1 FROM incident_snoozes WHERE "hostId" = $1 AND key = 'e2e-incident-actions'`,
+    [host],
+  );
+  expect(cleared.rowCount).toBe(0);
 });

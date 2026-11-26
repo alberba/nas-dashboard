@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CircleCheck, RefreshCw, TriangleAlert } from "lucide-react";
 import { StatusDot, type Tone } from "../ui";
 import type {
@@ -12,6 +12,13 @@ import type {
   PublicDigestStatus,
   Overview,
 } from "@/lib/types";
+
+/** The operator actions Avisos offers, shared with the hub API verbs. */
+export type IncidentHubAction =
+  | "acknowledge"
+  | "snooze-1h"
+  | "snooze-24h"
+  | "unsnooze";
 
 const stateLabels: Record<PublicDeliveryState, string> = {
   pending: "En cola",
@@ -256,23 +263,145 @@ function InhibitedEpisodes({ alert }: { alert: Alert }) {
   );
 }
 
+/** Madrid wall clock of an instant, independent of the browser time zone. */
+function madridTime(value: string) {
+  return new Date(value).toLocaleTimeString("es", {
+    timeZone: "Europe/Madrid",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/**
+ * Current acknowledgement and silence of an open episode. A closed episode
+ * keeps no controls and no state: after resolution the silence expires on its
+ * own and the history stays in the timeline.
+ */
+function HubState({ alert }: { alert: Alert }) {
+  if (alert.resolvedAt) return null;
+  const acknowledged = alert.acknowledged;
+  const snooze = alert.snooze;
+  const actor = acknowledged
+    ? acknowledged.by
+      ? ` por ${acknowledged.by}`
+      : acknowledged.via === "telegram"
+        ? " desde Telegram"
+        : ""
+    : "";
+  return (
+    <div
+      className="alert-hub-state"
+      data-ack-state={acknowledged ? "acknowledged" : "none"}
+      data-ack-via={acknowledged?.via}
+      data-snooze-state={snooze ? "active" : "none"}
+      data-snooze-until={snooze?.until}
+    >
+      {acknowledged && (
+        <p className="subtle" data-ack-by={acknowledged.by ?? undefined}>
+          Reconocida{actor} · {new Date(acknowledged.at).toLocaleString("es")}
+        </p>
+      )}
+      {snooze && (
+        <p className="subtle">Silenciada hasta {madridTime(snooze.until)}</p>
+      )}
+    </div>
+  );
+}
+
+/** Avisos offers the same actions as the notice, while the episode is open. */
+function HubControls({
+  alert,
+  onAction,
+  disabled,
+}: {
+  alert: Alert;
+  onAction?: (alert: Alert, action: IncidentHubAction) => void;
+  disabled: boolean;
+}) {
+  if (!onAction || alert.resolvedAt) return null;
+  return (
+    <div className="toolbar alert-actions">
+      {!alert.acknowledged && (
+        <button
+          type="button"
+          className="text-button"
+          data-action="acknowledge"
+          disabled={disabled}
+          onClick={() => onAction(alert, "acknowledge")}
+        >
+          Reconocer
+        </button>
+      )}
+      {alert.snooze ? (
+        <button
+          type="button"
+          className="text-button"
+          data-action="unsnooze"
+          disabled={disabled}
+          onClick={() => onAction(alert, "unsnooze")}
+        >
+          Quitar silencio
+        </button>
+      ) : (
+        <>
+          <button
+            type="button"
+            className="text-button"
+            data-action="snooze-1h"
+            disabled={disabled}
+            onClick={() => onAction(alert, "snooze-1h")}
+          >
+            Silenciar 1 h
+          </button>
+          <button
+            type="button"
+            className="text-button"
+            data-action="snooze-24h"
+            disabled={disabled}
+            onClick={() => onAction(alert, "snooze-24h")}
+          >
+            Silenciar 24 h
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function AlertsView({
   data,
   requested,
   incident,
   incidentHost,
   incidentMissing = false,
+  onAction,
 }: {
   data: Overview;
   requested?: number;
   incident?: Alert | null;
   incidentHost?: string;
   incidentMissing?: boolean;
+  /** Sends one operator action; absent in views without a session handler. */
+  onAction?: (alert: Alert, action: IncidentHubAction) => void | Promise<void>;
 }) {
   const selectedRef = useRef<HTMLDivElement>(null);
+  /** Episode whose action is in flight: its buttons stay disabled meanwhile. */
+  const [pending, setPending] = useState<number | null>(null);
   useEffect(() => {
     if (requested && selectedRef.current) selectedRef.current.focus();
   }, [requested, incident?.id]);
+
+  async function run(alert: Alert, action: IncidentHubAction) {
+    if (!onAction || pending !== null) return;
+    setPending(alert.id);
+    try {
+      await onAction(alert, action);
+    } catch {
+      // The handler reports the failure; the row keeps its last known state.
+    } finally {
+      setPending(null);
+    }
+  }
 
   const rows = data.alerts.slice();
   if (incident && !rows.some((alert) => alert.id === incident.id))
@@ -360,6 +489,12 @@ export function AlertsView({
                 <ObservationBlock alert={alert} />
                 <InventoryDetail alert={alert} />
                 <InhibitedEpisodes alert={alert} />
+                <HubState alert={alert} />
+                <HubControls
+                  alert={alert}
+                  onAction={onAction ? run : undefined}
+                  disabled={pending === alert.id}
+                />
                 <time>
                   {new Date(alert.at).toLocaleString("es")}
                   {alert.resolvedAt

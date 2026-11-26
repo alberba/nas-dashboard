@@ -29,7 +29,7 @@ import {
   type HostScope,
 } from "./host-context";
 import { Settings } from "./settings";
-import { AlertsView } from "./views/alerts";
+import { AlertsView, type IncidentHubAction } from "./views/alerts";
 import { AppsView } from "./views/apps";
 import { CommandSearch } from "./command-search";
 import { Deployments } from "./views/deployments";
@@ -361,9 +361,59 @@ export function Dashboard({ name }: { name: string }) {
     signInAgain,
     refreshPresentNotifications,
   ]);
+  /**
+   * Sends one operator action from Avisos. The browser supplies the Origin,
+   * the session cookie authorises it and the shared API applies the same state
+   * Telegram writes; the list and the linked episode are refreshed afterwards.
+   */
+  const runIncidentAction = useCallback(
+    async (alert: Alert, action: IncidentHubAction) => {
+      const verb =
+        action === "acknowledge"
+          ? "acknowledge"
+          : action === "unsnooze"
+            ? "unsnooze"
+            : "snooze";
+      const hours = action === "snooze-1h" ? 1 : action === "snooze-24h" ? 24 : null;
+      try {
+        const response = await fetch(`/api/incidents/${alert.id}/${verb}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            hours === null
+              ? { host: alert.hostId }
+              : { host: alert.hostId, hours },
+          ),
+        });
+        if (response.status === 401) {
+          signInAgain();
+          return;
+        }
+        const result = (await response.json().catch(() => null)) as {
+          incident?: Alert;
+          error?: string;
+        } | null;
+        if (!response.ok) {
+          setToast(result?.error ?? "No se pudo actualizar la incidencia");
+          return;
+        }
+        const updated = result?.incident;
+        if (updated)
+          setIncidentDetail((previous) =>
+            previous && previous.id === updated.id
+              ? { ...previous, data: updated, missing: false }
+              : previous,
+          );
+        await refresh();
+      } catch {
+        setToast("No se pudo actualizar la incidencia");
+      }
+    },
+    [refresh, signInAgain],
+  );
+
   const sameHost = (a: string | null, b: string | null) =>
-    a === b || (a ?? primary) === (b ?? primary);
-  /** Never render one host's data while another host is selected. */
+    a === b || (a ?? primary) === (b ?? primary);  /** Never render one host's data while another host is selected. */
   const data =
     snapshot && sameHost(snapshot.scope, scope) ? snapshot.data : null;
   const connected = Boolean(data?.connected && !error);
@@ -744,6 +794,7 @@ export function Dashboard({ name }: { name: string }) {
                 <AlertsView
                   data={data}
                   requested={requestedIncident}
+                  onAction={runIncidentAction}
                   incident={
                     incidentDetail &&
                     incidentDetail.id === requestedIncident
