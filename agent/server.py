@@ -10,6 +10,8 @@ from pathlib import Path
 import re
 import shutil
 import socket
+import stat
+import sys
 import threading
 import time
 import uuid
@@ -83,6 +85,198 @@ DEPLOYMENTS = deployments.Deployments.from_env()
 ENV_SETTINGS = env_settings.EnvSettings(DEPLOYMENTS)
 LOCK = threading.RLock()
 UPDATE_LOCK = threading.Lock()
+
+# Progress mark of the serve loop. It lives in the container tmpfs and only the
+# probe of this same container reads it; the Docker healthcheck never reaches
+# the network, the Docker socket or the host.
+HEALTH_FILE = Path(os.getenv("AGENT_HEALTH_FILE", "/tmp/hub-agent-health.json"))
+HEALTH_STALE_SECONDS = 90
+HEALTH_WRITE_SECONDS = 2
+HEALTH_FUTURE_TOLERANCE_SECONDS = 5
+HEALTH_MAX_BYTES = 512
+
+
+def process_start_identity(pid=None, proc=Path("/proc")):
+    """Boot identity (field 22 of /proc/<pid>/stat) of a live PID."""
+    pid = os.getpid() if pid is None else pid
+    try:
+        raw = (Path(proc) / str(pid) / "stat").read_text()
+    except OSError:
+        return None
+    end = raw.rfind(")")
+    if end < 0:
+        return None
+    fields = raw[end + 1:].split()
+    # fields[0] is field 3 (state): starttime is field 22, index 19.
+    if len(fields) <= 19 or not fields[19].isdigit():
+        return None
+    return fields[19]
+
+
+def write_health_mark(path, mark):
+    """Atomically replaces a small private mark: 0600, never a symlink target."""
+    payload = json.dumps(mark).encode()
+    if len(payload) > HEALTH_MAX_BYTES:
+        raise ValueError("La marca de salud es demasiado grande")
+    path = Path(path)
+    temporary = path.with_name("%s.%d.tmp" % (path.name, os.getpid()))
+    descriptor = None
+    for attempt in (0, 1):
+        try:
+            descriptor = os.open(
+                temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+            )
+            break
+        except FileExistsError:
+            if attempt:
+                raise
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
+        os.replace(temporary, path)
+    except Exception:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+
+
+class HealthMark:
+    """Writer bounded by its own write interval; it never runs on a timer."""
+
+    def __init__(
+        self,
+        path=None,
+        now=None,
+        pid=None,
+        proc=None,
+        minimum_interval=HEALTH_WRITE_SECONDS,
+    ):
+        self.path = Path(path) if path is not None else HEALTH_FILE
+        self.now = now or time.time
+        self.pid = os.getpid() if pid is None else pid
+        self.proc = Path(proc) if proc is not None else Path("/proc")
+        self.minimum_interval = max(0.0, float(minimum_interval))
+        self.last = 0.0
+
+    def invalidate(self):
+        try:
+            self.path.unlink()
+        except OSError:
+            pass
+
+    def refresh(self):
+        current = self.now()
+        if self.last and current - self.last < self.minimum_interval:
+            return False
+        identity = process_start_identity(self.pid, self.proc)
+        if identity is None:
+            return False
+        try:
+            write_health_mark(
+                self.path,
+                {
+                    "progressAt": current,
+                    "pid": self.pid,
+                    "startedAt": identity,
+                },
+            )
+        except (OSError, ValueError):
+            return False
+        self.last = current
+        return True
+
+
+HEALTH = HealthMark()
+
+
+class HealthServer(ThreadingHTTPServer):
+    """Publishes progress from the serve loop only while the request LOCK is free."""
+
+    health = HEALTH
+
+    def service_actions(self):
+        if not LOCK.acquire(blocking=False):
+            return
+        try:
+            self.health.refresh()
+        finally:
+            LOCK.release()
+
+
+def read_health_check(path=None, now=None, proc=None):
+    """Read-only probe: never starts the server, its threads or host work."""
+    path = Path(path) if path is not None else HEALTH_FILE
+    now = time.time() if now is None else now
+    proc = Path(proc) if proc is not None else Path("/proc")
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return False, "missing"
+    except OSError:
+        return False, "unreadable"
+    if stat.S_ISLNK(info.st_mode):
+        return False, "unsafe"
+    if not stat.S_ISREG(info.st_mode):
+        return False, "unreadable"
+    if info.st_mode & 0o077:
+        return False, "unsafe"
+    if info.st_size > HEALTH_MAX_BYTES:
+        return False, "malformed"
+    try:
+        raw = path.read_text()
+    except OSError:
+        return False, "unreadable"
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return False, "malformed"
+    if not isinstance(value, dict):
+        return False, "malformed"
+    progress = value.get("progressAt")
+    pid = value.get("pid")
+    started = value.get("startedAt")
+    if (
+        isinstance(progress, bool)
+        or not isinstance(progress, (int, float))
+        or isinstance(pid, bool)
+        or not isinstance(pid, int)
+        or pid <= 0
+        or not isinstance(started, str)
+        or not re.fullmatch(r"\d{1,24}", started)
+    ):
+        return False, "malformed"
+    if progress > now + HEALTH_FUTURE_TOLERANCE_SECONDS:
+        return False, "future"
+    if now - progress > HEALTH_STALE_SECONDS:
+        return False, "stale"
+    if not (proc / str(pid)).is_dir():
+        return False, "dead_pid"
+    identity = process_start_identity(pid, proc)
+    if identity is None:
+        return False, "identity_unreadable"
+    if identity != started:
+        return False, "wrong_start"
+    return True, "ok"
+
+
+def run_health_check(path=None, now=None, proc=None):
+    ok, reason = read_health_check(path=path, now=now, proc=proc)
+    if not ok:
+        print(
+            "Marca de salud del agente no válida (%s)" % reason,
+            file=sys.stderr,
+            flush=True,
+        )
+    return 0 if ok else 1
+
+
+
 UPDATE_DOCKER = maintenance.DockerSocket(timeout=15)
 UPDATE_EXECUTOR = maintenance.HostExecutor()
 HELPERS = helper_cleanup.shared_registry()
@@ -586,8 +780,16 @@ def helper_cleanup_loop():
 
 
 if __name__ == "__main__":
+    if "--health-check" in sys.argv:
+        raise SystemExit(run_health_check())
     if len(TOKEN) < 32:
         raise SystemExit("AGENT_TOKEN debe tener al menos 32 caracteres")
+    # A mark left by a previous process in the same tmpfs never means health.
+    HEALTH.invalidate()
     threading.Thread(target=cleanup_loop, daemon=True).start()
     threading.Thread(target=helper_cleanup_loop, daemon=True).start()
-    ThreadingHTTPServer((os.getenv("BIND_IP", "127.0.0.1"), 9450), Handler).serve_forever()
+    httpd = HealthServer((os.getenv("BIND_IP", "127.0.0.1"), 9450), Handler)
+    try:
+        httpd.serve_forever()
+    finally:
+        HEALTH.invalidate()
