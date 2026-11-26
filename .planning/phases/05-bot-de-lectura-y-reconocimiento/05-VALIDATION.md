@@ -29,13 +29,13 @@ La [investigación](05-RESEARCH.md#validation-architecture) registra 20 pruebas 
 
 ## Matriz de verificación por tarea
 
-Una fila por tarea de los cinco PLAN.md. Todas se ejecutan con PostgreSQL 18 desechable y `HUB_REQUIRE_TEST_DB=1`, salvo la prueba de Avisos, que además necesita el build, la base migrada y Chromium.
+Una fila por tarea de los seis PLAN.md (05-06 ejecuta en la ola 2). Todas se ejecutan con PostgreSQL 18 desechable y `HUB_REQUIRE_TEST_DB=1`, salvo la prueba de Avisos, que además necesita el build, la base migrada y Chromium.
 
 | Plan | Tarea | Requisitos | Prueba | Comando |
 | --- | --- | --- | --- | --- |
 | 05-01 | 1 (tracer) | BOT-02, BOT-04, BOT-06, BOT-10 | `tests/telegram-updates.test.ts`, `tests/telegram.test.ts` | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/telegram-updates.test.ts tests/telegram.test.ts tests/incident-store.test.ts tests/notification-dispatch.test.ts && pnpm typecheck` |
-| 05-01 | 2 | BOT-04, BOT-06 | `tests/incident-actions.test.ts`, `tests/madrid-day.test.ts`, `tests/migrations.test.ts` | `TZ=Pacific/Honolulu HUB_REQUIRE_TEST_DB=1 pnpm test tests/madrid-day.test.ts tests/incident-actions.test.ts tests/migrations.test.ts tests/notification-dispatch.test.ts && pnpm typecheck` |
-| 05-02 | 1 | BOT-04, BOT-06 | `tests/incident-snooze.test.ts` | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/incident-snooze.test.ts tests/incident-actions.test.ts tests/telegram-updates.test.ts && pnpm typecheck` |
+| 05-01 | 2 | BOT-04 | `tests/madrid-day.test.ts`, `tests/telegram-updates.test.ts` | `TZ=Pacific/Honolulu HUB_REQUIRE_TEST_DB=1 pnpm test tests/madrid-day.test.ts tests/telegram-updates.test.ts tests/notification-dispatch.test.ts && pnpm typecheck` |
+| 05-02 | 1 | BOT-04, BOT-06 | `tests/incident-snooze.test.ts` | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/incident-snooze.test.ts tests/telegram-updates.test.ts && pnpm typecheck` |
 | 05-02 | 2 | BOT-04 | `tests/snooze-delivery.test.ts` | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/snooze-delivery.test.ts tests/incident-store.test.ts tests/notification-dispatch.test.ts tests/incident-push.test.ts && pnpm typecheck` |
 | 05-03 | 1 | BOT-05, BOT-06 | `tests/incident-why.test.ts` | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/incident-why.test.ts tests/incident-snooze.test.ts tests/telegram-updates.test.ts && pnpm typecheck` |
 | 05-03 | 2 | BOT-05, BOT-06 | `tests/incident-why.test.ts`, `tests/telegram.test.ts` | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/incident-why.test.ts tests/telegram.test.ts tests/notification-dispatch.test.ts tests/snooze-delivery.test.ts && pnpm typecheck` |
@@ -45,12 +45,14 @@ Una fila por tarea de los cinco PLAN.md. Todas se ejecutan con PostgreSQL 18 des
 | 05-05 | 1 | BOT-06 | `tests/telegram-lane-hardening.test.ts` | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/telegram-lane-hardening.test.ts tests/telegram-updates.test.ts && pnpm typecheck` más el recuento de `cleanupTelegramState` en `src/worker.ts` |
 | 05-05 | 2 | BOT-02, BOT-06 | `tests/telegram-contract.test.ts`, `tests/telegram-replays.test.ts` | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/telegram-contract.test.ts tests/telegram-replays.test.ts tests/telegram-updates.test.ts tests/incident-actions.test.ts && pnpm typecheck` |
 | 05-05 | 3 | BOT-10 | `tests/telegram-redaction.test.ts` | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/telegram-redaction.test.ts tests/telegram.test.ts && pnpm typecheck && pnpm lint`, más la comprobación manual con el bot real |
+| 05-06 | 1 | BOT-04, BOT-06 | `tests/incident-actions.test.ts` | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/incident-actions.test.ts tests/telegram-updates.test.ts && pnpm typecheck` |
+| 05-06 | 2 | BOT-04 | `tests/migrations.test.ts` | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/migrations.test.ts && pnpm typecheck` |
 
 ## Ola 0
 
 - [ ] `tests/telegram-fake.ts`: Bot API simulada con confirmación por `offset`, `allowed_updates`, `deleteWebhook`, 429 con `retry_after` y captura de peticiones. Hace posibles las pruebas de reinicio, replay y redacción.
 - [ ] `tests/telegram-updates.test.ts`: contrato del `Update` (accesible, inaccesible con `date: 0`, `inline_message_id`, texto, tipo desconocido, campos extra y tipos erróneos), allowlist y carril de polling.
-- [ ] `tests/incident-actions.test.ts`: reconocer, silenciar 1 h y 24 h, quitar el silencio, persistencia tras reinicio y replays (BOT-04, BOT-06).
+- [ ] `tests/incident-actions.test.ts` (plan 05-06, ola 2): idempotencia de reconocer, política de entrega (D-02), medición (D-05) y razones de `consumeActionToken` (BOT-04, BOT-06). Silenciar y quitar el silencio los prueba `tests/incident-snooze.test.ts` (05-02) y la persistencia tras reinicio y los replays, `tests/telegram-replays.test.ts` (05-05).
 - [ ] `tests/incident-why.test.ts`: una respuesta por estado del aviso (BOT-05).
 - [ ] `drizzle/0007_*.sql` con su snapshot y su journal, generados con `drizzle-kit` antes de las pruebas de integración.
 - Sin dependencias nuevas que instalar.
