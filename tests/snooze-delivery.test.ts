@@ -52,11 +52,14 @@ function madridClockOf(at: Date | number): string {
 function fakeProvider(
   respond: () => Response = () =>
     json({ ok: true, result: { message_id: OPEN_MESSAGE_ID, chat: { id: 1 } } }),
-): { calls: Array<{ body: Record<string, unknown> }>; transport: TelegramTransport } {
-  const calls: Array<{ body: Record<string, unknown> }> = [];
-  const transport: TelegramTransport = async (_url, init) => {
+): {
+  calls: Array<{ method: string; body: Record<string, unknown> }>;
+  transport: TelegramTransport;
+} {
+  const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+  const transport: TelegramTransport = async (url, init) => {
     const body = JSON.parse(String(init.body ?? "{}")) as Record<string, unknown>;
-    calls.push({ body });
+    calls.push({ method: url.slice(url.lastIndexOf("/") + 1), body });
     return respond();
   };
   return { calls, transport };
@@ -217,16 +220,23 @@ describe.skipIf(!baseUrl)("snooze delivery", () => {
         .where(eq(tables.incidentEvents.incidentId, reopened.incidentId!));
       expect(events.filter((event) => event.kind === "opened")).toHaveLength(1);
 
-      // The only Telegram request is the first, unsilenced notice.
-      expect(fake.calls).toHaveLength(1);
-      const idle = await dispatch.runDispatchOnce({
+      // The only Telegram notice is the first, unsilenced one; the tick may ship
+      // the silent edit of the closed message, never the withheld re-opening.
+      const sends = () =>
+        fake.calls.filter((call) => call.method === "sendMessage");
+      expect(sends()).toHaveLength(1);
+      const tick = await dispatch.runDispatchOnce({
         client,
         config,
         now: () => START + 240_000,
         fetchImpl: fake.transport,
       });
-      expect(idle.action).toBe("idle");
-      expect(fake.calls).toHaveLength(1);
+      expect(tick.kind).not.toBe("incident-open");
+      expect(sends()).toHaveLength(1);
+      const still = await outboxOf(reopened.incidentId!);
+      expect(
+        still.find((row) => row.kind === "incident-open"),
+      ).toMatchObject({ status: "suppressed" });
 
       // Past the deadline a new opening interrupts again.
       await db.delete(tables.incidentSnoozes);
@@ -260,7 +270,7 @@ describe.skipIf(!baseUrl)("snooze delivery", () => {
         fetchImpl: fake.transport,
       });
       expect(sent.action).toBe("sent");
-      expect(fake.calls).toHaveLength(2);
+      expect(sends()).toHaveLength(2);
       expect(incidentId).toBeGreaterThan(0);
     } finally {
       await safeEnd(client);

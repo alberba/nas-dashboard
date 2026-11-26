@@ -18,6 +18,7 @@ import {
   keyboardActions,
   renderActionRows,
 } from "./telegram-keyboard";
+import { activeSnooze, SNOOZE_SUPPRESSION_REASON } from "./incident-snooze";
 import { deliverPush, type PushTransport } from "./push";
 
 /** Session-level PostgreSQL advisory lock already used by the collector. */
@@ -603,6 +604,15 @@ async function dispatchTelegramOpening(
   if (!telegram) return suppressJob(context, job, "telegram_disabled");
   if (!(await holdsCollectionLock(context.client)))
     throw new CollectionLockLost();
+  // Read right before the attempt mark: a silence set after the claim still
+  // withholds the request (D-01), and nothing is re-sent when it expires.
+  const snoozed = await activeSnooze(
+    workerDb(context.client),
+    incident.hostId,
+    incident.key,
+    new Date(context.now),
+  );
+  if (snoozed) return suppressJob(context, job, SNOOZE_SUPPRESSION_REASON);
 
   // Tokens are rendered with the notice: a failed send only leaves harmless
   // unused rows, never a button that outlived its message.
@@ -827,13 +837,19 @@ async function recordEditSent(
   };
 }
 
-function editText(incident: typeof incidents.$inferSelect): string {
+function editText(
+  incident: typeof incidents.$inferSelect,
+  snoozed: { until: Date } | null,
+): string {
   const lines = [incident.title];
   if (incident.detail) lines.push(incident.detail);
   // Only an open, acknowledged episode shows the moment it was read; a
   // resolved notice carries its closure state instead.
   if (!incident.resolvedAt && incident.acknowledgedAt)
     lines.push(`Reconocida ${madridClock(incident.acknowledgedAt)}`);
+  // A live silence keeps interrupting nothing, so the notice says until when.
+  if (!incident.resolvedAt && snoozed)
+    lines.push(`Silenciada hasta ${madridClock(snoozed.until)}`);
   lines.push(
     `${incident.hostId} · ${incident.severity}${
       incident.resolvedAt ? " · resuelta" : ""
@@ -893,6 +909,14 @@ async function dispatchEdit(
   if (!(await holdsCollectionLock(context.client)))
     throw new CollectionLockLost();
 
+  // An edit never asks for a new silence, but it must offer its removal while
+  // one lasts (D-13); edits themselves are never withheld (D-01).
+  const snoozed = await activeSnooze(
+    workerDb(context.client),
+    incident.hostId,
+    incident.key,
+    new Date(context.now),
+  );
   const actionRows: TelegramActionButton[][] = renderActionRows(
     await issueActionTokens(workerDb(context.client), {
       incidentId: incident.id,
@@ -900,7 +924,7 @@ async function dispatchEdit(
       actions: keyboardActions({
         resolved: incident.resolvedAt !== null,
         acknowledged: incident.acknowledgedAt !== null,
-        snoozed: false,
+        snoozed: snoozed !== null,
       }),
       now: context.now,
     }),
@@ -922,7 +946,7 @@ async function dispatchEdit(
     {
       chatId: original.chatId,
       messageId: original.messageId,
-      text: editText(incident),
+      text: editText(incident, snoozed),
       buttonUrl: incidentHref(
         context.config.betterAuthUrl,
         incident.hostId,
@@ -1046,6 +1070,23 @@ async function dispatchPushJob(
     return suppressJob(context, job, "push_disabled");
   if (!(await holdsCollectionLock(context.client)))
     throw new CollectionLockLost();
+  // Same pre-attempt read as the Telegram opening: a silenced condition also
+  // withholds the push fallback of a permanent rejection (D-01).
+  if (
+    incident &&
+    (await activeSnooze(
+      workerDb(context.client),
+      incident.hostId,
+      incident.key,
+      new Date(context.now),
+    ))
+  )
+    return recordPushOutcome(
+      context,
+      job,
+      "suppressed",
+      SNOOZE_SUPPRESSION_REASON,
+    );
   // A push whose confirmation is lost after this mark is uncertain, never
   // retried: a second delivery could duplicate the notification (D-01).
   const attempts = await beginOutboxAttempt(

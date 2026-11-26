@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, asc, desc, eq, inArray, isNull, like, lt, lte, sql } from "drizzle-orm";
 import { db } from "./db";
+import { activeSnooze, SNOOZE_SUPPRESSION_REASON } from "./incident-snooze";
 import {
   incidentEvents,
   incidents,
@@ -274,8 +275,10 @@ async function closeEpisode(
 /**
  * Applies a severity change to a live episode. A first notice that has not
  * started follows the new disposition (an escalation to immediate becomes
- * pending, a downgrade becomes suppressed). A confirmed Telegram message gets
- * an edit; a push or an uncertain delivery is never re-sent.
+ * pending, a downgrade becomes suppressed), except while the condition is
+ * silenced: then it stays suppressed with the finite `snoozed` reason (D-01).
+ * A confirmed Telegram message gets an edit; a push or an uncertain delivery is
+ * never re-sent.
  */
 async function changeSeverity(
   tx: Transaction,
@@ -283,6 +286,7 @@ async function changeSeverity(
   seq: number,
   at: Date,
   delivery: IncidentDelivery | undefined,
+  snoozed: boolean,
 ): Promise<"queued" | "none"> {
   const [first] = await tx
     .select()
@@ -290,6 +294,18 @@ async function changeSeverity(
     .where(eq(notificationOutbox.key, openKey(incident.id)))
     .limit(1);
   if (!first) {
+    if (snoozed && delivery) {
+      await tx.insert(notificationOutbox).values({
+        key: openKey(incident.id),
+        incidentId: incident.id,
+        kind: "incident-open",
+        channel: delivery.channel,
+        status: "suppressed",
+        revision: seq,
+        result: suppressed(SNOOZE_SUPPRESSION_REASON, at),
+      });
+      return "none";
+    }
     if (isImmediate(delivery)) {
       await tx.insert(notificationOutbox).values({
         key: openKey(incident.id),
@@ -310,7 +326,7 @@ async function changeSeverity(
       !first.attemptStartedAt &&
       !first.messageId)
   ) {
-    if (isImmediate(delivery)) {
+    if (isImmediate(delivery) && !snoozed) {
       await tx
         .update(notificationOutbox)
         .set({
@@ -335,7 +351,12 @@ async function changeSeverity(
         status: "suppressed",
         revision: seq,
         updatedAt: at,
-        result: suppressed(delivery?.reason ?? "policy_silent", at),
+        result: suppressed(
+          snoozed
+            ? SNOOZE_SUPPRESSION_REASON
+            : (delivery?.reason ?? "policy_silent"),
+          at,
+        ),
         claimToken: null,
         leaseUntil: null,
       })
@@ -747,7 +768,15 @@ export async function recordIncidentObservationIn(
           ...(inhibitedIncidentIds ? { inhibitedIncidentIds } : {}),
         };
       }
-      const delivery = await changeSeverity(tx, open, seq, at, input.delivery);
+      const delivery = await changeSeverity(
+        tx,
+        open,
+        seq,
+        at,
+        input.delivery,
+        isImmediate(input.delivery) &&
+          Boolean(await activeSnooze(tx, open.hostId, open.key, at)),
+      );
       return {
         action: "escalated",
         incidentId: open.id,
@@ -808,7 +837,12 @@ export async function recordIncidentObservationIn(
     });
 
     const inhibitedIncidentIds = await inhibit(created.id);
-    if (isImmediate(input.delivery)) {
+    // A live silence withholds the first notice of the new episode without
+    // hiding its event or its delivery row (D-01).
+    const snoozed = isImmediate(input.delivery)
+      ? await activeSnooze(tx, created.hostId, created.key, at)
+      : null;
+    if (isImmediate(input.delivery) && !snoozed) {
       await tx.insert(notificationOutbox).values({
         key: openKey(created.id),
         incidentId: created.id,
@@ -834,7 +868,9 @@ export async function recordIncidentObservationIn(
       status: "suppressed",
       revision: 1,
       result: suppressed(
-        input.delivery?.reason ?? "policy_silent",
+        snoozed
+          ? SNOOZE_SUPPRESSION_REASON
+          : (input.delivery?.reason ?? "policy_silent"),
         at,
       ),
     });
