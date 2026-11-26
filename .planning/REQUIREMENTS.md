@@ -40,15 +40,15 @@ Alcance de este milestone: auditar el ruido, sustituir los emisores por una entr
 ### Bot de Telegram
 
 - [x] **BOT-01**: El operador recibe los avisos en el chat configurado desde el bot del hub
-- [ ] **BOT-02**: El bot ignora cualquier update de un usuario o chat fuera de la allowlist
+- [x] **BOT-02**: El bot ignora cualquier update de un usuario o chat fuera de la allowlist
 - [x] **BOT-03**: Cada mensaje incluye un botón que abre la vista correspondiente del hub autenticada
 - [x] **BOT-04**: El operador puede abrir la incidencia, silenciarla 1 h o 24 h y reconocerla desde los botones, y el estado persiste
 - [x] **BOT-05**: El operador puede consultar "por qué me llegó esto" desde el propio mensaje
-- [ ] **BOT-06**: Un callback repetido o caducado no ejecuta dos veces la acción ni rompe el bot
+- [x] **BOT-06**: Un callback repetido o caducado no ejecuta dos veces la acción ni rompe el bot
 - [ ] **BOT-07**: El operador puede iniciar una acción de host desde Telegram y completarla en el hub con sesión y passkey
 - [ ] **BOT-08**: Ninguna acción destructiva iniciada desde Telegram se ejecuta sin verificación reciente en el servidor
 - [ ] **BOT-09**: Cada acción iniciada desde Telegram queda en `operations` con canal y solicitante
-- [ ] **BOT-10**: El token del bot nunca aparece en logs ni en respuestas
+- [x] **BOT-10**: El token del bot nunca aparece en logs ni en respuestas
 
 ### Seguridad
 
@@ -130,11 +130,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DIG-05 | Phase 4 | Complete |
 | DIG-06 | Phase 4 | Complete |
 | CONT-03 | Phase 4 | Complete |
-| BOT-02 | Phase 5 | Pending |
+| BOT-02 | Phase 5 | Complete |
 | BOT-04 | Phase 5 | Complete |
 | BOT-05 | Phase 5 | Complete |
-| BOT-06 | Phase 5 | Pending |
-| BOT-10 | Phase 5 | Pending |
+| BOT-06 | Phase 5 | Complete |
+| BOT-10 | Phase 5 | Complete |
 | SEC-01 | Phase 6 | Pending |
 | SEC-02 | Phase 6 | Pending |
 | SEC-04 | Phase 6 | Pending |

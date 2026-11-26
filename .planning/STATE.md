@@ -2,17 +2,17 @@
 gsd_state_version: "1.0"
 current_phase: 05
 current_phase_name: Bot de lectura y reconocimiento
-status: executing
-stopped_at: Completed 05-04-PLAN.md
-last_updated: "2026-11-26T15:08:38.745Z"
+status: verifying
+stopped_at: Completed 05-05-PLAN.md
+last_updated: "2026-11-26T15:28:37.694Z"
 last_activity: 2026-11-26
 last_activity_desc: Phase 05 execution started
-state_head: 25dd323e50a63cd4844f3af690db899a50b415b7
+state_head: c250841a4a4483655baef67e807cdb38268bdb09
 progress:
   total_phases: 8
   completed_phases: 4
   total_plans: 20
-  completed_plans: 19
+  completed_plans: 20
   percent: 50
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-11-26)
 
 Phase: 05 (Bot de lectura y reconocimiento) — EXECUTING
 Plan: 6 of 6
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-11-26 — Phase 05 execution started
 
 Progress: [█████░░░░░] 50%
@@ -70,6 +70,7 @@ Progress: [█████░░░░░] 50%
 | Phase 05 P06 | 6 min | 2 tasks | 2 files |
 | Phase 05 P03 | 9 min | 2 tasks | 10 files |
 | Phase 05 P04 | 23 min | 3 tasks | 9 files |
+| Phase 05 P05 | 11 min | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -111,6 +112,9 @@ Recent decisions affecting current work:
 - [Phase 05]: El texto de Por qué se compone al enviar con la incidencia, la última muestra y el canal de la apertura; una incidencia resuelta no muestra dato leído
 - [Phase 05]: Una acción del hub es la misma applyIncidentAction con via hub y el nombre de sesión, sobre la pareja id/host y con un cuerpo estricto
 - [Phase 05]: El resumen admite la apertura suprimida por silencio en la cohorte de abiertas ahora y etiqueta la línea sin tocar los contadores
+- [Phase 05]: El 409 re-arma el deleteWebhook para el siguiente run y aplica el retroceso, en lugar de reintentar el poll sobre el conflicto
+- [Phase 05]: La limpieza horaria borra tokens vencidos desde hace más de un día y silencios vencidos desde hace más de 7 días y nunca toca telegram_poll_state
+- [Phase 05]: La cota del update veneno y la omisión del offset tras seis días se nombran POISON_MAX_ATTEMPTS y OFFSET_RESET_AFTER_MS; el descarte no imprime el update_id
 
 ### Pending Todos
 
@@ -131,6 +135,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-26T15:08:38.529Z
-Stopped at: Completed 05-04-PLAN.md
+Last session: 2026-11-26T15:28:33.399Z
+Stopped at: Completed 05-05-PLAN.md
 Resume file: None
