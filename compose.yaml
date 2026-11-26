@@ -53,6 +53,16 @@ services:
     restart: unless-stopped
     env_file: .env
     command: [pnpm, worker]
+    # The progress mark lives only in this container's tmpfs.
+    tmpfs:
+      - /tmp
+    # Healthy only while the loop keeps completing milestones under the lock.
+    healthcheck:
+      test: [CMD, node, --import, tsx, scripts/check-worker-health.ts]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     depends_on:
       migrate:
         condition: service_completed_successfully

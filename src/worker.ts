@@ -14,6 +14,12 @@ import {
 } from "./lib/notification-dispatch";
 import { runDigestOnce, publicDigestReason, type DigestTransition } from "./lib/digest-runs";
 import { sampleInterval } from "./lib/validation";
+import { WorkerHealth } from "./lib/worker-health";
+import {
+  WORKER_IDLE_MS,
+  drainWorker,
+  workerTurn,
+} from "./lib/worker-loop";
 
 const digestTransitionLabels: Record<DigestTransition["status"], string> = {
   expired: "vencido",
@@ -37,10 +43,13 @@ let lastCollection = 0;
 let lastCleanup = 0;
 let stopping = false;
 let lockLost = false;
+let health: WorkerHealth | null = null;
 const shutdown = new AbortController();
 
 function stop() {
   stopping = true;
+  // The shutdown and a lost lock must never leave a healthy mark behind.
+  health?.closeSync();
   shutdown.abort();
 }
 
@@ -64,26 +73,31 @@ function delay(ms: number): Promise<void> {
 /**
  * Drains a bounded batch so delivery never starves collection. Every turn
  * dispatches at most one individual job and then offers the daily digest one
- * opportunity: a long batch can never hide the moment its window closes.
+ * opportunity: a long batch can never hide the moment its window closes. Each
+ * completed lane renews the health mark.
  */
 async function drain(
   config: ReturnType<typeof readRuntimeConfig>,
   lock: PoolClient,
+  workerHealth: WorkerHealth,
 ) {
-  for (let index = 0; index < 20 && !stopping; index += 1) {
-    const result = await runDispatchOnce({
-      client: lock,
-      config,
-      signal: shutdown.signal,
-    });
-    const digest = await runDigestOnce({
-      client: lock,
-      config,
-      signal: shutdown.signal,
-      onTransition: logDigestTransition,
-    });
-    if (result.action === "idle" && digest.action === "idle") return;
-  }
+  await drainWorker({
+    health: workerHealth,
+    stopping: () => stopping,
+    runDispatch: () =>
+      runDispatchOnce({
+        client: lock,
+        config,
+        signal: shutdown.signal,
+      }),
+    runDigest: () =>
+      runDigestOnce({
+        client: lock,
+        config,
+        signal: shutdown.signal,
+        onTransition: logDigestTransition,
+      }),
+  });
 }
 
 async function main() {
@@ -93,6 +107,12 @@ async function main() {
   const config = readRuntimeConfig();
   const hosts = config.hosts;
   const lock = await pool.connect();
+  health = new WorkerHealth({
+    holdsLock: () => holdsCollectionLock(lock),
+    log: (line) => console.error(line),
+  });
+  // A mark left by a previous process in the same tmpfs never means health.
+  health.invalidateSync();
   // Any error or normal end of the dedicated session means the advisory lock
   // is gone: stop claiming, abort in-flight work and let a new owner recover.
   lock.on("error", () => {
@@ -110,38 +130,48 @@ async function main() {
     console.log(
       `Recolector iniciado para ${hosts.map((host) => host.name).join(", ")}`,
     );
+    const state = { lastCollection, lastCleanup };
     while (!stopping) {
       try {
-        if (lockLost || !(await holdsCollectionLock(lock)))
-          throw new CollectionLockLost();
-        const [active] = await db
-          .select({ id: presence.id })
-          .from(presence)
-          .where(gt(presence.expiresAt, new Date()))
-          .limit(1);
-        if (Date.now() - lastCollection >= sampleInterval(Boolean(active))) {
-          lastCollection = Date.now();
-          await collectAll(hosts);
-        }
-        await drain(config, lock);
-        if (Date.now() - lastCleanup > 3600000) {
-          const cutoff = new Date(Date.now() - 30 * 86400000);
-          await db.delete(samples).where(lt(samples.at, cutoff));
-          await cleanupExpiredIncidents(cutoff);
-          await db.delete(operations).where(lt(operations.at, cutoff));
-          await db.delete(presence).where(lt(presence.expiresAt, new Date()));
-          lastCleanup = Date.now();
-        }
+        await workerTurn({
+          health,
+          holdsLock: () =>
+            lockLost ? Promise.resolve(false) : holdsCollectionLock(lock),
+          stopping: () => stopping,
+          now: () => Date.now(),
+          presenceActive: async () => {
+            const [active] = await db
+              .select({ id: presence.id })
+              .from(presence)
+              .where(gt(presence.expiresAt, new Date()))
+              .limit(1);
+            return Boolean(active);
+          },
+          sampleInterval,
+          collect: () => collectAll(hosts),
+          drain: () => drain(config, lock, health!),
+          cleanup: async () => {
+            const cutoff = new Date(Date.now() - 30 * 86400000);
+            await db.delete(samples).where(lt(samples.at, cutoff));
+            await cleanupExpiredIncidents(cutoff);
+            await db.delete(operations).where(lt(operations.at, cutoff));
+            await db.delete(presence).where(lt(presence.expiresAt, new Date()));
+          },
+          state,
+        });
+        lastCollection = state.lastCollection;
+        lastCleanup = state.lastCleanup;
       } catch (error) {
         if (error instanceof CollectionLockLost || lockLost) throw error;
         console.error(
           "Error de recogida; se volverá a comprobar sin repetir acciones",
         );
       }
-      if (!stopping) await delay(1000);
+      if (!stopping) await delay(WORKER_IDLE_MS);
     }
     if (lockLost) throw new CollectionLockLost();
   } finally {
+    health?.closeSync();
     if (!lockLost) await releaseCollectionLock(lock).catch(() => {});
     try {
       lock.release();
