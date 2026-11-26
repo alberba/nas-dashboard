@@ -2,17 +2,17 @@
 gsd_state_version: "1.0"
 current_phase: 04
 current_phase_name: Resumen diario
-status: executing
-stopped_at: Completed 04-02-PLAN.md
-last_updated: "2026-11-26T08:30:39.938Z"
+status: verifying
+stopped_at: Completed 04-03-PLAN.md — all plans summarized, ready for verification
+last_updated: "2026-11-26T09:23:31.289Z"
 last_activity: 2026-11-26
 last_activity_desc: Phase 04 execution started
-state_head: 88b55b38015d0091da026c4db05d11aa6a9eb7fd
+state_head: a7a8710c7b87ea1286b04cfd26c5e707ef7731d1
 progress:
   total_phases: 8
   completed_phases: 3
   total_plans: 14
-  completed_plans: 13
+  completed_plans: 14
   percent: 38
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-11-25)
 
 Phase: 04 (Resumen diario) — EXECUTING
 Plan: 3 of 3
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-11-26 — Phase 04 execution started
 
 Progress: [████░░░░░░] 38%
@@ -63,6 +63,7 @@ Progress: [████░░░░░░] 38%
 | Phase 01 P03 | 8min | 3 tasks | 4 files |
 | Phase 04 P04-01 | 24 min | 3 tasks | 16 files |
 | Phase 04 P04-02 | 17 min | 2 tasks | 4 files |
+| Phase 04 P04-03 | 45 min | 3 tasks | 16 files |
 
 ## Accumulated Context
 
@@ -87,6 +88,9 @@ Recent decisions affecting current work:
 - [Phase 04]: La apertura durable decide el detalle del resumen; las preferencias actuales y el booleano digest de la política nunca reclasifican un episodio
 - [Phase 04]: Nuevas cuenta disposiciones visibles (digest, telegram, push); silenciosas y legacy quedan fuera de toda cohorte; resueltas excluye cierres sintéticos
 - [Phase 04]: Omitidas se calcula como abiertas-ahora menos episodios representados, cubriendo la consulta acotada y los grupos descartados en una sola cifra
+- [Phase 04]: El resumen es una proyección global del hub: el mismo estado responde para todos los hosts y sobrevive al cambio de host
+- [Phase 04]: Solo las transiciones durables registradas por el tick emiten log; releer una fila terminal no repite el aviso
+- [Phase 04]: Ambas sondas rechazan marcas ausentes, futuras, obsoletas, de PID muerto o reutilizado; la marca del worker solo avanza tras hitos del bucle dueño del lock
 
 ### Pending Todos
 
@@ -106,6 +110,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-26T08:30:39.727Z
-Stopped at: Completed 04-02-PLAN.md
+Last session: 2026-11-26T09:23:31.076Z
+Stopped at: Completed 04-03-PLAN.md — all plans summarized, ready for verification
 Resume file: None

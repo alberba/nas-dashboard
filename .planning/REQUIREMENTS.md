@@ -63,7 +63,7 @@ Alcance de este milestone: auditar el ruido, sustituir los emisores por una entr
 
 - [x] **CONT-01**: Métricas, mantenimiento y despliegues se validan en runtime en el borde del hub, y un payload inválido no resuelve incidencias
 - [ ] **CONT-02**: El ingest de `media-stack` valida HMAC, ventana de 5 minutos e idempotencia por evento
-- [ ] **CONT-03**: Agente y worker tienen healthcheck, y el worker puede reportar que el resumen no salió
+- [x] **CONT-03**: Agente y worker tienen healthcheck, y el worker puede reportar que el resumen no salió
 - [x] **CONT-04**: Los contenedores auxiliares huérfanos del agente se recogen y los fallos de limpieza son visibles
 
 ### Rendimiento
@@ -129,7 +129,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DIG-04 | Phase 4 | Complete |
 | DIG-05 | Phase 4 | Complete |
 | DIG-06 | Phase 4 | Complete |
-| CONT-03 | Phase 4 | Pending |
+| CONT-03 | Phase 4 | Complete |
 | BOT-02 | Phase 5 | Pending |
 | BOT-04 | Phase 5 | Pending |
 | BOT-05 | Phase 5 | Pending |
