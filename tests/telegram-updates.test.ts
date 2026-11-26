@@ -28,6 +28,17 @@ const BETTER_AUTH_URL = "https://hub.example.com";
 // clock comfortably ahead so a freshly opened row is due in the test timeline.
 const START = Date.now() + 60 * 60_000;
 
+/** The `HH:mm` of an instant in Europe/Madrid, computed by the test itself. */
+function madridClockOf(at: Date | number): string {
+  const instant = at instanceof Date ? at : new Date(at);
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Madrid",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(instant);
+}
+
 type Keyboard = {
   inline_keyboard: Array<
     Array<{ text?: string; url?: string; callback_data?: string }>
@@ -250,6 +261,11 @@ describe.skipIf(!baseUrl)("telegram updates", () => {
       expect(editMarkup.inline_keyboard[0][0].url).toBe(
         `https://hub.example.com/?view=alerts&host=nas-home&incident=${incidentId}`,
       );
+      // The acknowledged notice carries the Madrid clock of the acknowledgement,
+      // computed here instead of compared against the copy.
+      expect(String(editCalls[0].body.text)).toContain(
+        madridClockOf(incident.acknowledgedAt!),
+      );
     } finally {
       await safeEnd(client);
     }
@@ -443,6 +459,41 @@ describe.skipIf(!baseUrl)("telegram updates", () => {
         .from(tables.incidents)
         .where(eq(tables.incidents.id, incidentId));
       expect(incident.seq).toBe(2);
+    } finally {
+      await safeEnd(client);
+    }
+  });
+
+  it("leaves the acknowledgement clock out of an unacknowledged notice", async () => {
+    const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
+    const client = await lockOwner();
+    try {
+      const { incidentId } = await sendOpening(fake, client);
+      // Closing the episode queues a silent edit, but nobody acknowledged it.
+      const closed = await store.recordIncidentObservation({
+        hostId: "nas-home",
+        key: "connection",
+        failing: false,
+        now: START + 30_000,
+      });
+      expect(closed.action).toBe("resolved");
+
+      const edited = await dispatch.runDispatchOnce({
+        client,
+        config,
+        now: () => START + 120_000,
+        fetchImpl: fake.transport,
+      });
+      expect(edited.action).toBe("edited");
+      const [incident] = await db
+        .select()
+        .from(tables.incidents)
+        .where(eq(tables.incidents.id, incidentId));
+      expect(incident.acknowledgedAt).toBeNull();
+      const editCall = fake.calls
+        .filter((call) => call.method === "editMessageText")
+        .at(-1)!;
+      expect(String(editCall.body.text)).not.toMatch(/\b\d{2}:\d{2}\b/);
     } finally {
       await safeEnd(client);
     }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import * as madridDayModule from "@/lib/madrid-day";
 import {
   madridDateOf,
   madridDay,
@@ -6,6 +7,14 @@ import {
   parseCivilDate,
   shiftCivilDate,
 } from "@/lib/madrid-day";
+
+/**
+ * The acknowledgement clock is asserted through its public behaviour: the
+ * module must expose the formatter and it must return the `HH:mm` of
+ * Europe/Madrid, whatever the process time zone is.
+ */
+type ClockModule = { madridClock?: (at: number | Date) => string };
+const madridClock = (madridDayModule as unknown as ClockModule).madridClock;
 
 describe("today's events day window", () => {
   it("uses the Europe/Madrid calendar day in winter", () => {
@@ -95,5 +104,28 @@ describe("configured target in Europe/Madrid", () => {
     expect(() => madridTarget("2026-02-30", 8, 0)).toThrow();
     expect(() => madridTarget("2026-11-26", 24, 0)).toThrow();
     expect(() => madridTarget("2026-11-26", 8, 60)).toThrow();
+  });
+});
+
+describe("acknowledgement clock in Europe/Madrid", () => {
+  it("formats the wall clock with two digits in winter and summer", () => {
+    expect(madridClock?.(new Date("2026-11-26T09:32:00Z"))).toBe("10:32");
+    expect(madridClock?.(new Date("2026-07-15T07:05:00Z"))).toBe("09:05");
+    expect(madridClock?.(new Date("2026-11-26T23:05:00Z"))).toBe("00:05");
+  });
+
+  it("follows both 2026 daylight-saving changes", () => {
+    // 2026-03-29: 02:00 Europe/Madrid jumps to 03:00 (01:00 UTC).
+    expect(madridClock?.(new Date("2026-03-29T00:59:00Z"))).toBe("01:59");
+    expect(madridClock?.(new Date("2026-03-29T01:00:00Z"))).toBe("03:00");
+    // 2026-10-25: 03:00 falls back to 02:00 (01:00 UTC).
+    expect(madridClock?.(new Date("2026-10-24T23:30:00Z"))).toBe("01:30");
+    expect(madridClock?.(new Date("2026-10-25T01:00:00Z"))).toBe("02:00");
+  });
+
+  it("returns the same value for a Date and its millisecond instant", () => {
+    const at = new Date("2026-11-26T09:32:00Z");
+    expect(madridClock?.(at)).toBe("10:32");
+    expect(madridClock?.(at.getTime())).toBe("10:32");
   });
 });
