@@ -1,18 +1,18 @@
 ---
 gsd_state_version: "1.0"
-current_phase: 4
+current_phase: 04
 current_phase_name: Resumen diario
 status: executing
-stopped_at: Fase 3 completada. Fase 4 lista para planificar
-last_updated: "2026-11-26T07:22:45.959Z"
-last_activity: 2026-11-25
-last_activity_desc: Phase 3 complete, transitioned to Phase 4
-state_head: 379719169bae08e6d807b1f03150c1e51842cb93
+stopped_at: Completed 04-01-PLAN.md
+last_updated: "2026-11-26T08:08:59.538Z"
+last_activity: 2026-11-26
+last_activity_desc: Phase 04 execution started
+state_head: ec1a8b4de7dcfffe8a95a0f0c5d72fcb0bcac4c3
 progress:
   total_phases: 8
   completed_phases: 3
   total_plans: 14
-  completed_plans: 11
+  completed_plans: 12
   percent: 38
 ---
 
@@ -23,14 +23,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-25)
 
 **Core value:** Saber en segundos qué está pasando en los dos servidores y poder actuar sobre ellos sin abrir una consola.
-**Current focus:** Fase 4 — Resumen diario
+**Current focus:** Phase 04 — Resumen diario
 
 ## Current Position
 
-Phase: 4 (Resumen diario) — READY TO EXECUTE
-Plan: Not started
+Phase: 04 (Resumen diario) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
-Last activity: 2026-11-25 — Phase 3 complete, transitioned to Phase 4
+Last activity: 2026-11-26 — Phase 04 execution started
 
 Progress: [████░░░░░░] 38%
 
@@ -61,6 +61,7 @@ Progress: [████░░░░░░] 38%
 | Phase 01 P01 | 9 | 3 tasks | 8 files |
 | Phase 01 P02 | 10 | 3 tasks | 4 files |
 | Phase 01 P03 | 8min | 3 tasks | 4 files |
+| Phase 04 P04-01 | 24 min | 3 tasks | 16 files |
 
 ## Accumulated Context
 
@@ -78,6 +79,10 @@ Recent decisions affecting current work:
 - [Phase 01]: El duplicado entre sistemas cuenta una vez por mensaje WUD (14), con 12 tags idénticos, 1 actualización real y 13 revisiones manuales
 - [Phase 01]: Las recuperaciones no se suman entre canales: Telegram queda en 0 por construcción y el hub se publica como no medido hasta que exista alerts.resolvedAt
 - [Phase 01]: El histograma usa la hora de pared del export sin convertir y las ventanas 30/60/90 se anclan al último mensaje con días inclusivos
+- [Phase 04]: digest_runs es la única autoridad por fecha; el agregado nunca escribe un resultado de entrega sobre un episodio — Evita duplicar la entrega y mantiene historial individual intacto
+- [Phase 04]: La ventana de recuperación se congela al preparar, así un cambio posterior de DIGEST_TIME no reabre ni mueve una fecha
+- [Phase 04]: Solo el dueño vivo del claim registra el vencimiento cierto tras cruzar dueAt
+- [Phase 04]: Un intento iniciado sin confirmación pasa a incierto y nunca se reenvía
 
 ### Pending Todos
 
@@ -97,6 +102,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-25T16:36:26.520Z
-Stopped at: Fase 3 completada. Fase 4 lista para planificar
+Last session: 2026-11-26T08:08:59.318Z
+Stopped at: Completed 04-01-PLAN.md
 Resume file: None

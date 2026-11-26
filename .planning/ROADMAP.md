@@ -119,11 +119,11 @@ Plans:
   3. Sin contenido no se envía nada; con mucho contenido se trunca con "+N" y se respeta el límite de 4096 caracteres.
   4. Si el resumen no sale, el operador lo ve en el hub y el worker lo reporta.
   5. El agente y el worker exponen healthcheck, así que un proceso vivo pero bloqueado no se declara sano.
-**Plans**: 3 plans
+**Plans**: 1/3 plans executed
 
 Plans:
 **Wave 1**
-- [ ] 04-01: Calendario de Madrid por instante y reclamación at-most-once del día con `digest_runs`
+- [x] 04-01: Calendario de Madrid por instante y reclamación at-most-once del día con `digest_runs`
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 04-02: Construir el resumen con secciones, footer de críticas y resueltas, y truncado explícito
@@ -225,7 +225,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 1. Auditoría del ruido | 3/3 | Complete    | 2026-11-24 |
 | 2. Incidencias y entrega única | 5/5 | Complete    | 2026-11-25 |
 | 3. Agrupación, inventario y ayudantes | 3/3 | Complete    | 2026-11-25 |
-| 4. Resumen diario | 0/3 | Not started | - |
+| 4. Resumen diario | 1/3 | In Progress | - |
 | 5. Bot de lectura y reconocimiento | 0/3 | Not started | - |
 | 6. Puerta de seguridad | 0/3 | Not started | - |
 | 7. Acciones verificadas desde Telegram | 0/3 | Not started | - |
