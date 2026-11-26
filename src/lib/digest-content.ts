@@ -1,7 +1,7 @@
 import type { Client } from "pg";
 import { routeHref } from "../components/views/routes";
 import { madridDateOf } from "./madrid-day";
-import { telegramText } from "./telegram";
+import { TELEGRAM_TEXT_LIMIT, telegramText } from "./telegram";
 
 /**
  * Daily digest snapshot composition.
@@ -188,11 +188,13 @@ function compose(
 }
 
 /**
- * Renders the sections of one snapshot. Every materialised row is listed; the
- * exact omitted figure covers the rows the bounded query left behind. The
- * provider cap closes the whole text until the next task folds lines itself.
+ * Renders the sections of one snapshot. Lines are dropped from the end until
+ * the exact `+N` fits, so the footer, the counters and the authenticated link
+ * always survive. An aggregated host row represents its whole group while it
+ * stays; once dropped, the whole group joins the omitted figure.
  */
 export function renderDigestSnapshot(input: DigestRenderInput): DigestRendered {
+  const limit = input.limit ?? TELEGRAM_TEXT_LIMIT;
   const explicit: RenderLine[] = [...input.details]
     .sort((left, right) => left.at - right.at || left.id - right.id)
     .map((detail) => ({
@@ -208,14 +210,34 @@ export function renderDigestSnapshot(input: DigestRenderInput): DigestRendered {
       weight: aggregate.count,
       ids: [],
     }));
-  const lines = [...explicit, ...aggregates];
+  const candidates = [...explicit, ...aggregates];
+
+  let kept = candidates.length;
+  let text = "";
+  for (;;) {
+    const lines = candidates.slice(0, kept);
+    const entries = lines.reduce((total, line) => total + line.weight, 0);
+    // Every candidate that is not kept is unrepresented: the rows the bounded
+    // query never materialised fall in the same figure by construction.
+    const omitted = Math.max(0, input.counts.openNow - entries);
+    text = compose(input, lines, omitted);
+    if (text.length <= limit) break;
+    if (kept === 0) {
+      // Only a pathological link or title reaches this: keep the provider
+      // bound even though the footer may then be cut.
+      text = telegramText(text);
+      break;
+    }
+    kept -= 1;
+  }
+
+  const lines = candidates.slice(0, kept);
   const entries = lines.reduce((total, line) => total + line.weight, 0);
-  const omitted = Math.max(0, input.counts.openNow - entries);
   return {
-    text: telegramText(compose(input, lines, omitted)),
+    text,
     entries,
-    omitted,
-    listed: explicit.flatMap((line) => line.ids),
+    omitted: Math.max(0, input.counts.openNow - entries),
+    listed: lines.flatMap((line) => line.ids),
   };
 }
 
@@ -234,6 +256,10 @@ type DigestQueryRow = {
  * `reason=digest_pending`. A later escalada rewrites that row, so an episode
  * that became an individual notice stops being a digest line. Legacy, silent
  * and individually delivered episodes never become details.
+ *
+ * The incident timestamps are stored by Drizzle as UTC wall-clock values, so
+ * every comparison normalises them with `AT TIME ZONE 'UTC'` before applying
+ * the instant range: the period keeps meaning instants across a DST change.
  */
 async function readSnapshot(
   input: DigestSnapshotInput,
