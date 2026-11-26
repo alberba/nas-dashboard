@@ -522,29 +522,35 @@ describe.skipIf(!baseUrl)("incident snooze", () => {
   });
 
   it("offers silence controls only while they make sense", () => {
+    // The "why" explanation accompanies every state since 05-03; this matrix
+    // only owns the state controls.
+    const stateActions = (
+      state: Parameters<typeof keyboard.keyboardActions>[0],
+    ): string[] => keyboard.keyboardActions(state).filter((a) => a !== "why");
+
     expect(
-      keyboard.keyboardActions({
+      stateActions({
         resolved: false,
         acknowledged: false,
         snoozed: false,
       }),
     ).toEqual(["ack", "snooze_1h", "snooze_24h"]);
     expect(
-      keyboard.keyboardActions({
+      stateActions({
         resolved: false,
         acknowledged: true,
         snoozed: false,
       }),
     ).toEqual(["snooze_1h", "snooze_24h"]);
     expect(
-      keyboard.keyboardActions({
+      stateActions({
         resolved: false,
         acknowledged: false,
         snoozed: true,
       }),
     ).toEqual(["ack", "unsnooze"]);
     expect(
-      keyboard.keyboardActions({
+      stateActions({
         resolved: false,
         acknowledged: true,
         snoozed: true,
@@ -553,7 +559,7 @@ describe.skipIf(!baseUrl)("incident snooze", () => {
     for (const acknowledged of [false, true])
       for (const snoozed of [false, true])
         expect(
-          keyboard.keyboardActions({ resolved: true, acknowledged, snoozed }),
+          stateActions({ resolved: true, acknowledged, snoozed }),
         ).toEqual([]);
   });
 
