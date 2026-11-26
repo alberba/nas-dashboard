@@ -50,6 +50,10 @@ import { maintenanceForHost } from "@/lib/maintenance";
 import { runHostCommand } from "@/lib/host-commands";
 import { projectIncidents } from "@/lib/incident-store";
 import {
+  applyIncidentAction,
+  type IncidentActionInput,
+} from "@/lib/incident-actions";
+import {
   fetchRenovatePullRequests,
   githubConfig,
   GithubConfigError,
@@ -271,6 +275,89 @@ async function handle(
         alerts: projected,
         openAlerts: open.value,
       });
+    }
+    // Operator actions from the hub. The common guards already required a
+    // session and an allowed Origin, so this branch only adds the strict body,
+    // the exact host/id pair and the shared action itself (T-05-13, T-05-14).
+    const incidentActionRoute =
+      /^incidents\/([^/]+)\/(acknowledge|snooze|unsnooze)$/.exec(route);
+    if (incidentActionRoute && request.method === "POST") {
+      const action = incidentActionRoute[2];
+      // Same id contract as the point lookup: a malformed or out-of-range id
+      // is simply not found instead of reaching the database as a 503.
+      const id = z
+        .string()
+        .regex(/^[1-9]\d{0,9}$/)
+        .safeParse(incidentActionRoute[1]);
+      if (!id.success) return json({ error: "No encontrado" }, 404);
+      const incidentId = Number(id.data);
+      if (!Number.isSafeInteger(incidentId) || incidentId > 2_147_483_647)
+        return json({ error: "No encontrado" }, 404);
+      // Strict body: the host and, only for a silence, a duration of the
+      // closed set. An unknown field or a foreign duration writes nothing.
+      const body = z
+        .strictObject({
+          host: z.string().min(1).max(64),
+          hours: z.union([z.literal(1), z.literal(24)]).optional(),
+        })
+        .refine(
+          (value) =>
+            action === "snooze"
+              ? value.hours !== undefined
+              : value.hours === undefined,
+          {
+            message: "La duración no corresponde a la acción",
+            path: ["hours"],
+          },
+        )
+        .parse(await request.json());
+      const host = resolveHost(getHosts(), body.host);
+      // The pair, never the id alone: another host's episode is not found.
+      const [row] = await db
+        .select()
+        .from(alerts)
+        .where(and(eq(alerts.id, incidentId), eq(alerts.hostId, host.id)))
+        .limit(1);
+      if (!row) return json({ error: "No encontrado" }, 404);
+      const now = Date.now();
+      // The session name is the actor of a hub action; Telegram leaves it null.
+      const by = current.user.name.trim().slice(0, 80);
+      let input: IncidentActionInput;
+      if (action === "snooze") {
+        if (body.hours === undefined)
+          return json(
+            { error: "La duración no corresponde a la acción" },
+            400,
+          );
+        input = {
+          action: "snooze",
+          hours: body.hours,
+          incidentId,
+          via: "hub",
+          by,
+          now,
+        };
+      } else if (action === "acknowledge") {
+        input = { action: "ack", incidentId, via: "hub", by, now };
+      } else {
+        input = { action: "unsnooze", incidentId, via: "hub", by, now };
+      }
+      const outcome = await db.transaction((tx) =>
+        applyIncidentAction(tx, input),
+      );
+      if (outcome === "not_found")
+        return json({ error: "No encontrado" }, 404);
+      if (outcome === "resolved")
+        return json({ error: "La incidencia ya está resuelta" }, 409);
+      // The projection re-reads the row after the action, so the response and
+      // the list agree on the new state, its silence and its acknowledgement.
+      const [updated] = await db
+        .select()
+        .from(alerts)
+        .where(eq(alerts.id, incidentId))
+        .limit(1);
+      const [incident] = updated ? await projectIncidents([updated]) : [];
+      return json({ outcome, incident: incident ?? null });
     }
     if (route === "deployments/settings" && request.method === "POST") {
       return await saveDeploymentSettings({

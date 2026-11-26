@@ -229,6 +229,7 @@ export type PublicDeliveryReason =
   | "policy_silent"
   | "telegram_disabled"
   | "push_disabled"
+  | "snoozed"
   | "permanent_rejection"
   | "uncertain";
 export type PublicDelivery = {
@@ -298,6 +299,23 @@ export type IncidentInventoryContext = {
   entries: IncidentInventoryEntry[];
   omitted: number;
 };
+/**
+ * Operator acknowledgement of one episode. The instant, the channel and the
+ * hub session name are the whole public fact: a Telegram identifier never
+ * reaches this projection (D-05).
+ */
+export type AlertAcknowledged = {
+  /** Instant of the acknowledgement, ISO 8601. */
+  at: string;
+  via: "telegram" | "hub";
+  /** Internal hub session name; null when it came from Telegram. */
+  by: string | null;
+};
+/** Live silence of the watched condition, while the episode stays open. */
+export type AlertSnooze = {
+  until: string;
+  via: "telegram" | "hub";
+};
 export type Alert = {
   id: number;
   hostId: string;
@@ -316,6 +334,10 @@ export type Alert = {
   fallback: PublicDelivery | null;
   /** Latest edit result for the confirmed Telegram message, if any. */
   lastUpdate: PublicDelivery | null;
+  /** Operator acknowledgement of this episode; null while nobody saw it. */
+  acknowledged: AlertAcknowledged | null;
+  /** Live silence of the condition; null when none or already expired. */
+  snooze: AlertSnooze | null;
   /** Captured inventory of a `services-down` group; null for other episodes. */
   inventory: IncidentInventoryContext | null;
   /** Outage episode that currently blocks this container observation. */

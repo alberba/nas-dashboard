@@ -37,6 +37,7 @@ const reasonLabels: Record<PublicDeliveryReason, string> = {
   policy_silent: "Silenciado por la política de avisos",
   telegram_disabled: "Telegram desactivado",
   push_disabled: "Push desactivado",
+  snoozed: "Retenido por un silencio",
   permanent_rejection: "Rechazo permanente del proveedor",
   uncertain: "Resultado incierto, sin reenvío automático",
 };

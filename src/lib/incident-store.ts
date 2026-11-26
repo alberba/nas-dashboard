@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import { and, asc, desc, eq, inArray, isNull, like, lt, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, like, lt, lte, sql } from "drizzle-orm";
 import { db } from "./db";
 import { activeSnooze, SNOOZE_SUPPRESSION_REASON } from "./incident-snooze";
 import {
   incidentEvents,
+  incidentSnoozes,
   incidents,
   notificationOutbox,
   samples,
@@ -901,6 +902,7 @@ const finiteReasons: Record<string, PublicDeliveryReason> = {
   policy_silent: "policy_silent",
   telegram_disabled: "telegram_disabled",
   push_disabled: "push_disabled",
+  snoozed: "snoozed",
   resolved_before_send: "policy_silent",
   owner_required: "policy_silent",
   no_subscriptions: "policy_silent",
@@ -955,11 +957,19 @@ const emptyDelivery: PublicDelivery = {
 };
 
 type IncidentRow = typeof incidents.$inferSelect;
+/** Live silence of one `(hostId, key)` pair, already bounded by the clock. */
+type ActiveSilence = { until: Date; setVia: string };
+
+/** The only two channels that write the state; anything else never leaks a name. */
+function publicVia(value: string | null): "telegram" | "hub" {
+  return value === "hub" ? "hub" : "telegram";
+}
 
 function projectRow(
   row: IncidentRow,
   jobs: OutboxJob[],
   inventory: IncidentInventoryContext | null,
+  silence: ActiveSilence | null,
 ): Alert {
   const opening = jobs.find((job) => job.kind === "incident-open");
   const edits = jobs
@@ -991,6 +1001,19 @@ function projectRow(
     lastUpdate: latestEdit
       ? deliveryOf(latestEdit, latestEdit.editResult ?? null)
       : null,
+    acknowledged: row.acknowledgedAt
+      ? {
+          at: row.acknowledgedAt.toISOString(),
+          via: publicVia(row.acknowledgedVia),
+          by: row.acknowledgedBy,
+        }
+      : null,
+    // A closed episode shows no state controls, so it publishes no silence
+    // either, even when the condition stays silenced for its next opening.
+    snooze:
+      silence && !row.resolvedAt
+        ? { until: silence.until.toISOString(), via: publicVia(silence.setVia) }
+        : null,
     inventory: row.key === "connection" ? inventory : null,
     inhibitedBy: row.inhibitedBy,
     inhibitedReason: row.inhibitedReason,
@@ -1058,6 +1081,22 @@ export async function projectIncidents(rows: IncidentRow[]): Promise<Alert[]> {
     else byIncident.set(job.incidentId, [job]);
   }
   const projected = new Map<number, Alert>();
+  // One read of the live silences of the rows' hosts, matched by pair: a
+  // silence belongs to the condition, not to the episode.
+  const silences = await db
+    .select()
+    .from(incidentSnoozes)
+    .where(
+      and(
+        inArray(incidentSnoozes.hostId, [
+          ...new Set(allRows.map((row) => row.hostId)),
+        ]),
+        gt(incidentSnoozes.until, new Date()),
+      ),
+    );
+  const silenceByPair = new Map(
+    silences.map((row) => [`${row.hostId}\u0000${row.key}`, row]),
+  );
   for (const row of allRows) {
     projected.set(
       row.id,
@@ -1067,6 +1106,7 @@ export async function projectIncidents(rows: IncidentRow[]): Promise<Alert[]> {
         row.key === "connection"
           ? (row.context ?? legacyContexts.get(row.id) ?? null)
           : null,
+        silenceByPair.get(`${row.hostId}\u0000${row.key}`) ?? null,
       ),
     );
   }
