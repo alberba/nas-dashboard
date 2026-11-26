@@ -55,7 +55,13 @@ export type RuntimeConfig = {
   /** VAPID is optional unless `PUSH_WARNINGS` is enabled. */
   vapid: VapidConfig | null;
   pushWarnings: boolean;
+  /** Civil time of the daily digest in Europe/Madrid, always `HH:mm`. */
+  digestTime: string;
 };
+
+/** The daily digest runs at 08:00 Europe/Madrid unless configured otherwise. */
+export const DEFAULT_DIGEST_TIME = "08:00";
+const DIGEST_TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 const EXAMPLE_MARKERS = [
   "change-me",
@@ -328,6 +334,23 @@ function pushWarningsEnabled(
   return false;
 }
 
+/**
+ * Civil time of the daily digest. Absent means the 08:00 default; an empty or
+ * malformed value is rejected by name and reason, never by echoing it.
+ */
+function digestTime(
+  env: Record<string, string | undefined>,
+  issues: IssueList,
+): string {
+  if (!("DIGEST_TIME" in env)) return DEFAULT_DIGEST_TIME;
+  const raw = env.DIGEST_TIME?.trim() ?? "";
+  if (!DIGEST_TIME_PATTERN.test(raw)) {
+    issues.add("DIGEST_TIME", "invalid");
+    return DEFAULT_DIGEST_TIME;
+  }
+  return raw;
+}
+
 function decodeBase64Url(value: string): Buffer | undefined {
   if (!/^[A-Za-z0-9_-]+={0,2}$/.test(value)) return undefined;
   try {
@@ -413,6 +436,7 @@ export function readRuntimeConfig(
   const origins = trustedOrigins(env, betterAuthUrl, issues);
   const parsedHosts = hosts(env, issues);
   const pushWarnings = pushWarningsEnabled(env, issues);
+  const digestAt = digestTime(env, issues);
   const telegramConfig = telegram(env, issues);
   const vapidConfig = vapid(env, pushWarnings, issues);
   if (issues.length > 0) throw new RuntimeConfigError(issues.list());
@@ -427,5 +451,6 @@ export function readRuntimeConfig(
     telegram: telegramConfig,
     vapid: vapidConfig,
     pushWarnings,
+    digestTime: digestAt,
   };
 }

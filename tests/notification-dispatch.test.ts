@@ -87,6 +87,7 @@ describe.skipIf(!baseUrl)("notification dispatch", () => {
       telegram: { botToken: BOT_TOKEN, chatId: CHAT_ID },
       vapid: null,
       pushWarnings: false,
+      digestTime: "08:00",
     };
   });
 
@@ -1512,10 +1513,7 @@ describe.skipIf(!baseUrl)("notification dispatch", () => {
     const owner = await lockOwner();
     const provider = fakeProvider();
     // 23:30 Europe/Madrid, read from the runtime configuration.
-    const late = {
-      ...digestConfig(),
-      digestTime: "23:30",
-    } as unknown as RuntimeConfig;
+    const late: RuntimeConfig = { ...digestConfig(), digestTime: "23:30" };
     try {
       // 00:00 Europe/Madrid on 2026-11-27: yesterday's 23:30 target is still
       // inside its two-hour window, so the date is served after midnight.
@@ -1532,6 +1530,80 @@ describe.skipIf(!baseUrl)("notification dispatch", () => {
         Date.parse("2026-11-26T22:30:00.000Z"),
       );
       expect(run.dueAt.getTime()).toBe(Date.parse("2026-11-27T00:30:00.000Z"));
+    } finally {
+      await safeEnd(owner);
+    }
+  });
+
+  it("keeps the frozen target when the configured time changes", async () => {
+    await openDigestWarning();
+    const owner = await lockOwner();
+    const provider = fakeProvider();
+    try {
+      // 08:00 prepared the date; the operator later moves DIGEST_TIME to 23:30.
+      await digest.prepareDigestRuns({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 60_000,
+      });
+      const changed: RuntimeConfig = {
+        ...digestConfig(),
+        digestTime: "23:30",
+      };
+      const result = await digest.runDigestOnce({
+        client: owner,
+        config: changed,
+        now: () => DIGEST_TARGET + 120_000,
+        fetchImpl: provider.transport,
+      });
+      expect(result).toMatchObject({ action: "sent", date: DIGEST_DAY });
+      expect(provider.calls).toHaveLength(1);
+      const run = await digestRun();
+      expect(run.targetAt.getTime()).toBe(DIGEST_TARGET);
+      expect(run.dueAt.getTime()).toBe(DIGEST_DUE);
+      // A second date is never opened for the same civil day.
+      expect(await db.select().from(tables.digestRuns)).toHaveLength(1);
+    } finally {
+      await safeEnd(owner);
+    }
+  });
+
+  it("records one omission after a long stop instead of replaying days", async () => {
+    await db.insert(tables.digestRuns).values({
+      date: "2026-11-23",
+      targetAt: new Date("2026-11-23T07:00:00.000Z"),
+      periodStartAt: new Date("2026-11-22T07:00:00.000Z"),
+      dueAt: new Date("2026-11-23T09:00:00.000Z"),
+      status: "sent",
+      payload: "Resumen anterior",
+    });
+    await openDigestWarning();
+    const owner = await lockOwner();
+    const provider = fakeProvider();
+    try {
+      const result = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 60_000,
+        fetchImpl: provider.transport,
+      });
+      expect(result).toMatchObject({ action: "sent", date: DIGEST_DAY });
+      expect(provider.calls).toHaveLength(1);
+      const runs = await db
+        .select()
+        .from(tables.digestRuns)
+        .orderBy(tables.digestRuns.date);
+      // Only the latest omission is recorded; the two older dates are absent.
+      expect(runs.map((run) => run.date)).toEqual([
+        "2026-11-23",
+        "2026-11-25",
+        "2026-11-26",
+      ]);
+      expect(runs[1]).toMatchObject({
+        status: "expired",
+        reason: "digest_missed",
+        payload: null,
+      });
     } finally {
       await safeEnd(owner);
     }

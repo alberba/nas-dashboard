@@ -2435,6 +2435,7 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
         },
         vapid: null,
         pushWarnings: false,
+        digestTime: "08:00",
       };
       const result = await dispatch.runDispatchOnce({
         client,

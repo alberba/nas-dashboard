@@ -37,6 +37,7 @@ const CONFIG_KEYS = [
   "VAPID_PUBLIC_KEY",
   "VAPID_PRIVATE_KEY",
   "PUSH_WARNINGS",
+  "DIGEST_TIME",
   "__NEXT_PROCESSED_ENV",
 ] as const;
 
@@ -255,18 +256,14 @@ describe("readRuntimeConfig", () => {
   });
 
   it("defaults the daily digest to 08:00 Europe/Madrid", () => {
-    const config = readRuntimeConfig(
-      env({ DIGEST_TIME: undefined }),
-    ) as unknown as { digestTime?: string };
+    const config = readRuntimeConfig(env({ DIGEST_TIME: undefined }));
     expect(config.digestTime).toBe("08:00");
   });
 
   it.each(["23:30", "00:05", "12:00"])(
     "accepts the configured digest time %s",
     (value) => {
-      const config = readRuntimeConfig(env({ DIGEST_TIME: value })) as unknown as {
-        digestTime?: string;
-      };
+      const config = readRuntimeConfig(env({ DIGEST_TIME: value }));
       expect(config.digestTime).toBe(value);
     },
   );

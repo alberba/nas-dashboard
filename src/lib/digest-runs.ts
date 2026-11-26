@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { eq } from "drizzle-orm";
 import type { Client } from "pg";
-import type { RuntimeConfig } from "./runtime-config";
+import {
+  DEFAULT_DIGEST_TIME,
+  type RuntimeConfig,
+} from "./runtime-config";
 import * as schema from "./schema";
 import { digestRuns, type NotificationOutcome } from "./schema";
 import {
@@ -35,8 +38,6 @@ export const DIGEST_LEASE_MS = 30_000;
 export const DIGEST_REQUEST_TIMEOUT_MS = 10_000;
 /** Confirmed rejections (429) allowed for one date. */
 export const DIGEST_MAX_ATTEMPTS = 5;
-/** Fallback schedule when `DIGEST_TIME` is absent. */
-export const DEFAULT_DIGEST_TIME = "08:00";
 /** Sanity bound for a configured civil time. */
 const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
@@ -79,8 +80,6 @@ export type DigestOptions = {
   leaseMs?: number;
   maxAttempts?: number;
   claimToken?: () => string;
-  /** Civil time of the target; `DIGEST_TIME` from 04-01 task 2 onward. */
-  digestTime?: string;
 };
 
 export type DigestRun = typeof digestRuns.$inferSelect;
@@ -173,7 +172,7 @@ export async function prepareDigestRuns(
   const clock = options.now ?? Date.now;
   const now = clock();
   const at = new Date(now);
-  const time = options.digestTime ?? DEFAULT_DIGEST_TIME;
+  const time = options.config.digestTime;
   const today = madridDateOf(at);
   const scheduled = [today, shiftCivilDate(today, -1)].map((date) =>
     digestSchedule(date, time),
@@ -203,104 +202,104 @@ export async function prepareDigestRuns(
     [at, at.toISOString()],
   );
 
-  if (live.length === 0) {
-    await recordMissedRun(options.client, now, time, scheduled);
-    return { action: "idle" };
+  if (live.length > 0) {
+    const alertsUrl = digestAlertsUrl(options.config.betterAuthUrl);
+    const hostIds = options.config.hosts.map((host) => host.id);
+    let changed = false;
+    await options.client.query("BEGIN");
+    try {
+      for (const candidate of live) {
+        const { rowCount } = await options.client.query(
+          `INSERT INTO digest_runs
+             ("date", "targetAt", "periodStartAt", "dueAt", "nextAttemptAt",
+              "preparedAt")
+           VALUES ($1, $2, $3, $4, $2, $5)
+           ON CONFLICT ("date") DO NOTHING`,
+          [
+            candidate.date,
+            candidate.target,
+            candidate.periodStart,
+            candidate.dueAt,
+            at,
+          ],
+        );
+        if (rowCount) changed = true;
+      }
+      const { rows } = await options.client.query<{
+        id: number;
+        targetAt: Date;
+        periodStartAt: Date;
+      }>(
+        `SELECT id, "targetAt", "periodStartAt"
+           FROM digest_runs
+          WHERE "date" = ANY($1) AND status = 'prepared' AND payload IS NULL
+          ORDER BY "targetAt" ASC, id ASC`,
+        [live.map((candidate) => candidate.date)],
+      );
+      for (const row of rows) {
+        if (!options.config.telegram) {
+          await options.client.query(
+            `UPDATE digest_runs
+                SET status = 'unconfigured',
+                    reason = 'telegram_disabled',
+                    result = jsonb_build_object(
+                      'state', 'suppressed',
+                      'reason', 'telegram_disabled',
+                      'at', $2::text
+                    ),
+                    "finishedAt" = $1,
+                    "updatedAt" = $1
+              WHERE id = $3 AND status = 'prepared'`,
+            [at, at.toISOString(), row.id],
+          );
+          changed = true;
+          continue;
+        }
+        const snapshot = await buildDigestSnapshot({
+          client: options.client,
+          hostIds,
+          periodStart: row.periodStartAt,
+          periodEnd: row.targetAt,
+          snapshotAt: at,
+          alertsUrl,
+        });
+        if (!snapshot) {
+          await options.client.query(
+            `UPDATE digest_runs
+                SET status = 'empty',
+                    reason = 'digest_empty',
+                    result = jsonb_build_object(
+                      'state', 'suppressed',
+                      'reason', 'digest_empty',
+                      'at', $2::text
+                    ),
+                    "finishedAt" = $1,
+                    "updatedAt" = $1
+              WHERE id = $3 AND status = 'prepared'`,
+            [at, at.toISOString(), row.id],
+          );
+        } else {
+          await options.client.query(
+            `UPDATE digest_runs
+                SET payload = $2,
+                    "preparedAt" = $1,
+                    "updatedAt" = $1
+              WHERE id = $3 AND status = 'prepared' AND payload IS NULL`,
+            [at, snapshot.text, row.id],
+          );
+        }
+        changed = true;
+      }
+      await options.client.query("COMMIT");
+    } catch (error) {
+      await options.client.query("ROLLBACK").catch(() => {});
+      throw error;
+    }
+    if (!changed) return { action: "idle" };
   }
 
-  const alertsUrl = digestAlertsUrl(options.config.betterAuthUrl);
-  const hostIds = options.config.hosts.map((host) => host.id);
-  let changed = false;
-  await options.client.query("BEGIN");
-  try {
-    for (const candidate of live) {
-      const { rowCount } = await options.client.query(
-        `INSERT INTO digest_runs
-           ("date", "targetAt", "periodStartAt", "dueAt", "nextAttemptAt",
-            "preparedAt")
-         VALUES ($1, $2, $3, $4, $2, $5)
-         ON CONFLICT ("date") DO NOTHING`,
-        [
-          candidate.date,
-          candidate.target,
-          candidate.periodStart,
-          candidate.dueAt,
-          at,
-        ],
-      );
-      if (rowCount) changed = true;
-    }
-    const { rows } = await options.client.query<{
-      id: number;
-      targetAt: Date;
-      periodStartAt: Date;
-    }>(
-      `SELECT id, "targetAt", "periodStartAt"
-         FROM digest_runs
-        WHERE "date" = ANY($1) AND status = 'prepared' AND payload IS NULL
-        ORDER BY "targetAt" ASC, id ASC`,
-      [live.map((candidate) => candidate.date)],
-    );
-    for (const row of rows) {
-      if (!options.config.telegram) {
-        await options.client.query(
-          `UPDATE digest_runs
-              SET status = 'unconfigured',
-                  reason = 'telegram_disabled',
-                  result = jsonb_build_object(
-                    'state', 'suppressed',
-                    'reason', 'telegram_disabled',
-                    'at', $2::text
-                  ),
-                  "finishedAt" = $1,
-                  "updatedAt" = $1
-            WHERE id = $3 AND status = 'prepared'`,
-          [at, at.toISOString(), row.id],
-        );
-        changed = true;
-        continue;
-      }
-      const snapshot = await buildDigestSnapshot({
-        client: options.client,
-        hostIds,
-        periodStart: row.periodStartAt,
-        periodEnd: row.targetAt,
-        snapshotAt: at,
-        alertsUrl,
-      });
-      if (!snapshot) {
-        await options.client.query(
-          `UPDATE digest_runs
-              SET status = 'empty',
-                  reason = 'digest_empty',
-                  result = jsonb_build_object(
-                    'state', 'suppressed',
-                    'reason', 'digest_empty',
-                    'at', $2::text
-                  ),
-                  "finishedAt" = $1,
-                  "updatedAt" = $1
-            WHERE id = $3 AND status = 'prepared'`,
-          [at, at.toISOString(), row.id],
-        );
-      } else {
-        await options.client.query(
-          `UPDATE digest_runs
-              SET payload = $2,
-                  "preparedAt" = $1,
-                  "updatedAt" = $1
-            WHERE id = $3 AND status = 'prepared' AND payload IS NULL`,
-          [at, snapshot.text, row.id],
-        );
-      }
-      changed = true;
-    }
-    await options.client.query("COMMIT");
-  } catch (error) {
-    await options.client.query("ROLLBACK").catch(() => {});
-    throw error;
-  }
-  return changed ? { action: "prepared" } : { action: "idle" };
+  await recordMissedRun(options.client, now, time, live);
+  return live.length === 0 ? { action: "idle" } : { action: "prepared" };
 }
 
 /**
@@ -312,7 +311,7 @@ async function recordMissedRun(
   client: Client,
   now: number,
   time: string,
-  scheduled: DigestSchedule[],
+  live: DigestSchedule[],
 ): Promise<void> {
   const at = new Date(now);
   const today = madridDateOf(at);
@@ -321,12 +320,16 @@ async function recordMissedRun(
       ? shiftCivilDate(today, -1)
       : today;
   // A live candidate already covers this date.
-  if (scheduled.some((candidate) => candidate.date === date)) return;
-  const history = await client.query(
-    "SELECT 1 FROM digest_runs WHERE NOT (status = 'expired' AND reason = 'digest_missed') LIMIT 1",
+  if (live.some((candidate) => candidate.date === date)) return;
+  const gap = await client.query<{ recorded: boolean; history: boolean }>(
+    `SELECT
+       EXISTS (SELECT 1 FROM digest_runs WHERE "date" = $1) AS recorded,
+       EXISTS (SELECT 1 FROM digest_runs WHERE "date" < $1) AS history`,
+    [date],
   );
-  // No digest was ever scheduled: nothing was missed, so no marker is written.
-  if (history.rowCount === 0) return;
+  // No older digest exists (nothing was missed), or the omission is already
+  // recorded. Either way no second marker is written.
+  if (gap.rows[0]?.recorded !== false || gap.rows[0]?.history !== true) return;
   const missed = digestSchedule(date, time);
   await client.query(
     `INSERT INTO digest_runs
