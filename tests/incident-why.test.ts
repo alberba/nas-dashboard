@@ -573,4 +573,85 @@ describe.skipIf(!baseUrl)("incident why", () => {
       await safeEnd(client);
     }
   });
+
+  it("moves the notice state only on an escalation or a closure", async () => {
+    const why = await import("@/lib/incident-why");
+    const incidentId = await openIncident();
+    expect(await why.noticeSeq(db, incidentId)).toBe(1);
+
+    expect(
+      await runAction({
+        action: "ack",
+        incidentId,
+        via: "telegram",
+        now: START + 1_000,
+      }),
+    ).toBe("applied");
+    expect(
+      await runAction({
+        action: "snooze",
+        hours: 1,
+        incidentId,
+        via: "telegram",
+        now: START + 2_000,
+      }),
+    ).toBe("applied");
+    expect(
+      await runAction({
+        action: "unsnooze",
+        incidentId,
+        via: "telegram",
+        now: START + 3_000,
+      }),
+    ).toBe("applied");
+    expect(await why.noticeSeq(db, incidentId)).toBe(1);
+
+    const escalated = await store.recordIncidentObservation({
+      hostId: "nas-home",
+      key: "temperature",
+      failing: true,
+      severity: "critical",
+      title: "Temperatura elevada en nas-home",
+      detail: "Algún sensor supera 70 °C.",
+      now: START + 10_000,
+      delivery: { channel: "telegram", reason: "policy_immediate" },
+    });
+    expect(escalated.action).toBe("escalated");
+    const severityEvent = (await eventsOf(incidentId)).find(
+      (event) => event.kind === "severity",
+    )!;
+    expect(await why.noticeSeq(db, incidentId)).toBe(severityEvent.seq);
+
+    const closed = await store.recordIncidentObservation({
+      hostId: "nas-home",
+      key: "temperature",
+      failing: false,
+      now: START + 20_000,
+    });
+    expect(closed.action).toBe("resolved");
+    const closedEvent = (await eventsOf(incidentId)).find(
+      (event) => event.kind === "closed",
+    )!;
+    expect(await why.noticeSeq(db, incidentId)).toBe(closedEvent.seq);
+  });
+
+  it("leaves one row when two presses of the same state run concurrently", async () => {
+    const why = await import("@/lib/incident-why");
+    const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
+    const client = await lockOwner();
+    try {
+      const incidentId = await sendOpening(fake, client);
+
+      // Two separate transactions, as two concurrent presses would.
+      const outcomes = await Promise.all([
+        db.transaction((tx) => why.enqueueWhyReply(tx, { incidentId })),
+        db.transaction((tx) => why.enqueueWhyReply(tx, { incidentId })),
+      ]);
+      expect(outcomes.filter((value) => value === "queued")).toHaveLength(1);
+      expect(outcomes.filter((value) => value === "duplicate")).toHaveLength(1);
+      expect(await whyRows(incidentId)).toHaveLength(1);
+    } finally {
+      await safeEnd(client);
+    }
+  });
 });
