@@ -724,6 +724,264 @@ describe.skipIf(!baseUrl)("digest migration runner", () => {
   }, 120_000);
 });
 
+describe.skipIf(!baseUrl)("bot migration 0007", () => {
+  it("adds acknowledgement, tokens, silences and the poll offset without rewriting history", async () => {
+    const context = await createTestDatabase(baseUrl!);
+    const client = new Client({ connectionString: context.url });
+    await client.connect();
+    try {
+      await migrateThrough(client, 6);
+      const seeded = await client.query<{ id: number; title: string }>(`
+        INSERT INTO incidents ("hostId", key, title, detail, severity, at, "resolvedAt", fingerprint, seq, origin)
+        VALUES
+          ('nas-home','disk','Disco lleno','', 'warning', now() - interval '1 hour', NULL, 'fp-bot-open', 1, 'live'),
+          ('apps','connection','Apps caído','', 'critical', now() - interval '2 hours', now() - interval '1 hour', 'fp-bot-closed', 2, 'live')
+        RETURNING id, title
+      `);
+      const open = seeded.rows.find((row) => row.title === "Disco lleno")!;
+      const closed = seeded.rows.find((row) => row.title === "Apps caído")!;
+      await client.query(
+        `INSERT INTO incident_events ("incidentId", seq, kind, severity, title, detail, at)
+         VALUES ($1, 1, 'opened', 'warning', 'Disco lleno', '', now() - interval '1 hour'),
+                ($2, 1, 'opened', 'critical', 'Apps caído', '', now() - interval '2 hours')`,
+        [open.id, closed.id],
+      );
+      await client.query(
+        `INSERT INTO notification_outbox
+           (key, "incidentId", kind, channel, status, revision, "chatId", "messageId", result)
+         VALUES ($1, $2, 'incident-open', 'telegram', 'sent', 1, '123456789', '501',
+           '{"state":"sent","reason":null,"at":"2026-11-26T06:00:00.000Z"}'::jsonb)`,
+        [`incident:${open.id}:open`, open.id],
+      );
+
+      await migrateAll(client);
+
+      // Episodes, events and deliveries survive the additive migration.
+      const incidents = await client.query<{ count: number }>(
+        "SELECT count(*)::int AS count FROM incidents",
+      );
+      expect(incidents.rows[0].count).toBe(2);
+      const events = await client.query<{ count: number }>(
+        "SELECT count(*)::int AS count FROM incident_events",
+      );
+      expect(events.rows[0].count).toBe(2);
+      const outbox = await client.query<{
+        key: string;
+        channel: string;
+        status: string;
+        revision: number;
+        chatId: string;
+        messageId: string;
+        result: Record<string, unknown>;
+      }>(
+        `SELECT key, channel, status, revision, "chatId", "messageId", result
+           FROM notification_outbox ORDER BY id`,
+      );
+      expect(outbox.rows).toEqual([
+        {
+          key: `incident:${open.id}:open`,
+          channel: "telegram",
+          status: "sent",
+          revision: 1,
+          chatId: "123456789",
+          messageId: "501",
+          result: {
+            state: "sent",
+            reason: null,
+            at: "2026-11-26T06:00:00.000Z",
+          },
+        },
+      ]);
+
+      // The acknowledgement columns exist, are nullable and stay empty until
+      // somebody acts on the episode (D-05).
+      const columns = await liveColumns(client, "incidents");
+      const acknowledged = columns.filter((column) =>
+        column.column_name.startsWith("acknowledged"),
+      );
+      expect(acknowledged.map((column) => column.column_name).sort()).toEqual([
+        "acknowledgedAt",
+        "acknowledgedBy",
+        "acknowledgedVia",
+      ]);
+      for (const column of acknowledged) expect(column.is_nullable).toBe("YES");
+      expect(
+        acknowledged.find((column) => column.column_name === "acknowledgedAt")
+          ?.data_type,
+      ).toBe("timestamp with time zone");
+      const empty = await client.query<{
+        acknowledgedAt: Date | null;
+        acknowledgedVia: string | null;
+        acknowledgedBy: string | null;
+      }>(
+        `SELECT "acknowledgedAt", "acknowledgedVia", "acknowledgedBy"
+           FROM incidents ORDER BY id`,
+      );
+      expect(empty.rows).toEqual([
+        { acknowledgedAt: null, acknowledgedVia: null, acknowledgedBy: null },
+        { acknowledgedAt: null, acknowledgedVia: null, acknowledgedBy: null },
+      ]);
+
+      const tables = await client.query<{ name: string | null }>(`
+        SELECT to_regclass('public.telegram_action_tokens') AS name
+        UNION ALL SELECT to_regclass('public.incident_snoozes')
+        UNION ALL SELECT to_regclass('public.telegram_poll_state')
+      `);
+      expect(tables.rows.map((row) => row.name)).toEqual([
+        "telegram_action_tokens",
+        "incident_snoozes",
+        "telegram_poll_state",
+      ]);
+
+      // One silence per watched condition and one poll offset per name.
+      const snooze = `INSERT INTO incident_snoozes ("hostId", key, "until", "setVia")
+                      VALUES ('nas-home', 'disk', now() + interval '1 hour', 'hub')`;
+      await client.query(snooze);
+      await expect(client.query(snooze)).rejects.toMatchObject({
+        code: "23505",
+      });
+      const poll = `INSERT INTO telegram_poll_state (name, "lastUpdateId")
+                    VALUES ('main', 7)`;
+      await client.query(poll);
+      await expect(client.query(poll)).rejects.toMatchObject({
+        code: "23505",
+      });
+
+      // A token follows its episode: removing the episode removes its tokens.
+      await client.query(
+        `INSERT INTO telegram_action_tokens
+           ("tokenHash", "incidentId", action, "chatId", "expiresAt")
+         VALUES ('hash-bot-probe', $1, 'ack', '123456789', now() + interval '7 days')`,
+        [closed.id],
+      );
+      await client.query("DELETE FROM incidents WHERE id = $1", [closed.id]);
+      const tokens = await client.query<{ count: number }>(
+        "SELECT count(*)::int AS count FROM telegram_action_tokens",
+      );
+      expect(tokens.rows[0].count).toBe(0);
+
+      // Re-running the real migrator applies nothing twice.
+      await migrateAll(client);
+      const reapplied = await client.query<{ count: number }>(
+        "SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations",
+      );
+      expect(reapplied.rows[0].count).toBe(journal().entries.length);
+
+      const current = snapshot("0007_bot_reconocimiento");
+      expect(current.prevId).toBe(snapshot("0006_digest_runs").id);
+      for (const table of [
+        "incident_snoozes",
+        "telegram_action_tokens",
+        "telegram_poll_state",
+      ] as const) {
+        const expected = current.tables[`public.${table}`];
+        expect(expected).toBeDefined();
+        const live = await liveColumns(client, table);
+        expect(live.map((column) => column.column_name).sort()).toEqual(
+          Object.keys(expected.columns).sort(),
+        );
+        const nullability = new Map(
+          live.map((column) => [column.column_name, column.is_nullable]),
+        );
+        for (const column of Object.values(expected.columns)) {
+          expect(nullability.get(column.name)).toBe(
+            column.notNull ? "NO" : "YES",
+          );
+        }
+        const actualIndexes = (await liveIndexes(client, table))
+          .filter((name) => !name.endsWith("_pkey") && !name.endsWith("_pk"))
+          .sort();
+        expect(actualIndexes).toEqual(Object.keys(expected.indexes).sort());
+      }
+    } finally {
+      await client.end();
+      await dropTestDatabase(context);
+    }
+  });
+});
+
+describe.skipIf(!baseUrl)("bot migration runner", () => {
+  it("applies 0007 to a new database and on top of 0006 with pnpm db:migrate", async () => {
+    const fresh = await createTestDatabase(baseUrl!);
+    try {
+      const first = await runMigrator(fresh.url);
+      expect(first.stderr).toBe("");
+      expect(first.code).toBe(0);
+      const client = new Client({ connectionString: fresh.url });
+      await client.connect();
+      try {
+        const tables = await client.query<{ name: string | null }>(
+          "SELECT to_regclass('public.telegram_action_tokens') AS name",
+        );
+        expect(tables.rows[0].name).toBe("telegram_action_tokens");
+        const applied = await client.query<{ count: number }>(
+          "SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations",
+        );
+        expect(applied.rows[0].count).toBe(journal().entries.length);
+      } finally {
+        await client.end();
+      }
+      // Re-running the real migrator is a no-op.
+      const again = await runMigrator(fresh.url);
+      expect(again.code).toBe(0);
+      const after = new Client({ connectionString: fresh.url });
+      await after.connect();
+      try {
+        const applied = await after.query<{ count: number }>(
+          "SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations",
+        );
+        expect(applied.rows[0].count).toBe(journal().entries.length);
+      } finally {
+        await after.end();
+      }
+    } finally {
+      await dropTestDatabase(fresh);
+    }
+
+    const legacy = await createTestDatabase(baseUrl!);
+    try {
+      const before = new Client({ connectionString: legacy.url });
+      await before.connect();
+      try {
+        await migrateThrough(before, 6);
+        await before.query(
+          `INSERT INTO incidents ("hostId", key, title, detail, severity, fingerprint)
+           VALUES ('nas-home','disk','Disco lleno','', 'warning','fp-bot-runner')`,
+        );
+      } finally {
+        await before.end();
+      }
+      const runner = await runMigrator(legacy.url);
+      expect(runner.stderr).toBe("");
+      expect(runner.code).toBe(0);
+      const after = new Client({ connectionString: legacy.url });
+      await after.connect();
+      try {
+        const tables = await after.query<{ name: string | null }>(
+          "SELECT to_regclass('public.telegram_action_tokens') AS name",
+        );
+        expect(tables.rows[0].name).toBe("telegram_action_tokens");
+        const incidents = await after.query<{ count: number }>(
+          "SELECT count(*)::int AS count FROM incidents",
+        );
+        expect(incidents.rows[0].count).toBe(1);
+        // A second run leaves the same applied set.
+        const second = await runMigrator(legacy.url);
+        expect(second.stderr).toBe("");
+        expect(second.code).toBe(0);
+        const applied = await after.query<{ count: number }>(
+          "SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations",
+        );
+        expect(applied.rows[0].count).toBe(journal().entries.length);
+      } finally {
+        await after.end();
+      }
+    } finally {
+      await dropTestDatabase(legacy);
+    }
+  }, 120_000);
+});
+
 describe.skipIf(!baseUrl)("incidents rollback rehearsal", () => {
   async function rehearsal() {
     const context = await createTestDatabase(baseUrl!);
