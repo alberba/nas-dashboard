@@ -1,4 +1,8 @@
 import { Client } from "pg";
+import { spawnSync } from "node:child_process";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { and, eq } from "drizzle-orm";
 import {
   afterAll,
@@ -2745,4 +2749,337 @@ describe.skipIf(!baseUrl)("notification dispatch", () => {
     }
   });
 
+});
+
+describe("worker health", () => {
+  type WorkerHealthLike = import("@/lib/worker-health").WorkerHealth;
+  let healthModule: typeof import("@/lib/worker-health");
+  let loopModule: typeof import("@/lib/worker-loop");
+  let CollectionLockLost: typeof import("@/lib/notification-dispatch").CollectionLockLost;
+  const pid = 4242;
+  const startIdentity = "777";
+  let root: string;
+  let procRoot: string;
+  let file: string;
+  let clock: number;
+
+  // Loaded after the database suite has pointed DATABASE_URL at its disposable
+  // database: the loop module imports the dispatcher, which imports the pool.
+  beforeAll(async () => {
+    healthModule = await import("@/lib/worker-health");
+    loopModule = await import("@/lib/worker-loop");
+    CollectionLockLost = (
+      await import("@/lib/notification-dispatch")
+    ).CollectionLockLost;
+  });
+
+  function statLine(identity: string) {
+    const fields = [
+      "1",
+      "4242",
+      "4242",
+      "0",
+      "-1",
+      "4194304",
+      "100",
+      "0",
+      "0",
+      "0",
+      "1",
+      "1",
+      "0",
+      "0",
+      "20",
+      "0",
+      "1",
+      "0",
+      identity,
+    ];
+    return `${pid} (node) S ${fields.join(" ")} 0 0`;
+  }
+
+  beforeEach(async () => {
+    clock = 1_000_000;
+    root = await mkdtemp(join(tmpdir(), "hub-worker-health-"));
+    procRoot = join(root, "proc");
+    file = join(root, "worker-health.json");
+    await mkdir(join(procRoot, String(pid)), { recursive: true });
+    await writeFile(join(procRoot, String(pid), "stat"), statLine(startIdentity));
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  function health(holdsLock: () => Promise<boolean> = async () => true) {
+    return new healthModule.WorkerHealth({
+      file,
+      pid,
+      procRoot,
+      now: () => clock,
+      holdsLock,
+    });
+  }
+
+  it("writes a fresh private mark that the compose probe accepts", async () => {
+    expect(await health().renew()).toBe(true);
+    expect(await healthModule.checkWorkerHealth({ file, procRoot, now: clock })).toEqual({
+      ok: true,
+      reason: "ok",
+    });
+  });
+
+  it("stops renewing after losing the lock and clears the mark on shutdown", async () => {
+    const owner = health();
+    expect(await owner.renew()).toBe(true);
+    const lost = health(async () => false);
+    expect(await lost.renew()).toBe(false);
+    // The last real milestone stays until the shutdown path clears it, and a
+    // refused renewal never extends it.
+    expect((await healthModule.checkWorkerHealth({ file, procRoot, now: clock })).ok).toBe(
+      true,
+    );
+    owner.closeSync();
+    expect(await owner.renew()).toBe(false);
+    expect(await healthModule.checkWorkerHealth({ file, procRoot, now: clock })).toEqual({
+      ok: false,
+      reason: "missing",
+    });
+  });
+
+  it("marks a stopped loop unhealthy while the process is still alive and recovers", async () => {
+    expect(await health().renew()).toBe(true);
+    clock += healthModule.WORKER_STALE_MS + 1;
+    expect(await healthModule.checkWorkerHealth({ file, procRoot, now: clock })).toEqual({
+      ok: false,
+      reason: "stale",
+    });
+    // The PID is still alive with the same start identity: only progress is
+    // missing, so a new milestone restores health.
+    expect(await healthModule.readProcessStartIdentity(pid, procRoot)).toBe(startIdentity);
+    expect(await health().renew()).toBe(true);
+    expect(await healthModule.checkWorkerHealth({ file, procRoot, now: clock })).toEqual({
+      ok: true,
+      reason: "ok",
+    });
+  });
+
+  it("rejects a fresh mark from a reused PID with another start identity", async () => {
+    await healthModule.writeWorkerHealth(file, {
+      progressAt: clock - 1_000,
+      pid,
+      startedAt: "999",
+    });
+    expect(await healthModule.checkWorkerHealth({ file, procRoot, now: clock })).toEqual({
+      ok: false,
+      reason: "wrong_start",
+    });
+  });
+
+  it("rejects missing, malformed, future, unsafe, dead and unreadable marks", async () => {
+    expect(await healthModule.checkWorkerHealth({ file, procRoot, now: clock })).toEqual({
+      ok: false,
+      reason: "missing",
+    });
+
+    await writeFile(file, "not json", { mode: 0o600 });
+    expect(await healthModule.checkWorkerHealth({ file, procRoot, now: clock })).toEqual({
+      ok: false,
+      reason: "malformed",
+    });
+
+    await healthModule.writeWorkerHealth(file, {
+      progressAt: clock + 60_000,
+      pid,
+      startedAt: startIdentity,
+    });
+    expect(await healthModule.checkWorkerHealth({ file, procRoot, now: clock })).toEqual({
+      ok: false,
+      reason: "future",
+    });
+
+    await chmod(file, 0o644);
+    expect(await healthModule.checkWorkerHealth({ file, procRoot, now: clock })).toEqual({
+      ok: false,
+      reason: "unsafe",
+    });
+
+    await healthModule.writeWorkerHealth(file, {
+      progressAt: clock,
+      pid: pid + 1,
+      startedAt: startIdentity,
+    });
+    expect(await healthModule.checkWorkerHealth({ file, procRoot, now: clock })).toEqual({
+      ok: false,
+      reason: "dead_pid",
+    });
+
+    await mkdir(join(procRoot, String(pid + 2)));
+    await healthModule.writeWorkerHealth(file, {
+      progressAt: clock,
+      pid: pid + 2,
+      startedAt: startIdentity,
+    });
+    expect(await healthModule.checkWorkerHealth({ file, procRoot, now: clock })).toEqual({
+      ok: false,
+      reason: "identity_unreadable",
+    });
+  });
+
+  it("renews after every completed delivery lane and stops once both are idle", async () => {
+    const renewals: number[] = [];
+    let step = 0;
+    let dispatched = 0;
+    let digested = 0;
+    const healthFake = {
+      renew: async () => {
+        renewals.push(step);
+        return true;
+      },
+    } as unknown as WorkerHealthLike;
+    const actions = ["sent", "idle"];
+    await loopModule.drainWorker({
+      health: healthFake,
+      runDispatch: async () => {
+        step += 1;
+        dispatched += 1;
+        return { action: actions[dispatched - 1] };
+      },
+      runDigest: async () => {
+        step += 1;
+        digested += 1;
+        return { action: actions[digested - 1] };
+      },
+      stopping: () => false,
+    });
+    expect(dispatched).toBe(2);
+    expect(digested).toBe(2);
+    expect(renewals).toEqual([1, 2, 3, 4]);
+  });
+
+  it("does not extend health when a delivery turn throws", async () => {
+    let renewals = 0;
+    const healthFake = {
+      renew: async () => {
+        renewals += 1;
+        return true;
+      },
+    } as unknown as WorkerHealthLike;
+    await expect(
+      loopModule.drainWorker({
+        health: healthFake,
+        runDispatch: async () => {
+          throw new Error("db down");
+        },
+        runDigest: async () => ({ action: "idle" }),
+        stopping: () => false,
+      }),
+    ).rejects.toThrow("db down");
+    expect(renewals).toBe(0);
+  });
+
+  it("renews only after real milestones of the loop that owns the lock", async () => {
+    const order: string[] = [];
+    let now = 5_000_000;
+    const state = { lastCollection: 0, lastCleanup: 0 };
+    await loopModule.workerTurn({
+      health: {
+        renew: async () => {
+          order.push("renew");
+          return true;
+        },
+      } as unknown as WorkerHealthLike,
+      holdsLock: async () => {
+        order.push("lock");
+        return true;
+      },
+      stopping: () => false,
+      now: () => now,
+      presenceActive: async () => {
+        order.push("presence");
+        return true;
+      },
+      sampleInterval: () => 30_000,
+      collect: async () => {
+        order.push("collect");
+        now += 1_000;
+      },
+      drain: async () => {
+        order.push("drain");
+        now += 1_000;
+      },
+      cleanup: async () => {
+        order.push("cleanup");
+      },
+      state,
+    });
+    expect(order).toEqual([
+      "lock",
+      "presence",
+      "renew",
+      "collect",
+      "renew",
+      "drain",
+      "renew",
+      "cleanup",
+      "renew",
+    ]);
+    expect(state.lastCollection).toBe(5_000_000);
+    expect(state.lastCleanup).toBe(5_002_000);
+  });
+
+  it("does not renew after losing the lock, while stopping or past a failed milestone", async () => {
+    let renewals = 0;
+    const healthFake = {
+      renew: async () => {
+        renewals += 1;
+        return true;
+      },
+    } as unknown as WorkerHealthLike;
+    const base = {
+      health: healthFake,
+      stopping: () => false,
+      now: () => 5_000_000,
+      presenceActive: async () => true,
+      sampleInterval: () => 30_000,
+      collect: async () => {},
+      drain: async () => {},
+      cleanup: async () => {},
+      state: { lastCollection: 0, lastCleanup: 0 },
+    };
+
+    await expect(
+      loopModule.workerTurn({ ...base, holdsLock: async () => false }),
+    ).rejects.toBeInstanceOf(CollectionLockLost);
+    await loopModule.workerTurn({ ...base, holdsLock: async () => true, stopping: () => true });
+    await expect(
+      loopModule.workerTurn({
+        ...base,
+        holdsLock: async () => true,
+        collect: async () => {
+          throw new Error("agent down");
+        },
+      }),
+    ).rejects.toThrow("agent down");
+    // Only the completed presence query renewed before the failure.
+    expect(renewals).toBe(1);
+  });
+
+  it("exits non-zero from the compose probe when the mark is missing", () => {
+    const result = spawnSync(
+      process.execPath,
+      ["--import", "tsx", "scripts/check-worker-health.ts"],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          WORKER_HEALTH_FILE: join(root, "absent.json"),
+        },
+        encoding: "utf8",
+        timeout: 20_000,
+      },
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("missing");
+  });
 });
