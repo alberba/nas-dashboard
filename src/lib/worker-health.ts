@@ -14,7 +14,11 @@ import { join } from "node:path";
 
 /** Fixed private progress mark of the worker inside its container tmpfs. */
 export const WORKER_HEALTH_FILE = "/tmp/nas-dashboard-worker-health.json";
-/** A mark older than this means the loop stopped making progress. */
+/**
+ * A mark older than this means the loop stopped making progress. Docker probes
+ * every 30 s with 3 retries, so three missed probes (90 s) cover both the
+ * ordinary 25 s agent collection and a 10 s provider request.
+ */
 export const WORKER_STALE_MS = 90_000;
 /** A mark dated further ahead than this is not trustworthy. */
 export const WORKER_FUTURE_TOLERANCE_MS = 5_000;

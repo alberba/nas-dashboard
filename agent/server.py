@@ -89,6 +89,10 @@ UPDATE_LOCK = threading.Lock()
 # Progress mark of the serve loop. It lives in the container tmpfs and only the
 # probe of this same container reads it; the Docker healthcheck never reaches
 # the network, the Docker socket or the host.
+#
+# Tolerance: the image probes every 30 s with 3 retries, so 90 s covers three
+# missed probes and ordinary protected operations (15 s host commands, bounded
+# metrics and logs). Writes are rate-limited to one per 2 s.
 HEALTH_FILE = Path(os.getenv("AGENT_HEALTH_FILE", "/tmp/hub-agent-health.json"))
 HEALTH_STALE_SECONDS = 90
 HEALTH_WRITE_SECONDS = 2
