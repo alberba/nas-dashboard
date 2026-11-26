@@ -416,6 +416,38 @@ export async function editTelegramMessage(
   });
 }
 
+/**
+ * Replies in the chat quoting the notice: `reply_parameters` binds the answer
+ * to the message it explains and `disable_notification` keeps it silent (D-06).
+ * It carries no keyboard, because the buttons live in the quoted notice.
+ */
+export async function sendTelegramReply(
+  input: { chatId: string; replyToMessageId: string; text: string },
+  options: TelegramClientOptions,
+): Promise<TelegramSendResult> {
+  const replyTo = Number(input.replyToMessageId);
+  // A non-numeric id would be a provider 400 with a wasted attempt: refuse it
+  // locally with the finite reason the dispatcher already handles.
+  if (!Number.isSafeInteger(replyTo) || replyTo <= 0)
+    return { state: "rejected", status: 400, reason: "message_missing" };
+  const normalized = normalizeOptions(options);
+  return post({
+    method: "sendMessage",
+    body: {
+      chat_id: input.chatId,
+      text: telegramText(input.text),
+      disable_web_page_preview: true,
+      disable_notification: true,
+      reply_parameters: {
+        message_id: replyTo,
+        allow_sending_without_reply: true,
+      },
+    },
+    fallbackChatId: input.chatId,
+    ...normalized,
+  });
+}
+
 export type TelegramPollResult =
   | { state: "ok"; updates: unknown[] }
   | { state: "retry"; retryAfterMs: number | null }

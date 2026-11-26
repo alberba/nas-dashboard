@@ -6,10 +6,16 @@ import { incidentHref, routeHref } from "../components/views/routes";
 import type { RuntimeConfig } from "./runtime-config";
 import { madridClock } from "./madrid-day";
 import * as schema from "./schema";
-import { incidents, notificationOutbox, type NotificationOutcome } from "./schema";
+import {
+  incidents,
+  notificationOutbox,
+  samples,
+  type NotificationOutcome,
+} from "./schema";
 import {
   editTelegramMessage,
   sendTelegramMessage,
+  sendTelegramReply,
   type TelegramActionButton,
   type TelegramTransport,
 } from "./telegram";
@@ -19,6 +25,8 @@ import {
   renderActionRows,
 } from "./telegram-keyboard";
 import { activeSnooze, SNOOZE_SUPPRESSION_REASON } from "./incident-snooze";
+import { notificationPolicy } from "./notification-policy";
+import { renderWhyText, whyFacts } from "./incident-why";
 import { deliverPush, type PushTransport } from "./push";
 
 /** Session-level PostgreSQL advisory lock already used by the collector. */
@@ -264,7 +272,7 @@ export async function claimOutboxJob(
           AND "attemptStartedAt" IS NULL
           AND "nextAttemptAt" <= $1
           AND ("leaseUntil" IS NULL OR "leaseUntil" <= $1)
-          AND kind IN ('incident-open', 'incident-edit', 'incident-push', 'push-test')
+          AND kind IN ('incident-open', 'incident-edit', 'incident-why', 'incident-push', 'push-test')
           AND (
             channel <> 'telegram' OR NOT EXISTS (
               SELECT 1 FROM telegram_cooldown c WHERE c."until" > $1
@@ -686,6 +694,143 @@ async function dispatchTelegramOpening(
     case "rejected":
       return recordPermanentFailure(context, job, result.reason);
     case "uncertain":
+      return recordTelegramUncertain(context, job, result.reason);
+  }
+}
+
+/**
+ * Marks the explanation `sent` without rewriting `chatId` or `messageId`: those
+ * still point at the quoted notice, and no edit of it is scheduled.
+ */
+async function recordReplySent(
+  context: DispatcherContext,
+  job: Job,
+): Promise<DispatchResult> {
+  const db = workerDb(context.client);
+  const [updated] = await db
+    .update(notificationOutbox)
+    .set({
+      status: "sent",
+      result: outcome("sent", null, context.now),
+      claimToken: null,
+      leaseUntil: null,
+      updatedAt: new Date(context.now),
+    })
+    .where(
+      and(
+        eq(notificationOutbox.id, job.id),
+        eq(notificationOutbox.claimToken, context.token),
+      ),
+    )
+    .returning({ id: notificationOutbox.id });
+  if (!updated) return { action: "idle", jobId: job.id, reason: "claim_lost" };
+  return { action: "sent", jobId: job.id, kind: job.kind, channel: job.channel };
+}
+
+/**
+ * Sends the explanation as a silent reply to the notice. The text is built at
+ * send time from the current state, so an escalation or a closure is always
+ * reflected (D-07, D-08). A live silence never withholds it: the operator asked
+ * for it, and the reply itself does not notify. A resolved episode is still
+ * explained (D-10).
+ */
+async function dispatchWhy(
+  context: DispatcherContext,
+  job: Job,
+): Promise<DispatchResult> {
+  const db = workerDb(context.client);
+  const incident = job.incidentId
+    ? await loadIncident(db, job.incidentId)
+    : null;
+  if (!incident)
+    return recordPermanentFailure(context, job, "incident_missing");
+  if (!job.chatId || !job.messageId)
+    return recordPermanentFailure(context, job, "message_unavailable");
+  const telegram = context.config.telegram;
+  if (!telegram) return suppressJob(context, job, "telegram_disabled");
+  if (!(await holdsCollectionLock(context.client)))
+    throw new CollectionLockLost();
+
+  const attempts = await beginOutboxAttempt(
+    context.client,
+    job.id,
+    context.token,
+    context.now,
+  );
+  if (attempts === null)
+    return { action: "idle", jobId: job.id, reason: "claim_lost" };
+
+  const at = new Date(context.now);
+  const [opening] = await db
+    .select({ channel: notificationOutbox.channel })
+    .from(notificationOutbox)
+    .where(eq(notificationOutbox.key, openKey(incident.id)))
+    .limit(1);
+  const snoozed = await activeSnooze(db, incident.hostId, incident.key, at);
+  const policy = notificationPolicy(
+    incident.key,
+    incident.severity === "critical" ? "critical" : "warning",
+    { pushWarnings: context.config.pushWarnings },
+  );
+  const [latest] = await db
+    .select({ data: samples.data })
+    .from(samples)
+    .where(eq(samples.hostId, incident.hostId))
+    .orderBy(desc(samples.at))
+    .limit(1);
+  const text = renderWhyText(
+    whyFacts({
+      incident,
+      opening: opening ?? null,
+      policy,
+      snoozed,
+      metrics: latest?.data ?? null,
+    }),
+  );
+
+  const result = await sendTelegramReply(
+    {
+      chatId: job.chatId,
+      replyToMessageId: job.messageId,
+      text,
+    },
+    {
+      botToken: telegram.botToken,
+      fetchImpl: context.options.fetchImpl,
+      signal: context.options.signal,
+      timeoutMs:
+        context.options.requestTimeoutMs ?? CLAIM_REQUEST_TIMEOUT_MS,
+    },
+  );
+
+  switch (result.state) {
+    case "sent":
+      return recordReplySent(context, job);
+    case "retry":
+      if (attempts >= (context.options.maxAttempts ?? MAX_CONFIRMED_ATTEMPTS)) {
+        await pauseTelegram(
+          context.client,
+          context.now,
+          attempts,
+          result.retryAfterMs,
+        );
+        return recordPermanentFailure(
+          context,
+          job,
+          "retry_budget_exhausted",
+        );
+      }
+      return recordTelegramRetry(
+        context,
+        job,
+        attempts,
+        result.retryAfterMs,
+      );
+    case "rejected":
+      // Not an opening, so a rejection creates no push fallback.
+      return recordPermanentFailure(context, job, result.reason);
+    case "uncertain":
+      // An explanation whose confirmation was lost is never sent again.
       return recordTelegramUncertain(context, job, result.reason);
   }
 }
@@ -1157,6 +1302,7 @@ export async function runDispatchOnce(
   };
   try {
     if (job.kind === "incident-edit") return await dispatchEdit(context, job);
+    if (job.kind === "incident-why") return await dispatchWhy(context, job);
     if (job.channel === "push") return await dispatchPushJob(context, job);
     if (job.kind === "incident-open" && job.channel === "telegram")
       return await dispatchTelegramOpening(context, job);

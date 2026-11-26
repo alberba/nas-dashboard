@@ -766,7 +766,7 @@ describe.skipIf(!baseUrl)("incident why", () => {
       expect(row.messageId).toBe(String(OPEN_MESSAGE_ID));
       expect(row.result?.state).toBe("sent");
       expect(JSON.stringify(row.result)).not.toContain(BOT_TOKEN);
-      expect(reply.url).not.toContain(BOT_TOKEN);
+      expect(JSON.stringify(reply.body)).not.toContain(BOT_TOKEN);
     } finally {
       await safeEnd(client);
     }
@@ -798,11 +798,13 @@ describe.skipIf(!baseUrl)("incident why", () => {
       let updateId = 300;
       for (const { key, reading } of cases) {
         const incidentId = await sendOpening(fake, client, { key });
+        const opening = await openingRow(incidentId);
         const at = START + 60_000 + updateId * 1_000;
         expect(
           await press(fake, client, {
             token: await issueToken(incidentId, "why"),
             updateId,
+            messageId: Number(opening.messageId),
             at,
           }),
         ).toMatchObject({ handled: 1 });
