@@ -1757,6 +1757,148 @@ describe.skipIf(!baseUrl)("notification dispatch", () => {
     ).toEqual(eventsBefore);
   });
 
+  it("caps the materialised details and reports the rest as omitted", async () => {
+    const total = content.DIGEST_DETAIL_LIMIT + 5;
+    for (let index = 0; index < total; index++) {
+      await digestEpisode({
+        key: `cpu-${index}`,
+        at: DIGEST_PERIOD_START + index * 1_000,
+        title: `Aviso ${index}`,
+      });
+    }
+
+    const client = await connect();
+    let snapshot: Awaited<ReturnType<typeof content.buildDigestSnapshot>>;
+    try {
+      snapshot = await content.buildDigestSnapshot({
+        client,
+        ...digestSnapshotInput(),
+      });
+    } finally {
+      await safeEnd(client);
+    }
+    expect(snapshot).not.toBeNull();
+    const built = snapshot!;
+    expect(built.counts.openNow).toBe(total);
+    expect(built.entries).toBe(content.DIGEST_DETAIL_LIMIT);
+    expect(built.omitted).toBe(5);
+    expect(bulletLines(built.text)).toHaveLength(content.DIGEST_DETAIL_LIMIT);
+    expect(built.text).toContain("+5 más");
+    expect(built.text.endsWith(content.digestAlertsUrl(BETTER_AUTH_URL))).toBe(
+      true,
+    );
+    expect(built.entries + built.omitted).toBe(total);
+  });
+
+  it("delivers a bounded digest with exact omissions when the details exceed the text", async () => {
+    const total = 45;
+    for (let index = 0; index < total; index++) {
+      await digestEpisode({
+        key: `disk-${index}`,
+        at: DIGEST_PERIOD_START + index * 1_000,
+        title: `Seguimiento ${index} ${"x".repeat(110)}`,
+      });
+    }
+
+    const client = await connect();
+    let snapshot: Awaited<ReturnType<typeof content.buildDigestSnapshot>>;
+    try {
+      snapshot = await content.buildDigestSnapshot({
+        client,
+        ...digestSnapshotInput(),
+      });
+    } finally {
+      await safeEnd(client);
+    }
+    expect(snapshot).not.toBeNull();
+    const built = snapshot!;
+    const alertsUrl = content.digestAlertsUrl(BETTER_AUTH_URL);
+    expect(built.counts.openNow).toBe(total);
+    expect(built.text.length).toBeLessThanOrEqual(4096);
+    expect(built.text.endsWith(alertsUrl)).toBe(true);
+    expect(built.omitted).toBeGreaterThanOrEqual(
+      total - content.DIGEST_DETAIL_LIMIT,
+    );
+    expect(built.entries + built.omitted).toBe(total);
+    expect(built.text).toContain(`+${built.omitted} más`);
+    expect(bulletLines(built.text)).toHaveLength(built.entries);
+
+    const owner = await lockOwner();
+    const provider = fakeProvider();
+    try {
+      const delivered = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 60_000,
+        fetchImpl: provider.transport,
+      });
+      expect(delivered).toMatchObject({ action: "sent", date: DIGEST_DAY });
+      expect(provider.calls).toHaveLength(1);
+      const wire = String(provider.calls[0].body.text);
+      expect(wire.length).toBeLessThanOrEqual(4096);
+      expect(wire).toBe(built.text);
+      expect(wire.endsWith(alertsUrl)).toBe(true);
+      expect(wire).toContain(`+${built.omitted} más`);
+    } finally {
+      await safeEnd(owner);
+    }
+  });
+
+  it("repeats the frozen digest after an authorized retry even when the episodes change", async () => {
+    await openDigestWarning();
+    const owner = await lockOwner();
+    const limited = fakeProvider(() =>
+      json(
+        { ok: false, error_code: 429, parameters: { retry_after: 120 } },
+        429,
+      ),
+    );
+    try {
+      const first = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 30_000,
+        fetchImpl: limited.transport,
+      });
+      expect(first).toMatchObject({
+        action: "retry",
+        date: DIGEST_DAY,
+        reason: "rate_limited",
+      });
+      const frozen = (await digestRun()).payload!;
+      const alertsUrl = content.digestAlertsUrl(BETTER_AUTH_URL);
+      expect(frozen.endsWith(alertsUrl)).toBe(true);
+
+      // The hub moves between attempts: the listed episode is resolved and a
+      // new one opens. An authorized repetition must still send the old bytes.
+      await resolveEpisode("disk", DIGEST_TARGET + 60_000);
+      await digestEpisode({
+        key: "memory",
+        at: DIGEST_TARGET + 61_000,
+        title: "Cambio posterior",
+      });
+
+      const retried = fakeProvider();
+      const second = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 151_000,
+        fetchImpl: retried.transport,
+      });
+      expect(second).toMatchObject({ action: "sent", date: DIGEST_DAY });
+      expect(retried.calls).toHaveLength(1);
+      expect(retried.calls[0].body.text).toBe(frozen);
+      expect(retried.calls[0].body.text).toContain("Disco casi lleno");
+      expect(retried.calls[0].body.text).not.toContain("Cambio posterior");
+      const markup = retried.calls[0].body.reply_markup as {
+        inline_keyboard: Array<Array<{ url: string }>>;
+      };
+      expect(markup.inline_keyboard[0][0].url).toBe(alertsUrl);
+    } finally {
+      await safeEnd(owner);
+    }
+  });
+
   it("sends one digest per Madrid date with frozen content and keeps it after a restart", async () => {
     await openDigestWarning();
     const provider = fakeProvider();
