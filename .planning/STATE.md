@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 04
 current_phase_name: Resumen diario
 status: executing
-stopped_at: Completed 04-01-PLAN.md
-last_updated: "2026-11-26T08:08:59.538Z"
+stopped_at: Completed 04-02-PLAN.md
+last_updated: "2026-11-26T08:30:39.938Z"
 last_activity: 2026-11-26
 last_activity_desc: Phase 04 execution started
-state_head: ec1a8b4de7dcfffe8a95a0f0c5d72fcb0bcac4c3
+state_head: 88b55b38015d0091da026c4db05d11aa6a9eb7fd
 progress:
   total_phases: 8
   completed_phases: 3
   total_plans: 14
-  completed_plans: 12
+  completed_plans: 13
   percent: 38
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-25)
 ## Current Position
 
 Phase: 04 (Resumen diario) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-11-26 — Phase 04 execution started
 
@@ -62,6 +62,7 @@ Progress: [████░░░░░░] 38%
 | Phase 01 P02 | 10 | 3 tasks | 4 files |
 | Phase 01 P03 | 8min | 3 tasks | 4 files |
 | Phase 04 P04-01 | 24 min | 3 tasks | 16 files |
+| Phase 04 P04-02 | 17 min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -83,6 +84,9 @@ Recent decisions affecting current work:
 - [Phase 04]: La ventana de recuperación se congela al preparar, así un cambio posterior de DIGEST_TIME no reabre ni mueve una fecha
 - [Phase 04]: Solo el dueño vivo del claim registra el vencimiento cierto tras cruzar dueAt
 - [Phase 04]: Un intento iniciado sin confirmación pasa a incierto y nunca se reenvía
+- [Phase 04]: La apertura durable decide el detalle del resumen; las preferencias actuales y el booleano digest de la política nunca reclasifican un episodio
+- [Phase 04]: Nuevas cuenta disposiciones visibles (digest, telegram, push); silenciosas y legacy quedan fuera de toda cohorte; resueltas excluye cierres sintéticos
+- [Phase 04]: Omitidas se calcula como abiertas-ahora menos episodios representados, cubriendo la consulta acotada y los grupos descartados en una sola cifra
 
 ### Pending Todos
 
@@ -102,6 +106,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-26T08:08:59.318Z
-Stopped at: Completed 04-01-PLAN.md
+Last session: 2026-11-26T08:30:39.727Z
+Stopped at: Completed 04-02-PLAN.md
 Resume file: None

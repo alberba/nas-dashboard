@@ -32,10 +32,10 @@ Alcance de este milestone: auditar el ruido, sustituir los emisores por una entr
 
 - [x] **DIG-01**: Lo no urgente se entrega en un único resumen diario a la hora configurada (08:00 `Europe/Madrid` por defecto)
 - [x] **DIG-02**: El resumen se calcula por instante de Madrid y no se duplica ni se salta en los cambios de hora
-- [ ] **DIG-03**: El resumen incluye abiertas ahora, nuevas en el periodo, contador de críticas y de resueltas
-- [ ] **DIG-04**: Si no hay contenido, no se envía nada
+- [x] **DIG-03**: El resumen incluye abiertas ahora, nuevas en el periodo, contador de críticas y de resueltas
+- [x] **DIG-04**: Si no hay contenido, no se envía nada
 - [x] **DIG-05**: Un reinicio alrededor de la hora del resumen no produce dos envíos ni lo pierde dentro de una ventana de 2 h
-- [ ] **DIG-06**: El resumen respeta el límite de 4096 caracteres con truncado explícito y "+N"
+- [x] **DIG-06**: El resumen respeta el límite de 4096 caracteres con truncado explícito y "+N"
 
 ### Bot de Telegram
 
@@ -125,10 +125,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CONT-04 | Phase 3 | Complete |
 | DIG-01 | Phase 4 | Complete |
 | DIG-02 | Phase 4 | Complete |
-| DIG-03 | Phase 4 | Pending |
-| DIG-04 | Phase 4 | Pending |
+| DIG-03 | Phase 4 | Complete |
+| DIG-04 | Phase 4 | Complete |
 | DIG-05 | Phase 4 | Complete |
-| DIG-06 | Phase 4 | Pending |
+| DIG-06 | Phase 4 | Complete |
 | CONT-03 | Phase 4 | Pending |
 | BOT-02 | Phase 5 | Pending |
 | BOT-04 | Phase 5 | Pending |
