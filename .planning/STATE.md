@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 05
 current_phase_name: Bot de lectura y reconocimiento
 status: executing
-stopped_at: Completed 05-03-PLAN.md
-last_updated: "2026-11-26T14:44:33.019Z"
+stopped_at: Completed 05-04-PLAN.md
+last_updated: "2026-11-26T15:08:38.745Z"
 last_activity: 2026-11-26
 last_activity_desc: Phase 05 execution started
-state_head: 1865f44078104af32f89e9fcf19ff87833b67a92
+state_head: 25dd323e50a63cd4844f3af690db899a50b415b7
 progress:
   total_phases: 8
   completed_phases: 4
   total_plans: 20
-  completed_plans: 18
+  completed_plans: 19
   percent: 50
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-26)
 ## Current Position
 
 Phase: 05 (Bot de lectura y reconocimiento) — EXECUTING
-Plan: 5 of 6
+Plan: 6 of 6
 Status: Ready to execute
 Last activity: 2026-11-26 — Phase 05 execution started
 
@@ -69,6 +69,7 @@ Progress: [█████░░░░░] 50%
 | Phase 05 P02 | 68 min | 2 tasks | 10 files |
 | Phase 05 P06 | 6 min | 2 tasks | 2 files |
 | Phase 05 P03 | 9 min | 2 tasks | 10 files |
+| Phase 05 P04 | 23 min | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -108,6 +109,8 @@ Recent decisions affecting current work:
 - [Phase 05]: El estado del aviso es el mayor seq de opened, severity y closed; reconocer, silenciar y quitar silencio no lo mueven
 - [Phase 05]: La respuesta de Por qué es trabajo del outbox con clave única por estado; la base impide el duplicado y recordReplySent no reescribe el mensaje citado ni programa una edición
 - [Phase 05]: El texto de Por qué se compone al enviar con la incidencia, la última muestra y el canal de la apertura; una incidencia resuelta no muestra dato leído
+- [Phase 05]: Una acción del hub es la misma applyIncidentAction con via hub y el nombre de sesión, sobre la pareja id/host y con un cuerpo estricto
+- [Phase 05]: El resumen admite la apertura suprimida por silencio en la cohorte de abiertas ahora y etiqueta la línea sin tocar los contadores
 
 ### Pending Todos
 
@@ -128,6 +131,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-26T14:44:32.719Z
-Stopped at: Completed 05-03-PLAN.md
+Last session: 2026-11-26T15:08:38.529Z
+Stopped at: Completed 05-04-PLAN.md
 Resume file: None
