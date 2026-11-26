@@ -62,6 +62,7 @@ describe.skipIf(!baseUrl)("notification dispatch", () => {
   let store: typeof import("@/lib/incident-store");
   let dispatch: typeof import("@/lib/notification-dispatch");
   let digest: typeof import("@/lib/digest-runs");
+  let content: typeof import("@/lib/digest-content");
   let config: RuntimeConfig;
   const openClients = new Set<Client>();
 
@@ -77,6 +78,7 @@ describe.skipIf(!baseUrl)("notification dispatch", () => {
     store = await import("@/lib/incident-store");
     dispatch = await import("@/lib/notification-dispatch");
     digest = await import("@/lib/digest-runs");
+    content = await import("@/lib/digest-content");
     config = {
       databaseUrl: context.url,
       betterAuthSecret: "b".repeat(32),
@@ -1284,6 +1286,476 @@ describe.skipIf(!baseUrl)("notification dispatch", () => {
     const [row] = await db.select().from(tables.digestRuns);
     return row;
   }
+
+  const DIGEST_PERIOD_START = DIGEST_TARGET - 24 * 3_600_000;
+  const HOUR = 3_600_000;
+
+  type DigestEpisodeOptions = {
+    at: number;
+    key: string;
+    hostId?: string;
+    title?: string;
+    severity?: "warning" | "critical" | "info";
+    channel?: "digest" | "telegram" | "push" | "silent";
+    reason?:
+      | "digest_pending"
+      | "policy_immediate"
+      | "policy_silent"
+      | "legacy_open";
+  };
+
+  /** One episode with the disposition the policy would have persisted. */
+  async function digestEpisode(options: DigestEpisodeOptions): Promise<number> {
+    const channel = options.channel ?? "digest";
+    const opened = await store.recordIncidentObservation({
+      hostId: options.hostId ?? "nas-home",
+      key: options.key,
+      failing: true,
+      severity: options.severity ?? "warning",
+      title: options.title ?? `Aviso ${options.key}`,
+      detail: "Detalle interno que no debe salir",
+      now: options.at,
+      delivery: {
+        channel,
+        reason:
+          options.reason ??
+          (channel === "digest"
+            ? "digest_pending"
+            : channel === "silent"
+              ? "policy_silent"
+              : "policy_immediate"),
+      },
+    });
+    expect(opened.action).toBe("opened");
+    return opened.incidentId!;
+  }
+
+  async function resolveEpisode(
+    key: string,
+    at: number,
+    hostId = "nas-home",
+  ): Promise<void> {
+    const resolved = await store.recordIncidentObservation({
+      hostId,
+      key,
+      failing: false,
+      now: at,
+    });
+    expect(resolved.action).toBe("resolved");
+  }
+
+  async function escalateEpisode(
+    key: string,
+    at: number,
+    severity: "warning" | "critical",
+    channel: "digest" | "telegram",
+  ): Promise<void> {
+    const escalated = await store.recordIncidentObservation({
+      hostId: "nas-home",
+      key,
+      failing: true,
+      severity,
+      now: at,
+      delivery: {
+        channel,
+        reason: channel === "digest" ? "digest_pending" : "policy_immediate",
+      },
+    });
+    expect(escalated.action).toBe("escalated");
+  }
+
+  /** Episode written before the outbox existed: no opening row at all. */
+  async function insertHistory(options: {
+    key: string;
+    at: number;
+    resolvedAt?: number;
+    closedBy?: "collector" | "migration-dedup";
+    origin?: "legacy" | "live";
+  }): Promise<number> {
+    const [row] = await db
+      .insert(tables.incidents)
+      .values({
+        hostId: "nas-home",
+        key: options.key,
+        title: "Histórica duplicada",
+        detail: "",
+        severity: "warning",
+        at: new Date(options.at),
+        resolvedAt:
+          options.resolvedAt === undefined ? null : new Date(options.resolvedAt),
+        fingerprint: store.incidentFingerprint("nas-home", options.key),
+        seq: 2,
+        origin: options.origin ?? "legacy",
+        ...(options.closedBy ? { closedBy: options.closedBy } : {}),
+      })
+      .returning();
+    return row.id;
+  }
+
+  function digestSnapshotInput(overrides: {
+    periodStart?: number;
+    periodEnd?: number;
+    snapshotAt?: number;
+    alertsUrl?: string;
+  } = {}) {
+    return {
+      hostIds: ["nas-home"],
+      hostNames: { "nas-home": "NAS-HOME" },
+      periodStart: new Date(overrides.periodStart ?? DIGEST_PERIOD_START),
+      periodEnd: new Date(overrides.periodEnd ?? DIGEST_TARGET),
+      snapshotAt: new Date(overrides.snapshotAt ?? DIGEST_TARGET + 60_000),
+      alertsUrl:
+        overrides.alertsUrl ?? content.digestAlertsUrl(BETTER_AUTH_URL),
+    };
+  }
+
+  function bulletLines(text: string): string[] {
+    return text.split("\n").filter((line) => line.startsWith("· "));
+  }
+
+  it("builds the daily cohorts and counters from the durable disposition", async () => {
+    const ids = {
+      old: await digestEpisode({
+        key: "disk",
+        at: DIGEST_PERIOD_START - 3 * 86_400_000,
+        title: "Antigua todavía abierta",
+      }),
+      oldSecond: await digestEpisode({
+        key: "memory",
+        at: DIGEST_PERIOD_START - 4 * 86_400_000,
+        title: "Segunda antigua abierta",
+      }),
+      start: await digestEpisode({
+        key: "cpu",
+        at: DIGEST_PERIOD_START,
+        title: "Frontera inicial",
+      }),
+      end: await digestEpisode({
+        key: "reboot-pending",
+        at: DIGEST_TARGET,
+        title: "Abierta tras el corte",
+      }),
+      recovered: await digestEpisode({
+        key: "release-retained",
+        at: DIGEST_TARGET - 30 * 60_000,
+        title: "Recuperada durante la ventana",
+      }),
+      helper: await digestEpisode({
+        key: "helper-cleanup",
+        at: DIGEST_PERIOD_START + 5 * HOUR,
+        title: "Ayudante pendiente",
+      }),
+      closed: await digestEpisode({
+        key: "disk-health",
+        at: DIGEST_PERIOD_START + 3 * HOUR,
+        title: "Nueva ya cerrada",
+      }),
+      pushed: await digestEpisode({
+        key: "temperature",
+        at: DIGEST_PERIOD_START + 6 * HOUR,
+        channel: "push",
+        title: "Aviso entregado por push",
+      }),
+      silent: await digestEpisode({
+        key: "container:web",
+        at: DIGEST_PERIOD_START + 4 * HOUR,
+        channel: "silent",
+        title: "Silenciosa",
+      }),
+      escalated: await digestEpisode({
+        key: "backup-failed",
+        at: DIGEST_PERIOD_START + 7 * HOUR,
+        title: "Escalada y vuelta",
+      }),
+      individualClosed: await digestEpisode({
+        key: "stack-unit-failed",
+        at: DIGEST_PERIOD_START + 11 * HOUR,
+        channel: "telegram",
+        title: "Individual cerrada",
+      }),
+      silentClosed: await digestEpisode({
+        key: "container:db",
+        at: DIGEST_PERIOD_START + 13 * HOUR,
+        channel: "silent",
+        title: "Silenciosa cerrada",
+      }),
+      oldCritical: await digestEpisode({
+        key: "connection",
+        at: DIGEST_PERIOD_START - 2 * HOUR,
+        title: "Crítica por escalada posterior",
+      }),
+      foreign: await digestEpisode({
+        key: "disk",
+        hostId: "nas-apps",
+        at: DIGEST_PERIOD_START + 16 * HOUR,
+        title: "Host ajeno",
+      }),
+    };
+    // A closure before the snapshot and one committed after it: only the
+    // first leaves the open set at the snapshot instant.
+    await resolveEpisode("disk-health", DIGEST_TARGET - HOUR);
+    await resolveEpisode("stack-unit-failed", DIGEST_PERIOD_START + 12 * HOUR);
+    await resolveEpisode("container:db", DIGEST_PERIOD_START + 14 * HOUR);
+    await resolveEpisode("release-retained", DIGEST_TARGET + 90_000);
+    // An escalation inside the period counts the critical even though the
+    // episode returns to warning and the digest keeps listing it.
+    await escalateEpisode("backup-failed", DIGEST_PERIOD_START + 8 * HOUR, "critical", "telegram");
+    await escalateEpisode("backup-failed", DIGEST_PERIOD_START + 9 * HOUR, "warning", "digest");
+    // An episode opened before the period escalates inside it.
+    await escalateEpisode("connection", DIGEST_PERIOD_START + 10 * HOUR, "critical", "telegram");
+    const migration = await insertHistory({
+      key: "migration-dedup",
+      at: DIGEST_PERIOD_START - 5 * 86_400_000,
+      resolvedAt: DIGEST_TARGET - 30 * 60_000,
+      closedBy: "migration-dedup",
+      origin: "live",
+    });
+    await db.insert(tables.notificationOutbox).values({
+      key: `incident:${migration}:open`,
+      incidentId: migration,
+      kind: "incident-open",
+      channel: "digest",
+      status: "suppressed",
+      revision: 1,
+      result: {
+        state: "suppressed",
+        reason: "digest_pending",
+        at: new Date(DIGEST_PERIOD_START - 5 * 86_400_000).toISOString(),
+      },
+    });
+    await insertHistory({
+      key: "legacy-open",
+      at: DIGEST_PERIOD_START + 2 * HOUR,
+    });
+
+    const client = await connect();
+    let snapshot: Awaited<ReturnType<typeof content.buildDigestSnapshot>>;
+    try {
+      snapshot = await content.buildDigestSnapshot({
+        client,
+        ...digestSnapshotInput(),
+      });
+    } finally {
+      await safeEnd(client);
+    }
+    expect(snapshot).not.toBeNull();
+    const built = snapshot!;
+    expect(built.counts).toEqual({
+      openNow: 7,
+      newInPeriod: 7,
+      newOpen: 5,
+      newClosed: 2,
+      critical: 2,
+      resolved: 2,
+    });
+    expect(built.listed).toEqual([
+      ids.start,
+      ids.helper,
+      ids.escalated,
+      ids.recovered,
+      ids.end,
+    ]);
+    expect(built.entries).toBe(7);
+    expect(built.omitted).toBe(0);
+    expect(built.text.length).toBeLessThanOrEqual(4096);
+    expect(built.text.endsWith(digestSnapshotInput().alertsUrl)).toBe(true);
+
+    const bullets = bulletLines(built.text);
+    expect(bullets).toHaveLength(6);
+    expect(built.text).toContain("NAS-HOME");
+    for (const title of [
+      "Frontera inicial",
+      "Ayudante pendiente",
+      "Escalada y vuelta",
+      "Recuperada durante la ventana",
+      "Abierta tras el corte",
+    ])
+      expect(bullets.some((line) => line.includes(title))).toBe(true);
+    expect(bullets.some((line) => line.includes("2 anteriores"))).toBe(true);
+    // Only the agents' own fields leave the database.
+    expect(built.text).not.toContain("Detalle interno");
+    for (const hidden of [
+      "Host ajeno",
+      "Silenciosa",
+      "Individual cerrada",
+      "Crítica por escalada posterior",
+      "Antigua todavía abierta",
+      "Histórica duplicada",
+    ])
+      expect(built.text).not.toContain(hidden);
+
+    const owner = await lockOwner();
+    const provider = fakeProvider();
+    try {
+      const delivered = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 60_000,
+        fetchImpl: provider.transport,
+      });
+      expect(delivered).toMatchObject({ action: "sent", date: DIGEST_DAY });
+      expect(provider.calls).toHaveLength(1);
+      const run = await digestRun();
+      // The frozen payload is exactly the snapshot rendered at that instant.
+      expect(run.payload).toBe(built.text);
+      expect(provider.calls[0].body.text).toBe(built.text);
+      expect(await db.select().from(tables.digestRuns)).toHaveLength(1);
+    } finally {
+      await safeEnd(owner);
+    }
+  });
+
+  it("sends a footer-only digest when there is activity but no eligible row", async () => {
+    await digestEpisode({
+      key: "cpu",
+      at: DIGEST_PERIOD_START + HOUR,
+      title: "Nueva ya cerrada",
+    });
+    await resolveEpisode("cpu", DIGEST_TARGET - HOUR);
+    await digestEpisode({
+      key: "connection",
+      at: DIGEST_PERIOD_START + 2 * HOUR,
+      channel: "telegram",
+      severity: "critical",
+      title: "Crítica inmediata",
+    });
+
+    const client = await connect();
+    let snapshot: Awaited<ReturnType<typeof content.buildDigestSnapshot>>;
+    try {
+      snapshot = await content.buildDigestSnapshot({
+        client,
+        ...digestSnapshotInput(),
+      });
+    } finally {
+      await safeEnd(client);
+    }
+    expect(snapshot).not.toBeNull();
+    const built = snapshot!;
+    expect(built.counts).toEqual({
+      openNow: 0,
+      newInPeriod: 2,
+      newOpen: 1,
+      newClosed: 1,
+      critical: 1,
+      resolved: 1,
+    });
+    expect(built.entries).toBe(0);
+    expect(built.omitted).toBe(0);
+    expect(bulletLines(built.text)).toHaveLength(0);
+    expect(built.text).toContain(content.digestCountersLine(built.counts));
+    expect(built.text.endsWith(digestSnapshotInput().alertsUrl)).toBe(true);
+
+    const owner = await lockOwner();
+    const provider = fakeProvider();
+    try {
+      const delivered = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 60_000,
+        fetchImpl: provider.transport,
+      });
+      expect(delivered).toMatchObject({ action: "sent", date: DIGEST_DAY });
+      expect(provider.calls).toHaveLength(1);
+      expect(provider.calls[0].body.text).toBe(built.text);
+      expect((await digestRun()).payload).toBe(built.text);
+    } finally {
+      await safeEnd(owner);
+    }
+  });
+
+  it("stays silent when the day has no details and no countable activity", async () => {
+    await digestEpisode({
+      key: "container:web",
+      at: DIGEST_PERIOD_START + HOUR,
+      channel: "silent",
+      title: "Silenciosa",
+    });
+    await insertHistory({
+      key: "legacy-open",
+      at: DIGEST_PERIOD_START + 2 * HOUR,
+    });
+    await digestEpisode({
+      key: "disk",
+      hostId: "nas-apps",
+      at: DIGEST_PERIOD_START + 3 * HOUR,
+      title: "Host ajeno",
+    });
+
+    const client = await connect();
+    try {
+      expect(
+        await content.buildDigestSnapshot({
+          client,
+          ...digestSnapshotInput(),
+        }),
+      ).toBeNull();
+    } finally {
+      await safeEnd(client);
+    }
+
+    const owner = await lockOwner();
+    const provider = fakeProvider();
+    try {
+      const result = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 60_000,
+        fetchImpl: provider.transport,
+      });
+      expect(result.action).toBe("idle");
+      expect(provider.calls).toHaveLength(0);
+      expect(await digestRun()).toMatchObject({
+        status: "empty",
+        reason: "digest_empty",
+        payload: null,
+      });
+    } finally {
+      await safeEnd(owner);
+    }
+  });
+
+  it("leaves the individual queue and the timeline untouched", async () => {
+    await openTelegramAt(DIGEST_TARGET - 120_000);
+    await openDigestWarning();
+    const outboxBefore = await db
+      .select()
+      .from(tables.notificationOutbox)
+      .orderBy(tables.notificationOutbox.id);
+    const eventsBefore = await db
+      .select()
+      .from(tables.incidentEvents)
+      .orderBy(tables.incidentEvents.incidentId, tables.incidentEvents.seq);
+    expect(outboxBefore.some((row) => row.channel === "telegram")).toBe(true);
+
+    const owner = await lockOwner();
+    const provider = fakeProvider();
+    try {
+      const result = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 60_000,
+        fetchImpl: provider.transport,
+      });
+      expect(result.action).toBe("sent");
+      expect(provider.calls).toHaveLength(1);
+    } finally {
+      await safeEnd(owner);
+    }
+
+    expect(
+      await db
+        .select()
+        .from(tables.notificationOutbox)
+        .orderBy(tables.notificationOutbox.id),
+    ).toEqual(outboxBefore);
+    expect(
+      await db
+        .select()
+        .from(tables.incidentEvents)
+        .orderBy(tables.incidentEvents.incidentId, tables.incidentEvents.seq),
+    ).toEqual(eventsBefore);
+  });
 
   it("sends one digest per Madrid date with frozen content and keeps it after a restart", async () => {
     await openDigestWarning();

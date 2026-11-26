@@ -205,6 +205,9 @@ export async function prepareDigestRuns(
   if (live.length > 0) {
     const alertsUrl = digestAlertsUrl(options.config.betterAuthUrl);
     const hostIds = options.config.hosts.map((host) => host.id);
+    const hostNames = Object.fromEntries(
+      options.config.hosts.map((host) => [host.id, host.name]),
+    );
     let changed = false;
     await options.client.query("BEGIN");
     try {
@@ -265,6 +268,7 @@ export async function prepareDigestRuns(
         const snapshot = await buildDigestSnapshot({
           client: options.client,
           hostIds,
+          hostNames,
           periodStart: row.periodStartAt,
           periodEnd: row.targetAt,
           snapshotAt: at,
