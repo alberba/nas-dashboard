@@ -169,7 +169,9 @@ describe.skipIf(!baseUrl)("telegram updates", () => {
       const markup = fake.calls[0].body.reply_markup as Keyboard;
       expect(markup.inline_keyboard[0]).toHaveLength(1);
       expect(typeof markup.inline_keyboard[0][0].url).toBe("string");
+      // Acknowledging keeps its own row; the two silence controls share the next.
       expect(markup.inline_keyboard[1]).toHaveLength(1);
+      expect(markup.inline_keyboard[2]).toHaveLength(2);
       expect(token).toMatch(/^v1:[A-Za-z0-9_-]{22}$/);
       expect(Buffer.byteLength(token, "utf8")).toBe(25);
 
@@ -242,7 +244,8 @@ describe.skipIf(!baseUrl)("telegram updates", () => {
       expect(answers).toHaveLength(1);
       expect(answers[0].body.callback_query_id).toBe("cb-101");
 
-      // The silent edit drops the Reconocer button: it cannot be undone.
+      // The silent edit drops the Reconocer button: it cannot be undone, and the
+      // two silence controls remain.
       const edited = await dispatch.runDispatchOnce({
         client,
         config,
@@ -250,14 +253,20 @@ describe.skipIf(!baseUrl)("telegram updates", () => {
         fetchImpl: fake.transport,
       });
       expect(edited.action).toBe("edited");
-      expect(fake.lastKeyboard()).toEqual([]);
+      const editTokens = fake.lastKeyboard();
+      expect(editTokens).toHaveLength(2);
+      expect(editTokens).not.toContain(token);
+      for (const value of editTokens)
+        expect(value).toMatch(/^v1:[A-Za-z0-9_-]{22}$/);
       const editCalls = fake.calls.filter(
         (call) => call.method === "editMessageText",
       );
       expect(editCalls).toHaveLength(1);
       expect(editCalls[0].body.message_id).toBe("501");
       const editMarkup = editCalls[0].body.reply_markup as Keyboard;
-      expect(editMarkup.inline_keyboard).toHaveLength(1);
+      // The URL button keeps its row; the silence controls take the next one.
+      expect(editMarkup.inline_keyboard).toHaveLength(2);
+      expect(editMarkup.inline_keyboard[1]).toHaveLength(2);
       expect(editMarkup.inline_keyboard[0][0].url).toBe(
         `https://hub.example.com/?view=alerts&host=nas-home&incident=${incidentId}`,
       );

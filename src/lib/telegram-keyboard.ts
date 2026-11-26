@@ -59,14 +59,17 @@ export type KeyboardState = {
 };
 
 /**
- * Actions a state offers. This plan emits only `ack` for an open, unread
- * episode; an acknowledged or resolved notice offers none. 05-02 and 05-03
- * widen the matrix without changing the lane.
+ * Actions a state offers. A resolved episode offers no state control (D-10);
+ * a silenced one replaces both silence buttons with `unsnooze` (D-13) and
+ * acknowledging is never undone from the chat (D-13, D-02).
  */
 export function keyboardActions(state: KeyboardState): TelegramAction[] {
   if (state.resolved) return [];
-  if (state.acknowledged) return [];
-  return ["ack"];
+  const actions: TelegramAction[] = [];
+  if (!state.acknowledged) actions.push("ack");
+  if (state.snoozed) actions.push("unsnooze");
+  else actions.push("snooze_1h", "snooze_24h");
+  return actions;
 }
 
 /** Minimal writer both a pool client and a transaction satisfy. */
@@ -107,17 +110,34 @@ export async function issueActionTokens(
 
 /**
  * Turns issued tokens into the callback rows appended after the URL button.
- * Order follows `TELEGRAM_ACTIONS`, two buttons per row at most.
+ * Acknowledging keeps its own row; the silence controls share the next one, so
+ * a live silence shows a single "Quitar silencio" where the two buttons were.
+ * Any later action (the 05-03 explanation) follows two per row.
  */
 export function renderActionRows(
   issued: Partial<Record<TelegramAction, string>>,
 ): TelegramActionButton[][] {
-  const buttons = TELEGRAM_ACTIONS.flatMap((action) => {
+  const button = (action: TelegramAction) => {
     const token = issued[action];
     return token ? [{ text: ACTION_LABELS[action], callbackData: token }] : [];
-  });
+  };
   const rows: TelegramActionButton[][] = [];
-  for (let index = 0; index < buttons.length; index += 2)
-    rows.push(buttons.slice(index, index + 2));
+  const acknowledged = button("ack");
+  if (acknowledged.length) rows.push(acknowledged);
+  const silence = [
+    ...button("snooze_1h"),
+    ...button("snooze_24h"),
+    ...button("unsnooze"),
+  ];
+  if (silence.length) rows.push(silence);
+  const rest = TELEGRAM_ACTIONS.filter(
+    (action) =>
+      action !== "ack" &&
+      action !== "snooze_1h" &&
+      action !== "snooze_24h" &&
+      action !== "unsnooze",
+  ).flatMap(button);
+  for (let index = 0; index < rest.length; index += 2)
+    rows.push(rest.slice(index, index + 2));
   return rows;
 }

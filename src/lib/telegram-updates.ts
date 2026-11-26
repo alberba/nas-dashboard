@@ -28,6 +28,7 @@ import {
   applyIncidentAction,
   consumeActionToken,
   type ActionTokenConsumption,
+  type IncidentActionOutcome,
 } from "./incident-actions";
 import type { Transaction } from "./incident-store";
 import {
@@ -154,30 +155,42 @@ export function isAuthorizedCallback(
 
 export type TokenActionResult = "applied" | "unchanged" | "ignored";
 
+/** `resolved` and `not_found` have no user-visible effect: only the toast. */
+function translate(outcome: IncidentActionOutcome): TokenActionResult {
+  if (outcome === "applied") return "applied";
+  if (outcome === "unchanged") return "unchanged";
+  return "ignored";
+}
+
 /**
  * Applies a consumed token inside the caller's transaction. This plan handles
- * `ack`; 05-02 and 05-03 add their branches without changing the lane.
+ * ack, snooze and unsnooze; 05-03 adds `why` without changing the lane.
  */
 export async function applyTokenAction(
   tx: Transaction,
   consumed: { incidentId: number; action: TelegramAction },
   context: { via: "telegram"; now: number },
 ): Promise<TokenActionResult> {
+  const target = {
+    incidentId: consumed.incidentId,
+    via: context.via,
+    by: null,
+    now: context.now,
+  } as const;
   switch (consumed.action) {
-    case "ack": {
-      const outcome = await applyIncidentAction(tx, {
-        action: "ack",
-        incidentId: consumed.incidentId,
-        via: context.via,
-        now: context.now,
-      });
-      if (outcome === "applied") return "applied";
-      if (outcome === "unchanged") return "unchanged";
-      return "ignored";
-    }
+    case "ack":
+      return translate(await applyIncidentAction(tx, { action: "ack", ...target }));
     case "snooze_1h":
     case "snooze_24h":
+      return translate(
+        await applyIncidentAction(tx, {
+          action: "snooze",
+          hours: consumed.action === "snooze_1h" ? 1 : 24,
+          ...target,
+        }),
+      );
     case "unsnooze":
+      return translate(await applyIncidentAction(tx, { action: "unsnooze", ...target }));
     case "why":
       return "ignored";
   }

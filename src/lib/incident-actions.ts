@@ -5,11 +5,19 @@
  * one transaction, so both channels leave the same state and the same message
  * (D-14). The action never reads or writes the delivery policy: acknowledging
  * is "I saw it", so a later escalation to critical still interrupts (D-02).
+ *
+ * Silencing writes the `(hostId, key)` silence and its timeline event in the
+ * same transaction; it neither acknowledges nor hides an event (D-01, D-02).
  */
 
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { queueEdit, type Transaction } from "./incident-store";
 import {
+  clearSnooze,
+  snoozeDeadline,
+  upsertSnooze,
+  type SnoozeHours,
+} from "./incident-snooze";import {
   incidentEvents,
   incidents,
   notificationOutbox,
@@ -22,14 +30,19 @@ export type IncidentActionChannel = "telegram" | "hub";
 
 export type IncidentActionOutcome = "applied" | "unchanged" | "resolved" | "not_found";
 
-export type IncidentActionInput = {
-  action: TelegramAction;
+type IncidentActionTarget = {
   incidentId: number;
   via: IncidentActionChannel;
   /** Internal session name from the hub; null or absent for Telegram. */
   by?: string | null;
   now?: number;
 };
+
+export type IncidentActionInput =
+  | ({ action: "ack" } & IncidentActionTarget)
+  | ({ action: "snooze"; hours: SnoozeHours } & IncidentActionTarget)
+  | ({ action: "unsnooze" } & IncidentActionTarget);
+
 
 /** Logical key of the confirmed opening of an episode. */
 function openKey(incidentId: number) {
@@ -38,19 +51,14 @@ function openKey(incidentId: number) {
 
 async function acknowledge(
   tx: Transaction,
-  input: IncidentActionInput,
+  input: IncidentActionTarget,
 ): Promise<IncidentActionOutcome> {
   const now = input.now ?? Date.now();
   const at = new Date(now);
   // The collector and this action compete for `seq`; lock the episode first.
-  const [incident] = await tx
-    .select()
-    .from(incidents)
-    .where(eq(incidents.id, input.incidentId))
-    .limit(1)
-    .for("update");
-  if (!incident) return "not_found";
-  if (incident.resolvedAt) return "resolved";
+  const locked = await lockEpisode(tx, input.incidentId);
+  if (locked.outcome) return locked.outcome;
+  const incident = locked.incident;
   // Acknowledging twice is a no-op: no event, no seq, no edit.
   if (incident.acknowledgedAt) return "unchanged";
 
@@ -78,10 +86,10 @@ async function acknowledge(
 }
 
 /**
- * Applies one operator action inside the caller's transaction. Only `ack`
- * exists in this plan; 05-02 and 05-03 add their branches without changing the
- * lane. Unknown action names never reach the database because the callback is
- * parsed against a closed set first.
+ * Applies one operator action inside the caller's transaction. Every branch
+ * locks the episode first, so the collector and the two channels compete for
+ * `seq` in one order. Unknown action names never reach the database because the
+ * callback is parsed against a closed set first.
  */
 export async function applyIncidentAction(
   tx: Transaction,
@@ -90,9 +98,110 @@ export async function applyIncidentAction(
   switch (input.action) {
     case "ack":
       return acknowledge(tx, input);
-    default:
-      return "unchanged";
+    case "snooze":
+      return snooze(tx, input);
+    case "unsnooze":
+      return unsnooze(tx, input);
   }
+}
+
+/**
+ * Locks the open episode an action targets. A closed or missing episode writes
+ * nothing: after resolution the state controls are gone and the silence expires
+ * on its own (D-10).
+ */
+async function lockEpisode(
+  tx: Transaction,
+  incidentId: number,
+): Promise<
+  | { outcome: "not_found" | "resolved"; incident?: never }
+  | { outcome?: never; incident: typeof incidents.$inferSelect }
+> {
+  const [incident] = await tx
+    .select()
+    .from(incidents)
+    .where(eq(incidents.id, incidentId))
+    .limit(1)
+    .for("update");
+  if (!incident) return { outcome: "not_found" };
+  if (incident.resolvedAt) return { outcome: "resolved" };
+  return { incident };
+}
+
+/** Writes the new revision, its timeline event and the silent edit. */
+async function recordAction(
+  tx: Transaction,
+  incident: typeof incidents.$inferSelect,
+  at: Date,
+  event: { kind: "snoozed" | "unsnoozed"; detail: string },
+): Promise<IncidentActionOutcome> {
+  const seq = incident.seq + 1;
+  await tx.update(incidents).set({ seq }).where(eq(incidents.id, incident.id));
+  await tx.insert(incidentEvents).values({
+    incidentId: incident.id,
+    seq,
+    kind: event.kind,
+    severity: incident.severity,
+    title: incident.title,
+    detail: event.detail,
+    at,
+  });
+  await queueEdit(tx, incident.id, seq);
+  return "applied";
+}
+
+/**
+ * Silences the whole condition for a closed set of hours. Repeating the same
+ * duration, or asking for a shorter one while the silence is live, is a no-op:
+ * no second event and no second edit (BOT-04).
+ */
+async function snooze(
+  tx: Transaction,
+  input: { incidentId: number; via: IncidentActionChannel; hours: SnoozeHours; by?: string | null; now?: number },
+): Promise<IncidentActionOutcome> {
+  const now = input.now ?? Date.now();
+  const at = new Date(now);
+  const locked = await lockEpisode(tx, input.incidentId);
+  if (locked.outcome) return locked.outcome;
+  const incident = locked.incident;
+
+  const until = snoozeDeadline(at, input.hours);
+  const outcome = await upsertSnooze(tx, {
+    hostId: incident.hostId,
+    key: incident.key,
+    until,
+    via: input.via,
+    by: input.by ?? null,
+    at,
+  });
+  if (outcome === "unchanged") return "unchanged";
+  return recordAction(tx, incident, at, {
+    kind: "snoozed",
+    detail: until.toISOString(),
+  });
+}
+
+/**
+ * Ends the silence of the condition. A live row and an expired one are both
+ * removed, because a keyboard rendered before the deadline must still refresh
+ * the notice; only a missing row is a no-op.
+ */
+async function unsnooze(
+  tx: Transaction,
+  input: { incidentId: number; via: IncidentActionChannel; by?: string | null; now?: number },
+): Promise<IncidentActionOutcome> {
+  const now = input.now ?? Date.now();
+  const at = new Date(now);
+  const locked = await lockEpisode(tx, input.incidentId);
+  if (locked.outcome) return locked.outcome;
+  const incident = locked.incident;
+
+  const cleared = await clearSnooze(tx, incident.hostId, incident.key, at);
+  if (!cleared.existed) return "unchanged";
+  return recordAction(tx, incident, at, {
+    kind: "unsnoozed",
+    detail: cleared.expired ? "expired" : "cleared",
+  });
 }
 
 export type ActionTokenFailure =
