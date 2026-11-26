@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 05
 current_phase_name: Bot de lectura y reconocimiento
 status: executing
-stopped_at: Completed 05-06-PLAN.md
-last_updated: "2026-11-26T14:28:48.352Z"
+stopped_at: Completed 05-03-PLAN.md
+last_updated: "2026-11-26T14:44:33.019Z"
 last_activity: 2026-11-26
 last_activity_desc: Phase 05 execution started
-state_head: 2720a45c46c64a01390a258a7a5e246a84227f57
+state_head: 1865f44078104af32f89e9fcf19ff87833b67a92
 progress:
   total_phases: 8
   completed_phases: 4
   total_plans: 20
-  completed_plans: 17
+  completed_plans: 18
   percent: 50
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-26)
 ## Current Position
 
 Phase: 05 (Bot de lectura y reconocimiento) — EXECUTING
-Plan: 4 of 6
+Plan: 5 of 6
 Status: Ready to execute
 Last activity: 2026-11-26 — Phase 05 execution started
 
@@ -68,6 +68,7 @@ Progress: [█████░░░░░] 50%
 | Phase 05 P01 | 48 min | 2 tasks | 17 files |
 | Phase 05 P02 | 68 min | 2 tasks | 10 files |
 | Phase 05 P06 | 6 min | 2 tasks | 2 files |
+| Phase 05 P03 | 9 min | 2 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -104,6 +105,9 @@ Recent decisions affecting current work:
 - [Phase 05]: incident_missing se provoca en una transacción revertida que suprime la FK: la DDL de PostgreSQL se deshace y la base queda con la misma forma
 - [Phase 05]: median(sentAt -> ackAt) se calcula con acknowledgedAt y el result.at de la fila incident-open, sin columna ni migración posterior
 - [Phase 05]: La prueba de la migración 0007 siembra filas en 0006 y demuestra con migrateAll y pnpm db:migrate que no las reescribe y que repetir no aplica nada
+- [Phase 05]: El estado del aviso es el mayor seq de opened, severity y closed; reconocer, silenciar y quitar silencio no lo mueven
+- [Phase 05]: La respuesta de Por qué es trabajo del outbox con clave única por estado; la base impide el duplicado y recordReplySent no reescribe el mensaje citado ni programa una edición
+- [Phase 05]: El texto de Por qué se compone al enviar con la incidencia, la última muestra y el canal de la apertura; una incidencia resuelta no muestra dato leído
 
 ### Pending Todos
 
@@ -124,6 +128,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-26T14:28:48.054Z
-Stopped at: Completed 05-06-PLAN.md
+Last session: 2026-11-26T14:44:32.719Z
+Stopped at: Completed 05-03-PLAN.md
 Resume file: None

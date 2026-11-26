@@ -43,7 +43,7 @@ Alcance de este milestone: auditar el ruido, sustituir los emisores por una entr
 - [ ] **BOT-02**: El bot ignora cualquier update de un usuario o chat fuera de la allowlist
 - [x] **BOT-03**: Cada mensaje incluye un botón que abre la vista correspondiente del hub autenticada
 - [ ] **BOT-04**: El operador puede abrir la incidencia, silenciarla 1 h o 24 h y reconocerla desde los botones, y el estado persiste
-- [ ] **BOT-05**: El operador puede consultar "por qué me llegó esto" desde el propio mensaje
+- [x] **BOT-05**: El operador puede consultar "por qué me llegó esto" desde el propio mensaje
 - [ ] **BOT-06**: Un callback repetido o caducado no ejecuta dos veces la acción ni rompe el bot
 - [ ] **BOT-07**: El operador puede iniciar una acción de host desde Telegram y completarla en el hub con sesión y passkey
 - [ ] **BOT-08**: Ninguna acción destructiva iniciada desde Telegram se ejecuta sin verificación reciente en el servidor
@@ -132,7 +132,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CONT-03 | Phase 4 | Complete |
 | BOT-02 | Phase 5 | Pending |
 | BOT-04 | Phase 5 | Pending |
-| BOT-05 | Phase 5 | Pending |
+| BOT-05 | Phase 5 | Complete |
 | BOT-06 | Phase 5 | Pending |
 | BOT-10 | Phase 5 | Pending |
 | SEC-01 | Phase 6 | Pending |

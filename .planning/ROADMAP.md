@@ -145,7 +145,7 @@ Plans:
   3. "Por qué me llegó esto" responde desde el propio mensaje.
   4. Un callback repetido o caducado no ejecuta dos veces la acción ni rompe el bot.
   5. El token del bot no aparece en logs ni en respuestas.
-**Plans**: 3/6 plans executed
+**Plans**: 4/6 plans executed
 
 Plans:
 **Wave 1**
@@ -156,7 +156,7 @@ Plans:
 - [x] 05-06: Pruebas del reconocimiento (idempotencia, política de entrega, medición y razones del token) y de la migración 0007 aditiva
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 05-03: "Por qué me llegó esto" como respuesta citada, una por estado del aviso
+- [x] 05-03: "Por qué me llegó esto" como respuesta citada, una por estado del aviso
 - [ ] 05-04: Estado y acciones de reconocimiento y silencio en Avisos y etiquetas del resumen diario
 
 **Wave 4** *(blocked on Wave 3 completion)*
@@ -236,7 +236,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 2. Incidencias y entrega única | 5/5 | Complete    | 2026-11-25 |
 | 3. Agrupación, inventario y ayudantes | 3/3 | Complete    | 2026-11-25 |
 | 4. Resumen diario | 3/3 | Complete    | 2026-11-26 |
-| 5. Bot de lectura y reconocimiento | 3/6 | In Progress | - |
+| 5. Bot de lectura y reconocimiento | 4/6 | In Progress | - |
 | 6. Puerta de seguridad | 0/3 | Not started | - |
 | 7. Acciones verificadas desde Telegram | 0/3 | Not started | - |
 | 8. Cutover de media-stack y consolidación | 0/3 | Not started | - |
