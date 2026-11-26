@@ -34,7 +34,7 @@ const ACTION_LABELS: Record<TelegramAction, string> = {
   snooze_1h: "Silenciar 1 h",
   snooze_24h: "Silenciar 24 h",
   unsnooze: "Quitar silencio",
-  why: "Por qué",
+  why: "Por qué me llegó esto",
 };
 
 /** 128 random bits, base64url: 22 characters, 25 bytes with the prefix. */
@@ -59,16 +59,18 @@ export type KeyboardState = {
 };
 
 /**
- * Actions a state offers. A resolved episode offers no state control (D-10);
- * a silenced one replaces both silence buttons with `unsnooze` (D-13) and
- * acknowledging is never undone from the chat (D-13, D-02).
+ * Actions a state offers. The explanation accompanies every state, resolved
+ * included: it only reads the notice (D-10). A resolved episode offers no state
+ * control; a silenced one replaces both silence buttons with `unsnooze` (D-13)
+ * and acknowledging is never undone from the chat (D-13, D-02).
  */
 export function keyboardActions(state: KeyboardState): TelegramAction[] {
-  if (state.resolved) return [];
+  if (state.resolved) return ["why"];
   const actions: TelegramAction[] = [];
   if (!state.acknowledged) actions.push("ack");
   if (state.snoozed) actions.push("unsnooze");
   else actions.push("snooze_1h", "snooze_24h");
+  actions.push("why");
   return actions;
 }
 
@@ -112,7 +114,8 @@ export async function issueActionTokens(
  * Turns issued tokens into the callback rows appended after the URL button.
  * Acknowledging keeps its own row; the silence controls share the next one, so
  * a live silence shows a single "Quitar silencio" where the two buttons were.
- * Any later action (the 05-03 explanation) follows two per row.
+ * The explanation follows in its own row, which is the only action a resolved
+ * notice keeps (D-10).
  */
 export function renderActionRows(
   issued: Partial<Record<TelegramAction, string>>,

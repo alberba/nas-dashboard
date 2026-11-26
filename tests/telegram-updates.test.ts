@@ -254,7 +254,8 @@ describe.skipIf(!baseUrl)("telegram updates", () => {
       });
       expect(edited.action).toBe("edited");
       const editTokens = fake.lastKeyboard();
-      expect(editTokens).toHaveLength(2);
+      // The two silence controls plus the explanation that every state keeps.
+      expect(editTokens).toHaveLength(3);
       expect(editTokens).not.toContain(token);
       for (const value of editTokens)
         expect(value).toMatch(/^v1:[A-Za-z0-9_-]{22}$/);
@@ -264,9 +265,11 @@ describe.skipIf(!baseUrl)("telegram updates", () => {
       expect(editCalls).toHaveLength(1);
       expect(editCalls[0].body.message_id).toBe("501");
       const editMarkup = editCalls[0].body.reply_markup as Keyboard;
-      // The URL button keeps its row; the silence controls take the next one.
-      expect(editMarkup.inline_keyboard).toHaveLength(2);
+      // The URL button keeps its row; the silence controls take the next one
+      // and the explanation its own row.
+      expect(editMarkup.inline_keyboard).toHaveLength(3);
       expect(editMarkup.inline_keyboard[1]).toHaveLength(2);
+      expect(editMarkup.inline_keyboard[2]).toHaveLength(1);
       expect(editMarkup.inline_keyboard[0][0].url).toBe(
         `https://hub.example.com/?view=alerts&host=nas-home&incident=${incidentId}`,
       );

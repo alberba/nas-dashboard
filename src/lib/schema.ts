@@ -240,7 +240,7 @@ export const notificationOutbox = pgTable(
       onDelete: "cascade",
     }),
     ownerUserId: text().references(() => user.id, { onDelete: "cascade" }),
-    /** `incident-open`, `incident-edit`, `incident-push` or `push-test`. */
+    /** `incident-open`, `incident-edit`, `incident-why`, `incident-push` or `push-test`. */
     kind: text().notNull(),
     /** `telegram` or `push`. */
     channel: text().notNull(),

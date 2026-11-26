@@ -30,6 +30,7 @@ import {
   type ActionTokenConsumption,
   type IncidentActionOutcome,
 } from "./incident-actions";
+import { enqueueWhyReply } from "./incident-why";
 import type { Transaction } from "./incident-store";
 import {
   answerTelegramCallback,
@@ -163,8 +164,9 @@ function translate(outcome: IncidentActionOutcome): TokenActionResult {
 }
 
 /**
- * Applies a consumed token inside the caller's transaction. This plan handles
- * ack, snooze and unsnooze; 05-03 adds `why` without changing the lane.
+ * Applies a consumed token inside the caller's transaction. Acknowledging,
+ * silencing and the "why" explanation all share this seam, so Telegram and the
+ * hub cannot drift apart.
  */
 export async function applyTokenAction(
   tx: Transaction,
@@ -191,8 +193,16 @@ export async function applyTokenAction(
       );
     case "unsnooze":
       return translate(await applyIncidentAction(tx, { action: "unsnooze", ...target }));
-    case "why":
+    case "why": {
+      // One reply per notice state: a fresh token of the same state is a
+      // duplicate and gets the "already answered" toast without another send.
+      const outcome = await enqueueWhyReply(tx, {
+        incidentId: consumed.incidentId,
+      });
+      if (outcome === "queued") return "applied";
+      if (outcome === "duplicate") return "unchanged";
       return "ignored";
+    }
   }
 }
 
@@ -206,8 +216,13 @@ function answerText(outcome: {
   consumed: ActionTokenConsumption;
   result: TokenActionResult;
 }): string {
-  if (outcome.consumed.ok)
-    return outcome.result === "applied" ? "Hecho" : "Sin cambios";
+  if (outcome.consumed.ok) {
+    if (outcome.result === "applied") return "Hecho";
+    // A repeated "why" is D-09's "already answered"; the other actions were
+    // already applied or had nothing to change.
+    if (outcome.consumed.action === "why") return "Ya respondido";
+    return "Sin cambios";
+  }
   switch (outcome.consumed.reason) {
     case "used":
       return "Ya usado";
