@@ -1235,6 +1235,51 @@ describe.skipIf(!baseUrl)("notification dispatch", () => {
     return opened.incidentId!;
   }
 
+  /** Immediate Telegram episode whose row is due on the injected clock. */
+  async function openTelegramAt(
+    now: number,
+    key = "connection",
+    severity = "critical",
+  ): Promise<number> {
+    const opened = await store.recordIncidentObservation({
+      hostId: "nas-home",
+      key,
+      failing: true,
+      severity,
+      title: "NAS sin respuesta",
+      detail: "Sin métricas del agente",
+      now,
+      delivery: { channel: "telegram", reason: "policy_immediate" },
+    });
+    expect(opened.action).toBe("opened");
+    expect(opened.delivery).toBe("queued");
+    await db
+      .update(tables.notificationOutbox)
+      .set({ nextAttemptAt: new Date(now) })
+      .where(eq(tables.notificationOutbox.incidentId, opened.incidentId!));
+    return opened.incidentId!;
+  }
+
+  /** Warning delivered by push, due on the injected clock. */
+  async function openPushAt(now: number, key = "disk-health"): Promise<number> {
+    const opened = await store.recordIncidentObservation({
+      hostId: "nas-home",
+      key,
+      failing: true,
+      severity: "warning",
+      title: "Disco a vigilar",
+      detail: "sda: watch",
+      now,
+      delivery: { channel: "push", reason: "policy_immediate" },
+    });
+    expect(opened.action).toBe("opened");
+    await db
+      .update(tables.notificationOutbox)
+      .set({ nextAttemptAt: new Date(now) })
+      .where(eq(tables.notificationOutbox.incidentId, opened.incidentId!));
+    return opened.incidentId!;
+  }
+
   async function digestRun() {
     const [row] = await db.select().from(tables.digestRuns);
     return row;
@@ -1604,6 +1649,230 @@ describe.skipIf(!baseUrl)("notification dispatch", () => {
         reason: "digest_missed",
         payload: null,
       });
+    } finally {
+      await safeEnd(owner);
+    }
+  });
+
+  it("delays a new digest while a confirmed Telegram 429 is active", async () => {
+    await openTelegramAt(DIGEST_TARGET - 120_000);
+    await openDigestWarning();
+    const owner = await lockOwner();
+    const limited = fakeProvider(() =>
+      json(
+        { ok: false, error_code: 429, parameters: { retry_after: 300 } },
+        429,
+      ),
+    );
+    try {
+      const opening = await dispatch.runDispatchOnce({
+        client: owner,
+        config,
+        now: () => DIGEST_TARGET - 120_000,
+        fetchImpl: limited.transport,
+      });
+      expect(opening.action).toBe("retry");
+      expect(limited.calls).toHaveLength(1);
+
+      // The opening's 429 precedes the digest enqueue: no POST inside the pause.
+      const blocked = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 60_000,
+        fetchImpl: limited.transport,
+      });
+      expect(blocked.action).toBe("idle");
+      expect(limited.calls).toHaveLength(1);
+      expect(await digestRun()).toMatchObject({
+        status: "prepared",
+        attempts: 0,
+      });
+
+      const resumed = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 240_000,
+        fetchImpl: fakeProvider().transport,
+      });
+      expect(resumed).toMatchObject({ action: "sent", date: DIGEST_DAY });
+    } finally {
+      await safeEnd(owner);
+    }
+  });
+
+  it("pauses new Telegram notices after a confirmed digest 429", async () => {
+    await createUser("owner");
+    await createSubscription("owner", "https://push.example/owner");
+    await openDigestWarning();
+    const owner = await lockOwner();
+    const limited = fakeProvider(() =>
+      json(
+        { ok: false, error_code: 429, parameters: { retry_after: 120 } },
+        429,
+      ),
+    );
+    const push = fakePush();
+    try {
+      const digestLimited = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 30_000,
+        fetchImpl: limited.transport,
+      });
+      expect(digestLimited).toMatchObject({
+        action: "retry",
+        date: DIGEST_DAY,
+        reason: "rate_limited",
+      });
+      expect(limited.calls).toHaveLength(1);
+      const frozen = (await digestRun()).payload;
+      expect(frozen).toContain("Disco casi lleno");
+
+      // A notice queued after the digest 429 waits for the same pause.
+      await openTelegramAt(DIGEST_TARGET + 40_000, "temperature");
+      const blocked = await dispatch.runDispatchOnce({
+        client: owner,
+        config,
+        now: () => DIGEST_TARGET + 60_000,
+        fetchImpl: limited.transport,
+      });
+      expect(blocked.action).toBe("idle");
+      expect(limited.calls).toHaveLength(1);
+
+      // Push keeps its own path during the Telegram pause.
+      await openPushAt(DIGEST_TARGET + 40_000);
+      const pushed = await dispatch.runDispatchOnce({
+        client: owner,
+        config: vapidConfig(),
+        now: () => DIGEST_TARGET + 70_000,
+        pushTransport: push.transport,
+        fetchImpl: limited.transport,
+      });
+      expect(pushed.action).toBe("sent");
+      expect(push.calls).toHaveLength(1);
+      expect(limited.calls).toHaveLength(1);
+
+      // The pause expires and the digest repeats the exact frozen bytes.
+      const resumed = fakeProvider();
+      const retried = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 180_000,
+        fetchImpl: resumed.transport,
+      });
+      expect(retried).toMatchObject({ action: "sent", date: DIGEST_DAY });
+      expect(resumed.calls).toHaveLength(1);
+      expect(resumed.calls[0].body.text).toBe(frozen);
+    } finally {
+      await safeEnd(owner);
+    }
+  });
+
+  it("shares the pause from a confirmed edit 429 with the digest", async () => {
+    await openDigestWarning();
+    const [incident] = await db
+      .insert(tables.incidents)
+      .values({
+        hostId: "nas-home",
+        key: "temperature",
+        title: "Temperatura alta",
+        detail: "",
+        severity: "warning",
+        at: new Date(DIGEST_TARGET - 3_600_000),
+        fingerprint: store.incidentFingerprint("nas-home", "temperature"),
+        seq: 2,
+        origin: "live",
+      })
+      .returning();
+    await db.insert(tables.notificationOutbox).values({
+      key: `incident:${incident.id}:open`,
+      incidentId: incident.id,
+      kind: "incident-open",
+      channel: "telegram",
+      status: "sent",
+      revision: 1,
+      chatId: CHAT_ID,
+      messageId: "88",
+      result: {
+        state: "sent",
+        reason: null,
+        at: new Date(DIGEST_TARGET - 3_600_000).toISOString(),
+      },
+    });
+    await db.insert(tables.notificationOutbox).values({
+      key: `incident:${incident.id}:edit:2`,
+      incidentId: incident.id,
+      kind: "incident-edit",
+      channel: "telegram",
+      status: "pending",
+      revision: 2,
+      chatId: CHAT_ID,
+      messageId: "88",
+      nextAttemptAt: new Date(DIGEST_TARGET - 60_000),
+    });
+    const owner = await lockOwner();
+    const limited = fakeProvider(() =>
+      json(
+        { ok: false, error_code: 429, parameters: { retry_after: 300 } },
+        429,
+      ),
+    );
+    try {
+      const edit = await dispatch.runDispatchOnce({
+        client: owner,
+        config,
+        now: () => DIGEST_TARGET - 30_000,
+        fetchImpl: limited.transport,
+      });
+      expect(edit.action).toBe("retry");
+      expect(limited.calls).toHaveLength(1);
+
+      const blocked = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 60_000,
+        fetchImpl: fakeProvider().transport,
+      });
+      expect(blocked.action).toBe("idle");
+      expect(await digestRun()).toMatchObject({
+        status: "prepared",
+        attempts: 0,
+      });
+    } finally {
+      await safeEnd(owner);
+    }
+  });
+
+  it("ends the date when the confirmed retry passes the window", async () => {
+    await openDigestWarning();
+    const owner = await lockOwner();
+    const limited = fakeProvider(() =>
+      json(
+        { ok: false, error_code: 429, parameters: { retry_after: 7_200 } },
+        429,
+      ),
+    );
+    try {
+      const result = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 60_000,
+        fetchImpl: limited.transport,
+      });
+      expect(result).toMatchObject({
+        action: "failed",
+        date: DIGEST_DAY,
+        reason: "window_closed",
+      });
+      expect(limited.calls).toHaveLength(1);
+      const run = await digestRun();
+      expect(run).toMatchObject({ status: "failed", reason: "window_closed" });
+      // The confirmed 429 still records the shared pause.
+      const cooldown = await db.select().from(tables.telegramCooldown);
+      expect(cooldown).toHaveLength(1);
+      expect(cooldown[0].until.getTime()).toBe(
+        DIGEST_TARGET + 60_000 + 7_200_000,
+      );
     } finally {
       await safeEnd(owner);
     }
