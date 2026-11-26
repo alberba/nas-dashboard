@@ -321,6 +321,7 @@ describe.skipIf(!baseUrl)("incidents API", () => {
     await db.delete(tables.notificationOutbox);
     await db.delete(tables.incidentEvents);
     await db.delete(tables.incidents);
+    await db.delete(tables.digestRuns);
     await db.delete(tables.operations);
     await db.delete(tables.samples);
     await db.delete(tables.configuration);
@@ -1625,5 +1626,106 @@ describe.skipIf(!baseUrl)("incidents API", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it("projects the latest digest target globally with a finite reason", async () => {
+    const now = Date.now();
+    const secret = "payload-secreto-que-no-debe-salir";
+    const target = (offset: number) => new Date(now + offset);
+    // The older date is rewritten last: ordering must follow the target, not
+    // the last write, and the newest target is the failed one.
+    await db.insert(tables.digestRuns).values([
+      {
+        date: "2026-11-24",
+        targetAt: target(-2 * 86_400_000),
+        periodStartAt: target(-3 * 86_400_000),
+        dueAt: target(-2 * 86_400_000 + 2 * 3_600_000),
+        status: "sent",
+        reason: "digest_sent",
+        payload: "resumen antiguo",
+        updatedAt: target(0),
+      },
+      {
+        date: "2026-11-25",
+        targetAt: target(-86_400_000),
+        periodStartAt: target(-2 * 86_400_000),
+        dueAt: target(-86_400_000 + 2 * 3_600_000),
+        status: "sent",
+        reason: "digest_sent",
+        payload: "resumen de ayer",
+        updatedAt: target(-86_400_000),
+      },
+      {
+        date: "2026-11-26",
+        targetAt: target(-60_000),
+        periodStartAt: target(-86_400_000),
+        dueAt: target(-60_000 + 2 * 3_600_000),
+        status: "failed",
+        reason: "telegram_401",
+        payload: secret,
+        updatedAt: target(-10 * 86_400_000),
+      },
+    ]);
+
+    const response = await api("GET", "/api/overview?host=nas-home");
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.digest).toEqual({
+      date: "2026-11-26",
+      targetAt: target(-60_000).toISOString(),
+      status: "failed",
+      reason: "telegram_401",
+    });
+    // The frozen payload never crosses the public projection.
+    expect(JSON.stringify(body)).not.toContain(secret);
+
+    // The projection is global: another host sees the same digest date.
+    const other = await (
+      await api("GET", "/api/overview?host=apps")
+    ).json();
+    expect(other.host.id).toBe("apps");
+    expect(other.digest).toEqual(body.digest);
+  });
+
+  it("drops an unknown digest reason, keeps a prepared claim pending and reports zero history", async () => {
+    const now = Date.now();
+    const empty = await (await api("GET", "/api/overview")).json();
+    expect(empty.digest).toBeNull();
+
+    await db.insert(tables.digestRuns).values({
+      date: "2026-11-26",
+      targetAt: new Date(now - 30_000),
+      periodStartAt: new Date(now - 86_400_000),
+      dueAt: new Date(now + 6_000_000),
+      status: "claimed",
+      reason: "provider_body_never_public",
+      payload: "texto privado",
+    });
+    const pending = await (await api("GET", "/api/overview")).json();
+    expect(pending.digest).toMatchObject({
+      date: "2026-11-26",
+      status: "pending",
+      reason: null,
+    });
+    expect(JSON.stringify(pending)).not.toContain("provider_body_never_public");
+    expect(JSON.stringify(pending)).not.toContain("texto privado");
+  });
+
+  it("keeps the digest projection behind a session", async () => {
+    await db.insert(tables.digestRuns).values({
+      date: "2026-11-26",
+      targetAt: new Date(Date.now() - 30_000),
+      periodStartAt: new Date(Date.now() - 86_400_000),
+      dueAt: new Date(Date.now() + 6_000_000),
+      status: "failed",
+      reason: "telegram_401",
+      payload: "texto que no debe salir sin sesión",
+    });
+    sessionState.authenticated = false;
+    const response = await api("GET", "/api/overview");
+    expect(response.status).toBe(401);
+    const raw = await response.text();
+    expect(raw).not.toContain("digest");
+    expect(raw).not.toContain("texto que no debe salir");
   });
 });

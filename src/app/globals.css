@@ -1127,6 +1127,24 @@ h2:has(svg) {
 .alert-delivery[data-delivery-state="none"] .alert-delivery-value {
   color: var(--muted);
 }
+.alert-delivery[data-digest-state="sent"] .alert-delivery-value {
+  color: var(--gain);
+}
+.alert-delivery[data-digest-state="failed"] .alert-delivery-value {
+  color: var(--loss);
+}
+.alert-delivery[data-digest-state="uncertain"] .alert-delivery-value {
+  color: var(--peach);
+}
+.alert-delivery[data-digest-state="pending"] .alert-delivery-value {
+  color: var(--accent);
+}
+.alert-delivery[data-digest-state="empty"] .alert-delivery-value,
+.alert-delivery[data-digest-state="unconfigured"] .alert-delivery-value,
+.alert-delivery[data-digest-state="expired"] .alert-delivery-value,
+.alert-delivery[data-digest-state="none"] .alert-delivery-value {
+  color: var(--muted);
+}
 .page-footer {
   display: flex;
   flex-wrap: wrap;

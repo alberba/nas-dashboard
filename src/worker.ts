@@ -12,8 +12,26 @@ import {
   releaseCollectionLock,
   runDispatchOnce,
 } from "./lib/notification-dispatch";
-import { runDigestOnce } from "./lib/digest-runs";
+import { runDigestOnce, publicDigestReason, type DigestTransition } from "./lib/digest-runs";
 import { sampleInterval } from "./lib/validation";
+
+const digestTransitionLabels: Record<DigestTransition["status"], string> = {
+  expired: "vencido",
+  failed: "fallo",
+  uncertain: "incierto",
+};
+
+/**
+ * One bounded line per durable terminal transition. It names only the civil
+ * date and the finite reason: the payload, the chat, the bot token and any
+ * provider body stay out of the log.
+ */
+function logDigestTransition(event: DigestTransition) {
+  const reason = publicDigestReason(event.reason) ?? "unknown";
+  console.log(
+    `Resumen diario ${event.date}: ${digestTransitionLabels[event.status]} (${reason})`,
+  );
+}
 
 let lastCollection = 0;
 let lastCleanup = 0;
@@ -62,6 +80,7 @@ async function drain(
       client: lock,
       config,
       signal: shutdown.signal,
+      onTransition: logDigestTransition,
     });
     if (result.action === "idle" && digest.action === "idle") return;
   }

@@ -2058,12 +2058,14 @@ describe.skipIf(!baseUrl)("notification dispatch", () => {
 
     const next = await lockOwner();
     const provider = fakeProvider();
+    const transitions: unknown[] = [];
     try {
       const first = await digest.runDigestOnce({
         client: next,
         config: digestConfig(),
         now: () => DIGEST_TARGET + 120_000,
         fetchImpl: provider.transport,
+        onTransition: (event) => transitions.push(event),
       });
       expect(first.action).not.toBe("sent");
       expect(provider.calls).toHaveLength(0);
@@ -2075,15 +2077,25 @@ describe.skipIf(!baseUrl)("notification dispatch", () => {
         leaseUntil: null,
       });
       expect(run.reason).toBe("lease_expired_after_attempt");
+      // The recovery is reported once, with the finite reason only.
+      expect(transitions).toEqual([
+        {
+          date: DIGEST_DAY,
+          status: "uncertain",
+          reason: "lease_expired_after_attempt",
+        },
+      ]);
 
       const second = await digest.runDigestOnce({
         client: next,
         config: digestConfig(),
         now: () => DIGEST_TARGET + 180_000,
         fetchImpl: provider.transport,
+        onTransition: (event) => transitions.push(event),
       });
       expect(second.action).toBe("idle");
       expect(provider.calls).toHaveLength(0);
+      expect(transitions).toHaveLength(1);
       expect(await db.select().from(tables.digestRuns)).toHaveLength(1);
     } finally {
       await safeEnd(next);
@@ -2274,15 +2286,21 @@ describe.skipIf(!baseUrl)("notification dispatch", () => {
     await openDigestWarning();
     const owner = await lockOwner();
     const provider = fakeProvider();
+    const transitions: unknown[] = [];
     try {
       const result = await digest.runDigestOnce({
         client: owner,
         config: digestConfig(),
         now: () => DIGEST_TARGET + 60_000,
         fetchImpl: provider.transport,
+        onTransition: (event) => transitions.push(event),
       });
       expect(result).toMatchObject({ action: "sent", date: DIGEST_DAY });
       expect(provider.calls).toHaveLength(1);
+      // The single omitted window is reported once with its finite reason.
+      expect(transitions).toEqual([
+        { date: "2026-11-25", status: "expired", reason: "digest_missed" },
+      ]);
       const runs = await db
         .select()
         .from(tables.digestRuns)
@@ -2582,6 +2600,146 @@ describe.skipIf(!baseUrl)("notification dispatch", () => {
       expect(provider.calls).toHaveLength(0);
       // No live candidate covers that date, so nothing is scheduled for it.
       expect(await db.select().from(tables.digestRuns)).toHaveLength(0);
+    } finally {
+      await safeEnd(owner);
+    }
+  });
+
+  it("reports one bounded failure transition for a confirmed rejection", async () => {
+    await openDigestWarning();
+    const owner = await lockOwner();
+    const provider = fakeProvider(() =>
+      json(
+        { ok: false, error_code: 400, description: "Bad Request: chat not found" },
+        400,
+      ),
+    );
+    const transitions: unknown[] = [];
+    try {
+      const result = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 60_000,
+        fetchImpl: provider.transport,
+        onTransition: (event) => transitions.push(event),
+      });
+      expect(result).toMatchObject({
+        action: "failed",
+        date: DIGEST_DAY,
+        reason: "telegram_400",
+      });
+      expect(transitions).toEqual([
+        { date: DIGEST_DAY, status: "failed", reason: "telegram_400" },
+      ]);
+      const logged = JSON.stringify(transitions);
+      expect(logged).not.toContain(BOT_TOKEN);
+      expect(logged).not.toContain(CHAT_ID);
+      expect(logged).not.toContain("Disco casi lleno");
+      // The failure never queues a second notice on another channel. The only
+      // outbox row is the opening disposition that keeps the episode for the
+      // summary, not a new delivery attempt.
+      const outbox = await db.select().from(tables.notificationOutbox);
+      expect(outbox.every((row) => row.channel === "digest")).toBe(true);
+
+      // Reading the terminal row again does not repeat the transition.
+      const again = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 120_000,
+        fetchImpl: provider.transport,
+        onTransition: (event) => transitions.push(event),
+      });
+      expect(again.action).toBe("idle");
+      expect(transitions).toHaveLength(1);
+      expect(provider.calls).toHaveLength(1);
+    } finally {
+      await safeEnd(owner);
+    }
+  });
+
+  it("reports an ambiguous attempt as uncertain without claiming a delivery", async () => {
+    await openDigestWarning();
+    const owner = await lockOwner();
+    const provider = fakeProvider(() => {
+      throw new Error("socket closed after the attempt mark");
+    });
+    const transitions: unknown[] = [];
+    try {
+      const result = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 60_000,
+        fetchImpl: provider.transport,
+        onTransition: (event) => transitions.push(event),
+      });
+      expect(result).toMatchObject({
+        action: "uncertain",
+        date: DIGEST_DAY,
+        reason: "network",
+      });
+      expect(transitions).toEqual([
+        { date: DIGEST_DAY, status: "uncertain", reason: "network" },
+      ]);
+      expect(await digestRun()).toMatchObject({
+        status: "uncertain",
+        reason: "network",
+        attempts: 1,
+      });
+
+      const again = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 180_000,
+        fetchImpl: provider.transport,
+        onTransition: (event) => transitions.push(event),
+      });
+      expect(again.action).toBe("idle");
+      expect(transitions).toHaveLength(1);
+      expect(provider.calls).toHaveLength(1);
+    } finally {
+      await safeEnd(owner);
+    }
+  });
+
+  it("reports the last lost window once when the tick returns after the deadline", async () => {
+    await openDigestWarning();
+    const owner = await lockOwner();
+    const provider = fakeProvider();
+    const transitions: unknown[] = [];
+    try {
+      await digest.prepareDigestRuns({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_TARGET + 60_000,
+      });
+      expect((await digestRun()).status).toBe("prepared");
+
+      const result = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_DUE,
+        fetchImpl: provider.transport,
+        onTransition: (event) => transitions.push(event),
+      });
+      expect(result).toMatchObject({ action: "idle" });
+      expect(provider.calls).toHaveLength(0);
+      expect(transitions).toEqual([
+        { date: DIGEST_DAY, status: "expired", reason: "window_closed" },
+      ]);
+      expect(await digestRun()).toMatchObject({
+        status: "expired",
+        reason: "window_closed",
+      });
+
+      const again = await digest.runDigestOnce({
+        client: owner,
+        config: digestConfig(),
+        now: () => DIGEST_DUE + 60_000,
+        fetchImpl: provider.transport,
+        onTransition: (event) => transitions.push(event),
+      });
+      expect(again.action).toBe("idle");
+      expect(transitions).toHaveLength(1);
     } finally {
       await safeEnd(owner);
     }

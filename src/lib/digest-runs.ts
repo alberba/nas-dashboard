@@ -20,6 +20,7 @@ import {
   holdsCollectionLock,
 } from "./notification-dispatch";
 import { sendTelegramMessage, type TelegramTransport } from "./telegram";
+import type { PublicDigestReason, PublicDigestStatus } from "./types";
 
 /**
  * Daily digest queue.
@@ -80,7 +81,134 @@ export type DigestOptions = {
   leaseMs?: number;
   maxAttempts?: number;
   claimToken?: () => string;
+  /**
+   * Called once per durable transition to failure, expiry or uncertainty. The
+   * event only carries the civil date, the finite status and the finite
+   * reason; readers never repeat it for a terminal row they merely observed.
+   */
+  onTransition?: (event: DigestTransition) => void;
 };
+
+/** Finite transitions worth an operator log; normal empty days stay silent. */
+export type DigestTransition = {
+  date: string;
+  status: "expired" | "failed" | "uncertain";
+  reason: string;
+};
+
+/**
+ * Public projection of the latest relevant digest date. `targetAt` ordering is
+ * the only criterion: a row rewritten later never replaces a newer target, and
+ * a date whose target has not arrived yet leaves yesterday's result in view.
+ */
+export type DigestOverview = {
+  date: string;
+  targetAt: string;
+  status: PublicDigestStatus;
+  reason: PublicDigestReason | null;
+};
+
+/** Minimal read surface so the API can reuse its pool without a new client. */
+export type DigestReader = {
+  query(
+    text: string,
+    values?: unknown[],
+  ): Promise<{ rows: Record<string, unknown>[] }>;
+};
+
+const digestStatuses: Record<DigestStatus, PublicDigestStatus> = {
+  prepared: "pending",
+  claimed: "pending",
+  sent: "sent",
+  empty: "empty",
+  unconfigured: "unconfigured",
+  expired: "expired",
+  failed: "failed",
+  uncertain: "uncertain",
+};
+
+/** Closed list of reasons the hub may publish or log for a digest date. */
+const publicDigestReasons = new Set<string>([
+  "telegram_disabled",
+  "digest_empty",
+  "window_closed",
+  "digest_missed",
+  "retry_budget_exhausted",
+  "lease_expired_after_attempt",
+  "rate_limited",
+  "telegram_400",
+  "telegram_401",
+  "telegram_403",
+  "telegram_404",
+  "telegram_server_error",
+  "message_missing",
+  "network",
+  "timeout",
+  "aborted",
+  "invalid_response",
+  "missing_message_id",
+]);
+
+/**
+ * Maps a persisted reason into the closed public list. An unknown value is
+ * dropped instead of forwarding database or provider text to a client.
+ */
+export function publicDigestReason(
+  value: string | null,
+): PublicDigestReason | null {
+  return value && publicDigestReasons.has(value)
+    ? (value as PublicDigestReason)
+    : null;
+}
+
+function notifyTransition(
+  listener: DigestOptions["onTransition"],
+  event: DigestTransition,
+): void {
+  if (!listener) return;
+  try {
+    listener(event);
+  } catch {
+    // A log sink must never change the delivery outcome.
+  }
+}
+
+/**
+ * Reads the latest digest target that has already arrived. Before today's
+ * target the previous date remains the latest relevant one; zero rows mean the
+ * hub has never run (or answered before the feature existed) and project as
+ * `null`.
+ */
+export async function projectDigestOverview(
+  reader: DigestReader,
+  now = Date.now(),
+): Promise<DigestOverview | null> {
+  const { rows } = await reader.query(
+    `SELECT "date", "targetAt", status, reason
+       FROM digest_runs
+      WHERE "targetAt" <= $1
+      ORDER BY "targetAt" DESC, id DESC
+      LIMIT 1`,
+    [new Date(now)],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  const target =
+    row.targetAt instanceof Date
+      ? row.targetAt
+      : new Date(String(row.targetAt));
+  if (Number.isNaN(target.getTime())) return null;
+  const status = digestStatuses[row.status as DigestStatus] ?? "pending";
+  return {
+    date: String(row.date),
+    targetAt: target.toISOString(),
+    status,
+    reason: publicDigestReason(
+      typeof row.reason === "string" ? row.reason : null,
+    ),
+  };
+}
+
 
 export type DigestRun = typeof digestRuns.$inferSelect;
 
@@ -128,9 +256,10 @@ function digestBackoffMs(attempts: number): number {
 export async function recoverDigestRuns(
   client: Client,
   now: number,
+  onTransition?: DigestOptions["onTransition"],
 ): Promise<void> {
   const at = new Date(now);
-  await client.query(
+  const recovered = await client.query<{ date: string; reason: string }>(
     `UPDATE digest_runs
         SET status = 'uncertain',
             reason = 'lease_expired_after_attempt',
@@ -145,9 +274,16 @@ export async function recoverDigestRuns(
             "updatedAt" = $1
       WHERE status = 'claimed'
         AND "attemptStartedAt" IS NOT NULL
-        AND ("leaseUntil" IS NULL OR "leaseUntil" <= $1)`,
+        AND ("leaseUntil" IS NULL OR "leaseUntil" <= $1)
+      RETURNING "date", reason`,
     [at, at.toISOString()],
   );
+  for (const row of recovered.rows)
+    notifyTransition(onTransition, {
+      date: row.date,
+      status: "uncertain",
+      reason: row.reason,
+    });
   await client.query(
     `UPDATE digest_runs
         SET status = 'prepared',
@@ -183,7 +319,10 @@ export async function prepareDigestRuns(
   );
 
   // A run whose window closed before the attempt started can never be sent.
-  await options.client.query(
+  const expiredRows = await options.client.query<{
+    date: string;
+    reason: string;
+  }>(
     `UPDATE digest_runs
         SET status = 'expired',
             reason = 'window_closed',
@@ -198,9 +337,16 @@ export async function prepareDigestRuns(
             "updatedAt" = $1
       WHERE status IN ('prepared', 'claimed')
         AND "attemptStartedAt" IS NULL
-        AND "dueAt" <= $1`,
+        AND "dueAt" <= $1
+      RETURNING "date", reason`,
     [at, at.toISOString()],
   );
+  for (const row of expiredRows.rows)
+    notifyTransition(options.onTransition, {
+      date: row.date,
+      status: "expired",
+      reason: row.reason,
+    });
 
   if (live.length > 0) {
     const alertsUrl = digestAlertsUrl(options.config.betterAuthUrl);
@@ -309,7 +455,7 @@ export async function prepareDigestRuns(
     if (!changed) return { action: "idle" };
   }
 
-  await recordMissedRun(options.client, now, time, live);
+  await recordMissedRun(options, now, time, live);
   return live.length === 0 ? { action: "idle" } : { action: "prepared" };
 }
 
@@ -319,11 +465,12 @@ export async function prepareDigestRuns(
  * service must not produce a burst of stale summaries.
  */
 async function recordMissedRun(
-  client: Client,
+  options: DigestOptions,
   now: number,
   time: string,
   live: DigestSchedule[],
 ): Promise<void> {
+  const client = options.client;
   const at = new Date(now);
   const today = madridDateOf(at);
   const date =
@@ -342,14 +489,15 @@ async function recordMissedRun(
   // recorded. Either way no second marker is written.
   if (gap.rows[0]?.recorded !== false || gap.rows[0]?.history !== true) return;
   const missed = digestSchedule(date, time);
-  await client.query(
+  const inserted = await client.query<{ date: string }>(
     `INSERT INTO digest_runs
        ("date", "targetAt", "periodStartAt", "dueAt", status, reason,
         result, "preparedAt", "finishedAt")
      VALUES ($1, $2, $3, $4, 'expired', 'digest_missed',
         jsonb_build_object('state', 'suppressed', 'reason', 'digest_missed', 'at', $5::text),
         $6, $6)
-     ON CONFLICT ("date") DO NOTHING`,
+     ON CONFLICT ("date") DO NOTHING
+     RETURNING "date"`,
     [
       missed.date,
       missed.target,
@@ -359,6 +507,12 @@ async function recordMissedRun(
       at,
     ],
   );
+  for (const row of inserted.rows)
+    notifyTransition(options.onTransition, {
+      date: row.date,
+      status: "expired",
+      reason: "digest_missed",
+    });
 }
 
 /**
@@ -481,8 +635,8 @@ async function recordDigestFailure(
   token: string,
   now: number,
   reason: string,
-): Promise<void> {
-  await finishDigestRun(
+): Promise<boolean> {
+  return finishDigestRun(
     client,
     run.id,
     token,
@@ -499,8 +653,8 @@ async function recordDigestUncertain(
   token: string,
   now: number,
   reason: string,
-): Promise<void> {
-  await finishDigestRun(
+): Promise<boolean> {
+  return finishDigestRun(
     client,
     run.id,
     token,
@@ -532,13 +686,19 @@ async function recordDigestRetry(
   await beginTelegramCooldown(client, deadline, "rate_limited", now);
   const maxAttempts = options.maxAttempts ?? DIGEST_MAX_ATTEMPTS;
   if (attempts >= maxAttempts) {
-    await recordDigestFailure(
+    const recorded = await recordDigestFailure(
       client,
       run,
       token,
       now,
       "retry_budget_exhausted",
     );
+    if (recorded)
+      notifyTransition(options.onTransition, {
+        date: run.date,
+        status: "failed",
+        reason: "retry_budget_exhausted",
+      });
     return {
       action: "failed",
       date: run.date,
@@ -546,7 +706,19 @@ async function recordDigestRetry(
     };
   }
   if (deadline >= run.dueAt.getTime()) {
-    await recordDigestFailure(client, run, token, now, "window_closed");
+    const recorded = await recordDigestFailure(
+      client,
+      run,
+      token,
+      now,
+      "window_closed",
+    );
+    if (recorded)
+      notifyTransition(options.onTransition, {
+        date: run.date,
+        status: "failed",
+        reason: "window_closed",
+      });
     return { action: "failed", date: run.date, reason: "window_closed" };
   }
   const at = new Date(now);
@@ -568,6 +740,7 @@ async function recordDigestRetry(
 
 /** Terminal expiry that only the live owner of the claim may record. */
 async function expireDigestRun(
+  options: DigestOptions,
   client: Client,
   run: DigestRun,
   token: string,
@@ -582,6 +755,12 @@ async function expireDigestRun(
     "window_closed",
     "suppressed",
   );
+  if (expired)
+    notifyTransition(options.onTransition, {
+      date: run.date,
+      status: "expired",
+      reason: "window_closed",
+    });
   return expired
     ? { action: "expired", date: run.date, reason: "window_closed" }
     : { action: "idle", date: run.date, reason: "claim_lost" };
@@ -634,7 +813,7 @@ async function dispatchDigestRun(
   const clock = options.now ?? Date.now;
   const beforeRequest = clock();
   if (beforeRequest >= run.dueAt.getTime())
-    return expireDigestRun(client, run, token, beforeRequest);
+    return expireDigestRun(options, client, run, token, beforeRequest);
 
   const result = await sendTelegramMessage(
     {
@@ -663,24 +842,38 @@ async function dispatchDigestRun(
         result.retryAfterMs,
         beforeRequest,
       );
-    case "rejected":
-      await recordDigestFailure(
+    case "rejected": {
+      const recorded = await recordDigestFailure(
         client,
         run,
         token,
         beforeRequest,
         result.reason,
       );
+      if (recorded)
+        notifyTransition(options.onTransition, {
+          date: run.date,
+          status: "failed",
+          reason: result.reason,
+        });
       return { action: "failed", date: run.date, reason: result.reason };
-    case "uncertain":
-      await recordDigestUncertain(
+    }
+    case "uncertain": {
+      const recorded = await recordDigestUncertain(
         client,
         run,
         token,
         beforeRequest,
         result.reason,
       );
+      if (recorded)
+        notifyTransition(options.onTransition, {
+          date: run.date,
+          status: "uncertain",
+          reason: result.reason,
+        });
       return { action: "uncertain", date: run.date, reason: result.reason };
+    }
   }
 }
 
@@ -696,7 +889,7 @@ export async function runDigestOnce(
   if (!(await holdsCollectionLock(client))) throw new CollectionLockLost();
   const clock = options.now ?? Date.now;
   const startedAt = clock();
-  await recoverDigestRuns(client, startedAt);
+  await recoverDigestRuns(client, startedAt, options.onTransition);
   await prepareDigestRuns({ ...options, now: () => startedAt });
   if (!(await holdsCollectionLock(client))) throw new CollectionLockLost();
 

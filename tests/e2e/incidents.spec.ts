@@ -10,8 +10,31 @@ test.describe.configure({ mode: "serial" });
 
 let database: Client;
 let targetId: number;
+const digestDate = "2026-11-26";
 
 async function seedIncidents() {
+  // The digest projection always answers with the latest target. Clear other
+  // dates so this seeded result is the only candidate of the walk.
+  await database.query(
+    `DELETE FROM digest_runs WHERE "date" <> $1`,
+    [digestDate],
+  );
+  await database.query(
+    `INSERT INTO digest_runs
+       ("date", "targetAt", "periodStartAt", "dueAt", status, reason, payload)
+     VALUES ($1, now() - interval '1 minute', now() - interval '25 hours',
+             now() + interval '1 hour', 'failed', 'window_closed',
+             'contenido privado del resumen')
+     ON CONFLICT ("date") DO UPDATE
+       SET "targetAt" = EXCLUDED."targetAt",
+           "periodStartAt" = EXCLUDED."periodStartAt",
+           "dueAt" = EXCLUDED."dueAt",
+           status = EXCLUDED.status,
+           reason = EXCLUDED.reason,
+           payload = EXCLUDED.payload,
+           "updatedAt" = now()`,
+    [digestDate],
+  );
   await database.query(
     `DELETE FROM notification_outbox
       WHERE "incidentId" IN (
@@ -110,6 +133,14 @@ test("INC-E2E-01 opens an episode older than the 100 recent through email login"
     new RegExp(`view=alerts.*incident=${targetId}|incident=${targetId}.*view=alerts`),
   );
   await expect(page.locator('[data-view="alerts"]')).toBeVisible();
+  const digest = page.locator("[data-digest-panel]");
+  await expect(digest).toHaveAttribute("data-digest-scope", "global");
+  await expect(digest).toHaveAttribute("data-digest-state", "failed");
+  await expect(digest).toHaveAttribute("data-digest-date", digestDate);
+  await expect(digest).toHaveAttribute("data-digest-reason", "window_closed");
+  await expect(page.locator("body")).not.toContainText(
+    "contenido privado del resumen",
+  );
   const row = page.locator(`[data-incident="${targetId}"]`);
   await expect(row).toBeVisible();
   await expect(row).toHaveAttribute("data-incident-selected", "true");
@@ -191,4 +222,68 @@ test("INC-E2E-03 returns to the same episode after a session expiry", async ({
   await expect(row).toBeVisible();
   await expect(row).toBeFocused();
   await expect(page).toHaveURL(new RegExp(`incident=${targetId}`));
+});
+
+test("INC-E2E-04 keeps the global digest result when the host changes", async ({
+  page,
+}) => {
+  await page.context().clearCookies();
+  const hosts = [
+    {
+      id: "nas-home",
+      name: "NAS-HOME",
+      role: "instance",
+      connected: true,
+      lastAt: new Date().toISOString(),
+    },
+    {
+      id: "apps",
+      name: "Apps",
+      role: "apps-server",
+      connected: true,
+      lastAt: new Date().toISOString(),
+    },
+  ];
+  await page.route("**/api/hosts", (route) =>
+    route.fulfill({ json: { default: "nas-home", hosts } }),
+  );
+  // Only the second host is a fixture: every overview is built from the real
+  // primary answer, so the digest block is always the one the hub projects. The
+  // overview also carries the host directory, so every answer advertises both.
+  await page.route("**/api/overview?*", async (route) => {
+    const url = new URL(route.request().url());
+    const requested = url.searchParams.get("host");
+    const primaryUrl = new URL(url);
+    primaryUrl.searchParams.delete("host");
+    const response = await route.fetch({ url: primaryUrl.href });
+    const body = await response.json();
+    await route.fulfill({
+      json: {
+        ...body,
+        hosts,
+        ...(requested === "apps"
+          ? { host: { id: "apps", name: "Apps", role: "apps-server" } }
+          : {}),
+      },
+    });
+  });
+
+  await page.goto("/?view=alerts");
+  await loginWithEmail(page);
+  await expect(page.locator('[data-view="alerts"]')).toBeVisible();
+  const digest = page.locator("[data-digest-panel]");
+  await expect(digest).toHaveAttribute("data-digest-state", "failed");
+  await expect(digest).toHaveAttribute("data-digest-date", digestDate);
+  const target = await digest.getAttribute("data-digest-target");
+
+  // A different host has its own overview, but the digest is global.
+  await page.locator('[data-sidebar-host="apps"]').click();
+  await expect(page.locator('[data-view="maintenance"]')).toBeVisible();
+  await expect(page.locator(".page-content")).toHaveAttribute("data-host", "apps");
+
+  await page.getByRole("button", { name: /^Avisos/ }).click();
+  await expect(page.locator('[data-view="alerts"]')).toBeVisible();
+  await expect(digest).toHaveAttribute("data-digest-state", "failed");
+  await expect(digest).toHaveAttribute("data-digest-date", digestDate);
+  await expect(digest).toHaveAttribute("data-digest-target", target!);
 });

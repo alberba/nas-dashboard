@@ -236,6 +236,48 @@ export type PublicDelivery = {
   state: PublicDeliveryState;
   reason: PublicDeliveryReason | null;
 };
+/**
+ * Public state of one Europe/Madrid civil date of the daily digest. It is a
+ * finite projection: the frozen payload, the chat destination and any provider
+ * body stay out of it. `pending` covers both a prepared row and an active
+ * claim, so the operator never mistakes a started attempt for a delivery.
+ */
+export type PublicDigestStatus =
+  | "pending"
+  | "sent"
+  | "empty"
+  | "unconfigured"
+  | "expired"
+  | "failed"
+  | "uncertain";
+/** The only reasons the hub publishes for a digest date. */
+export type PublicDigestReason =
+  | "telegram_disabled"
+  | "digest_empty"
+  | "window_closed"
+  | "digest_missed"
+  | "retry_budget_exhausted"
+  | "lease_expired_after_attempt"
+  | "rate_limited"
+  | "telegram_400"
+  | "telegram_401"
+  | "telegram_403"
+  | "telegram_404"
+  | "telegram_server_error"
+  | "message_missing"
+  | "network"
+  | "timeout"
+  | "aborted"
+  | "invalid_response"
+  | "missing_message_id";
+export type DigestState = {
+  /** Civil date in Europe/Madrid, `YYYY-MM-DD`. */
+  date: string;
+  /** Instant the digest was scheduled for, as an ISO string. */
+  targetAt: string;
+  status: PublicDigestStatus;
+  reason: PublicDigestReason | null;
+};
 /** Public shape of an episode: the outage group, a container or another key. */
 export type IncidentKind = "services-down" | "container" | "condition";
 export type IncidentInventoryEntry = {
@@ -422,6 +464,11 @@ export type Overview = {
   alerts: Alert[];
   /** Open alerts for the selected host; matches the sidebar counter. */
   openAlerts: number;
+  /**
+   * Latest digest date, global to the hub. Absent while an older hub still
+   * answers or before the first run, so the client never invents a result.
+   */
+  digest?: DigestState | null;
   /** Expected names absent from fresh inventory, still inside their window. */
   watchPending: ContainerWatchPending[];
   operations: Operation[];

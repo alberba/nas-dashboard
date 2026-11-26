@@ -56,6 +56,7 @@ import {
   GithubUnavailable,
   relatePullRequests,
 } from "@/lib/github";
+import { projectDigestOverview, type DigestOverview } from "@/lib/digest-runs";
 import { deployProgressForHost } from "@/lib/deploy-progress";
 import { mergeRenovatePullRequest } from "@/lib/renovate-merge";
 import type { Metrics, RenovateContainer, Settings } from "@/lib/types";
@@ -381,6 +382,18 @@ async function handle(
         FROM series LEFT JOIN grouped USING(at) ORDER BY series.at`);
       const statuses = await hostStatuses(hosts);
       const settings = await getSettings(host.id);
+      // The digest belongs to the hub, not to the selected host: the same
+      // finite projection answers for every host of the overview.
+      let digest: DigestOverview | null = null;
+      try {
+        digest = await projectDigestOverview(
+          { query: (text, values) => pool.query(text, values) },
+          Date.now(),
+        );
+      } catch {
+        // A read-only panel must not take the whole dashboard down.
+        console.error("No se pudo leer el estado del resumen diario");
+      }
       return json({
         host: publicHost(host),
         hosts: statuses,
@@ -391,6 +404,7 @@ async function handle(
         interval: active ? 5 : 30,
         alerts: recentAlerts,
         openAlerts: openAlerts.value,
+        digest,
         watchPending: pendingWatch(settings),
         operations: recentOperations.map(publicOperation),
         history: history.rows,

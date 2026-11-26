@@ -4,9 +4,12 @@ import { CircleCheck, RefreshCw, TriangleAlert } from "lucide-react";
 import { StatusDot, type Tone } from "../ui";
 import type {
   Alert,
+  DigestState,
   PublicDelivery,
   PublicDeliveryReason,
   PublicDeliveryState,
+  PublicDigestReason,
+  PublicDigestStatus,
   Overview,
 } from "@/lib/types";
 
@@ -37,6 +40,86 @@ const reasonLabels: Record<PublicDeliveryReason, string> = {
   permanent_rejection: "Rechazo permanente del proveedor",
   uncertain: "Resultado incierto, sin reenvío automático",
 };
+
+const digestStateLabels: Record<PublicDigestStatus, string> = {
+  pending: "Preparado o en curso",
+  sent: "Enviado",
+  empty: "Sin contenido",
+  unconfigured: "Sin configurar",
+  expired: "Vencido",
+  failed: "No entregado",
+  uncertain: "Sin confirmación",
+};
+
+const digestStateTones: Record<PublicDigestStatus, Tone> = {
+  pending: "accent",
+  sent: "gain",
+  empty: "muted",
+  unconfigured: "muted",
+  expired: "peach",
+  failed: "loss",
+  uncertain: "peach",
+};
+
+/**
+ * Reasons explain a date without ever asserting what the provider did. An
+ * uncertain attempt says that confirmation is missing, not whether Telegram
+ * accepted the message.
+ */
+const digestReasonLabels: Record<PublicDigestReason, string> = {
+  telegram_disabled: "Telegram está desactivado",
+  digest_empty: "El periodo no tenía nada que contar",
+  window_closed: "La ventana de recuperación terminó",
+  digest_missed: "No hubo ejecución dentro de la ventana",
+  retry_budget_exhausted: "Se agotaron los reintentos permitidos",
+  lease_expired_after_attempt: "Falta confirmación del proveedor",
+  rate_limited: "El proveedor pidió esperar antes de reintentar",
+  telegram_400: "El proveedor rechazó la solicitud",
+  telegram_401: "El proveedor rechazó la credencial",
+  telegram_403: "El proveedor bloqueó la entrega",
+  telegram_404: "El destino no existe en el proveedor",
+  telegram_server_error: "El proveedor no respondió correctamente",
+  message_missing: "El mensaje ya no existe en el proveedor",
+  network: "No se pudo contactar con el proveedor",
+  timeout: "El proveedor no respondió a tiempo",
+  aborted: "La entrega se interrumpió",
+  invalid_response: "El proveedor devolvió una respuesta no válida",
+  missing_message_id: "El proveedor no confirmó el mensaje",
+};
+
+function digestTarget(value: string) {
+  const target = new Date(value);
+  if (Number.isNaN(target.getTime())) return value;
+  return target.toLocaleString("es", {
+    timeZone: "Europe/Madrid",
+    dateStyle: "long",
+    timeStyle: "short",
+  });
+}
+
+function DigestStatus({ digest }: { digest: DigestState }) {
+  return (
+    <div
+      className="alert-delivery digest-status"
+      data-digest-panel
+      data-digest-scope="global"
+      data-digest-state={digest.status}
+      data-digest-date={digest.date}
+      data-digest-target={digest.targetAt}
+      data-digest-reason={digest.reason ?? undefined}
+    >
+      <span className="alert-delivery-label">Último resumen diario</span>
+      <span className="alert-delivery-value">
+        <StatusDot tone={digestStateTones[digest.status]} />
+        <span>{digestStateLabels[digest.status]}</span>
+      </span>
+      <time dateTime={digest.targetAt}>{digestTarget(digest.targetAt)}</time>
+      {digest.reason && (
+        <p className="subtle">{digestReasonLabels[digest.reason]}</p>
+      )}
+    </div>
+  );
+}
 
 function DeliveryStatus({
   part,
@@ -200,6 +283,21 @@ export function AlertsView({
 
   return (
     <div className="stack section-gap">
+      <section className="panel stack">
+        <h2>Resumen diario</h2>
+        {data.digest ? (
+          <DigestStatus digest={data.digest} />
+        ) : (
+          <p
+            className="subtle"
+            data-digest-panel
+            data-digest-state="none"
+            data-digest-scope="global"
+          >
+            Todavía no hay ningún resumen registrado.
+          </p>
+        )}
+      </section>
       <section className="panel stack">
         <h2>Incidencias y recuperaciones</h2>
         {trueAbsence && (
