@@ -386,12 +386,16 @@ describe.skipIf(!baseUrl)("incidents migration 0004", () => {
     expect(current.tables["public.alerts"]).toBeUndefined();
     expect(snapshot("0004_incidents").tables["public.incidents"]).toBeDefined();
 
+    // The live database is at head: columns and indexes are compared against
+    // the newest snapshot, so a later additive migration does not falsify the
+    // historical chain checked above.
+    const latest = snapshot(entries[entries.length - 1].tag);
     for (const table of [
       "incidents",
       "incident_events",
       "notification_outbox",
     ] as const) {
-      const expected = current.tables[`public.${table}`];
+      const expected = latest.tables[`public.${table}`];
       expect(expected).toBeDefined();
       const columns = await liveColumns(client, table);
       expect(columns.map((column) => column.column_name).sort()).toEqual(
