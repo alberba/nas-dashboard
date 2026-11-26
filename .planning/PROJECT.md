@@ -31,16 +31,16 @@ Saber en segundos qué está pasando en los dos servidores y poder actuar sobre 
 - ✓ Validación en runtime de métricas, mantenimiento y despliegues antes de evaluar incidencias — fase 02 (CONT-01)
 - ✓ Incidencia agrupada por caída de host y reconciliación de `expectedContainers` con Docker — fase 03 (INCD-09 e INCD-10)
 - ✓ Recogida de ayudantes huérfanos de propiedad demostrable y fallos de limpieza visibles — fase 03 (CONT-04)
+- ✓ Resumen diario a las 08:00 de Madrid, sin duplicados ni pérdidas en cambios de hora, con su estado visible en Avisos — fase 04 (DIG-01 a DIG-06)
+- ✓ Healthchecks de agente y worker que declaran unhealthy un proceso vivo pero bloqueado — fase 04 (CONT-03)
 
 ### Active
 
-- [ ] Resumen diario para lo no urgente, con lo crítico entregado al momento
 - [ ] Reconocimiento y acciones desde Telegram con autorización y verificación reciente
 - [ ] Exigir verificación reciente en el servidor para todas las acciones destructivas, no solo para algunas
 - [ ] Documentar y probar la rotación conjunta del token de Telegram
 - [ ] CSP y HSTS, más límites de cuerpo y de tamaño de respuesta en el hub
 - [ ] Rollups y caché del histórico para que 30 días de muestras no dominen la carga de PostgreSQL
-- [ ] Healthchecks de agente y worker
 
 ### Out of Scope
 
@@ -79,7 +79,8 @@ Saber en segundos qué está pasando en los dos servidores y poder actuar sobre 
 | Conservar el episodio de conexión al agrupar la caída del host | El historial y la entrega quedan asociados a la misma incidencia | Fase 03 verificada con inhibición y recuperación por host |
 | Retirar una entrada ausente tras 30 minutos de inventario válido | Las recreaciones breves conservan la vigilancia | Fase 03 conserva el episodio ante un reemplazo inequívoco |
 | Incluir los fallos persistentes de limpieza en el resumen | Mantenimiento muestra el primer fallo y el segundo abre una incidencia por host | La fase 03 registra la incidencia. Su entrega corresponde a la fase 04. |
-| Resumen diario para lo no urgente | Evita interrumpir por informativo sin perderlo | — Pending |
+| Resumen diario para lo no urgente | Evita interrumpir por informativo sin perderlo | Fase 04 validada en Telegram: un solo envío por fecha, y un intento sin confirmación queda incierto sin reenvío |
+| Healthcheck por marca de progreso, no por proceso vivo | Un proceso congelado sigue vivo; solo el avance del bucle prueba salud | Fase 04 validada en Docker: SIGSTOP lleva a unhealthy y SIGCONT recupera; la purga de la papelera borra fuera del LOCK |
 | Telegram con acciones inline | El usuario quiere resolver desde el móvil, no solo enterarse | — Pending |
 | Auditar con datos reales del NAS y de media-stack | Sin una cifra de partida no hay criterio de éxito | Telegram medido. El push histórico queda sin medir en ausencia del CSV de `alerts`. |
 
@@ -101,4 +102,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-11-25 after Phase 3*
+*Last updated: 2026-11-26 after Phase 4*

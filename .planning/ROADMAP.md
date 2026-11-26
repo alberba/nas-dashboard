@@ -17,7 +17,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Auditoría del ruido** - Medir mensajes, recuperaciones, duplicados y horas antes de fijar la política. (completed 2026-11-24)
 - [x] **Phase 2: Incidencias y entrega única** - Una incidencia con identidad y exactamente un mensaje, con outbox y estado de entrega. (completed 2026-11-25)
 - [x] **Phase 3: Agrupación, inventario y ayudantes** - Una caída de host es una incidencia, sin fantasmas ni ayudantes huérfanos. (completed 2026-11-25)
-- [ ] **Phase 4: Resumen diario** - Lo no urgente llega una vez al día, sin duplicarse ni perderse en los cambios de hora.
+- [x] **Phase 4: Resumen diario** - Lo no urgente llega una vez al día, sin duplicarse ni perderse en los cambios de hora. (completed 2026-11-26)
 - [ ] **Phase 5: Bot de lectura y reconocimiento** - Abrir, silenciar y reconocer desde el mensaje, con allowlist y tokens de un solo uso.
 - [ ] **Phase 6: Puerta de seguridad** - Verificación reciente en el servidor para todas las acciones destructivas, más CSP y HSTS.
 - [ ] **Phase 7: Acciones verificadas desde Telegram** - Iniciar en el chat y completar en el hub con sesión y passkey.
@@ -119,7 +119,7 @@ Plans:
   3. Sin contenido no se envía nada; con mucho contenido se trunca con "+N" y se respeta el límite de 4096 caracteres.
   4. Si el resumen no sale, el operador lo ve en el hub y el worker lo reporta.
   5. El agente y el worker exponen healthcheck, así que un proceso vivo pero bloqueado no se declara sano.
-**Plans**: 3/3 plans executed
+**Plans**: 3/3 plans complete
 
 Plans:
 **Wave 1**
@@ -225,7 +225,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 1. Auditoría del ruido | 3/3 | Complete    | 2026-11-24 |
 | 2. Incidencias y entrega única | 5/5 | Complete    | 2026-11-25 |
 | 3. Agrupación, inventario y ayudantes | 3/3 | Complete    | 2026-11-25 |
-| 4. Resumen diario | 3/3 | In Progress | - |
+| 4. Resumen diario | 3/3 | Complete    | 2026-11-26 |
 | 5. Bot de lectura y reconocimiento | 0/3 | Not started | - |
 | 6. Puerta de seguridad | 0/3 | Not started | - |
 | 7. Acciones verificadas desde Telegram | 0/3 | Not started | - |

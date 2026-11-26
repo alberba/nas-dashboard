@@ -1,43 +1,43 @@
 ---
 gsd_state_version: "1.0"
-current_phase: 04
-current_phase_name: Resumen diario
-status: verifying
-stopped_at: Completed 04-03-PLAN.md — all plans summarized, ready for verification
-last_updated: "2026-11-26T09:23:31.289Z"
+current_phase: 5
+current_phase_name: Bot de lectura y reconocimiento
+status: planning
+stopped_at: Phase 04 complete, ready to plan Phase 5
+last_updated: "2026-11-26T11:19:10.749Z"
 last_activity: 2026-11-26
-last_activity_desc: Phase 04 execution started
-state_head: a7a8710c7b87ea1286b04cfd26c5e707ef7731d1
+last_activity_desc: Phase 04 complete, transitioned to Phase 5
+state_head: 5406c0ea08cfbf281662f96edbaa070000f1990b
 progress:
   total_phases: 8
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 14
   completed_plans: 14
-  percent: 38
+  percent: 50
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-11-25)
+See: .planning/PROJECT.md (updated 2026-11-26)
 
 **Core value:** Saber en segundos qué está pasando en los dos servidores y poder actuar sobre ellos sin abrir una consola.
-**Current focus:** Phase 04 — Resumen diario
+**Current focus:** Phase 5 — Bot de lectura y reconocimiento
 
 ## Current Position
 
-Phase: 04 (Resumen diario) — EXECUTING
-Plan: 3 of 3
-Status: Phase complete — ready for verification
-Last activity: 2026-11-26 — Phase 04 execution started
+Phase: 5 — Bot de lectura y reconocimiento
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-11-26 — Phase 04 complete, transitioned to Phase 5
 
-Progress: [████░░░░░░] 38%
+Progress: [█████░░░░░] 50%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 11
+- Total plans completed: 14
 - Average duration: —
 - Total execution time: 0 hours
 
@@ -48,6 +48,7 @@ Progress: [████░░░░░░] 38%
 | 01 | 3 | - | - |
 | 02 | 5 | - | - |
 | 3 | 3 | - | - |
+| 04 | 3 | - | - |
 
 **Recent Trend:**
 - Last 5 plans: —
@@ -98,7 +99,8 @@ None yet.
 
 ### Blockers/Concerns
 
-Ningún bloqueo para planificar la fase 02.
+Ningún bloqueo para planificar la fase 5.
+- [Fase 04] Para probar el healthcheck del worker hay que congelar el proceso `node`, no el contenedor: `docker kill -s SIGSTOP` solo para `pnpm` (PID 1).
 
 ## Deferred Items
 
@@ -110,6 +112,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-26T09:23:31.076Z
-Stopped at: Completed 04-03-PLAN.md — all plans summarized, ready for verification
+Last session: 2026-11-26T12:50:00.000Z
+Stopped at: Phase 04 complete, ready to plan Phase 5
 Resume file: None
