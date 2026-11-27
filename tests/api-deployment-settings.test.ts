@@ -10,6 +10,7 @@ import {
   it,
   vi,
 } from "vitest";
+import { DEFAULT_BODY_LIMIT } from "@/lib/request-body";
 import {
   createTestDatabase,
   dropTestDatabase,
@@ -157,6 +158,7 @@ describe.skipIf(!baseUrl)("deployment settings API", () => {
   let pool: typeof import("@/lib/db").pool;
   let tables: typeof import("@/lib/schema");
   let routes: typeof import("../src/app/api/[...path]/route");
+  let bodyLimit: number;
 
   async function api(
     path: string,
@@ -239,6 +241,9 @@ describe.skipIf(!baseUrl)("deployment settings API", () => {
     await migrate(db, { migrationsFolder: "./drizzle" });
     tables = await import("@/lib/schema");
     routes = await import("../src/app/api/[...path]/route");
+    ({ DEPLOYMENT_SETTINGS_BODY_LIMIT: bodyLimit } = await import(
+      "@/lib/deployment-settings"
+    ));
     await db.insert(tables.user).values({
       id: "test-user",
       name: "Test",
@@ -561,5 +566,52 @@ describe.skipIf(!baseUrl)("deployment settings API", () => {
     expect(nas.requests).toEqual([]);
     expect(secondary.requests).toEqual([]);
     expect(apps.requests).toEqual([]);
+  });
+  describe("body limit", () => {
+    const VALUE_BYTES = 4096;
+
+    /** A schema-valid map whose values add up to at least `bytes`. */
+    function valuesOfAtLeast(bytes: number) {
+      return Object.fromEntries(
+        Array.from({ length: Math.ceil(bytes / VALUE_BYTES) }, (_, index) => [
+          `SETTING_${index}`,
+          "a".repeat(VALUE_BYTES),
+        ]),
+      );
+    }
+
+    it("accepts a valid body above the global limit and below its own", async () => {
+      const large = {
+        ...body,
+        values: valuesOfAtLeast(DEFAULT_BODY_LIMIT + 1),
+      };
+      expect(JSON.stringify(large).length).toBeLessThan(bodyLimit);
+
+      const response = await api(
+        "/api/deployments/settings?host=nas-home",
+        large,
+        { "Idempotency-Key": crypto.randomUUID() },
+      );
+
+      expect(response.status).toBe(200);
+      expect(nas.requests).toHaveLength(1);
+    });
+
+    it("answers 413 above its own limit without an operation or agent request", async () => {
+      const oversized = {
+        ...body,
+        values: valuesOfAtLeast(bodyLimit + 1),
+      };
+
+      const response = await api(
+        "/api/deployments/settings?host=nas-home",
+        oversized,
+        { "Idempotency-Key": crypto.randomUUID() },
+      );
+
+      expect(response.status).toBe(413);
+      expect(nas.requests).toEqual([]);
+      expect(await db.select().from(tables.operations)).toEqual([]);
+    });
   });
 });

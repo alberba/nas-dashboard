@@ -19,6 +19,13 @@ const noStore = { "Cache-Control": "no-store" };
 const json = (value: unknown, status = 200) =>
   Response.json(value, { status, headers: noStore });
 
+/**
+ * Own body limit, aligned with `MAX_REQUEST_BYTES` of agent/env_settings.py:
+ * the schema admits up to 64 values of 4096 characters, so the global 16 KiB
+ * would reject legitimate .env settings the agent itself accepts.
+ */
+export const DEPLOYMENT_SETTINGS_BODY_LIMIT = 64 * 1024;
+
 const KEY = /^[A-Z_][A-Z0-9_]{0,79}$/;
 const RELEASE = /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
 const CONTROL = /[\u0000-\u001f\u007f]/;
