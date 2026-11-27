@@ -145,6 +145,37 @@ sudo tailscale serve --bg --https=443 http://127.0.0.1:4324
 
 Si el NAS está caído, la entrada privada permite consultar el historial en el servidor remoto. Los datos muestran su antigüedad y los controles se desactivan. El NAS puede tardar hasta 75 segundos en aparecer desconectado.
 
+### Factor de verificación por entrada
+
+El servidor decide el factor de verificación (passkey o contraseña) por la cabecera `Host` que fija el proxy, nunca por `Origin`, que elige el cliente. El nombre de host de `BETTER_AUTH_URL` exige passkey; cualquier otro nombre de host que llegue a la aplicación se trata como entrada alternativa y acepta la contraseña. Se compara el nombre sin el puerto.
+
+Cae a passkey todo lo que no se puede atribuir con certeza a la entrada alternativa: un `Origin` cuyo host no coincide con el `Host` de la conexión (o que no se lee, como el literal `null`), un `Host` con varias entradas, vacío o ilegible y la ausencia de dominio principal configurado. La aplicación no lee la cabecera de host reenviado ni la de protocolo reenviado. Así, quien tiene la contraseña no puede obtener una verificación por contraseña en el dominio principal falsificando el `Origin` del origen alternativo.
+
+Contrato del despliegue:
+
+- Cada proxy debe reenviar el `Host` original. Nginx Proxy Manager lo hace con su configuración por defecto. Tailscale Serve no lo documenta, así que se comprueba con el paso de abajo. Si la entrada alternativa deja de ofrecer contraseña, el proxy no reenvía el `Host` original; el fallo es seguro, porque el resultado cae a passkey.
+- El proxy del dominio principal solo debe enrutar sus propios nombres.
+- El puerto de la aplicación solo se publica donde un cliente no pueda hablarle sin proxy. `compose.yaml` lo publica en loopback por defecto: quien alcance el puerto directamente elige el `Host`, lo que equivale a la entrada alternativa.
+
+Comprobación manual, con una sesión iniciada por contraseña (`SESSION_COOKIE` es la cabecera `Cookie` de esa sesión). Ambas peticiones van al dominio principal y deben devolver 403 con `code` `password_not_allowed`:
+
+```sh
+curl -si -X POST https://hub.example.com/api/verification/password \
+  -H "Cookie: $SESSION_COOKIE" \
+  -H "Origin: https://hub-alternativo.tailnet.example" \
+  -H "Content-Type: application/json" \
+  -d '{"password":"contraseña-de-prueba"}'
+
+curl -si -X POST https://hub.example.com/api/verification/password \
+  -H "Cookie: $SESSION_COOKIE" \
+  -H "Origin: https://hub-alternativo.tailnet.example" \
+  -H "X-Forwarded-Host: hub-alternativo.tailnet.example" \
+  -H "Content-Type: application/json" \
+  -d '{"password":"contraseña-de-prueba"}'
+```
+
+Por la entrada alternativa (`https://hub-alternativo.tailnet.example`), la verificación con contraseña del diálogo debe funcionar.
+
 ## Cabeceras de seguridad
 
 HSTS lo emite la propia aplicación, no el proxy. Toda respuesta lleva `Strict-Transport-Security: max-age=15552000` (180 días), sin `includeSubDomains` ni `preload`: el dominio principal comparte nombre con otros servicios del NAS, incluir subdominios los afectaría a todos y `preload` es prácticamente irreversible. Al emitirse en la aplicación, la cabecera cubre por igual el dominio principal (Nginx Proxy Manager) y la entrada alternativa de Tailscale Serve, sin configurar dos veces el mismo valor.

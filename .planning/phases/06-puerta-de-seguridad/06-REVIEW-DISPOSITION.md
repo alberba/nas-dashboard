@@ -5,7 +5,7 @@ titles: json
 findings:
   - id: CR-01
     severity: critical
-    disposition: open
+    disposition: fixed
     title: "Passkey gate can be downgraded to the password factor by forging the `Origin` header"
   - id: WR-01
     severity: warning
@@ -39,7 +39,7 @@ findings:
     severity: info
     disposition: open
     title: "`sendHostCommand` is documented for exempt commands but typed for all"
-open: 9
+open: 8
 total: 9
 recorded: 2026-11-27T13:55:20.686Z
 ---
@@ -48,7 +48,7 @@ recorded: 2026-11-27T13:55:20.686Z
 
 | Finding | Severity | Disposition | Source |
 |---------|----------|-------------|--------|
-| CR-01 | critical | open | - |
+| CR-01 | critical | fixed | 07-06 (D-13) |
 | WR-01 | warning | open | - |
 | WR-02 | warning | open | - |
 | WR-03 | warning | open | - |
