@@ -60,6 +60,7 @@ let cookies: Awaited<
   ReturnType<import("@playwright/test").BrowserContext["cookies"]>
 > = [];
 test.beforeAll(async ({ request }) => {
+  test.setTimeout(90_000);
   const state = await (await request.get("/api/setup")).json();
   if (state.required)
     expect(
@@ -75,14 +76,22 @@ test.beforeAll(async ({ request }) => {
         })
       ).ok(),
     ).toBeTruthy();
-  const response = await request.post("/api/auth/sign-in/email", {
-    headers: { Origin: "http://localhost:3000" },
-    data: {
-      email: "ci@hub.invalid",
-      password: "Ci-only-password-not-used-in-production!",
-    },
-  });
-  expect(response.ok()).toBeTruthy();
+  // Earlier spec files may have spent the sign-in budget: wait it out.
+  for (let attempt = 0; ; attempt++) {
+    const response = await request.post("/api/auth/sign-in/email", {
+      headers: { Origin: "http://localhost:3000" },
+      data: {
+        email: "ci@hub.invalid",
+        password: "Ci-only-password-not-used-in-production!",
+      },
+    });
+    if (response.status() !== 429 || attempt === 5) {
+      expect(response.ok()).toBeTruthy();
+      break;
+    }
+    const wait = Number(response.headers()["x-retry-after"] ?? 10);
+    await new Promise((resolve) => setTimeout(resolve, (wait + 1) * 1000));
+  }
   cookies = (await request.storageState()).cookies;
 });
 test.beforeEach(async ({ page }) => {
@@ -287,6 +296,9 @@ test("the host actions card asks for verification exactly for the protected comm
 }) => {
   const { calls, native } = await watchCommands(page);
   await page.goto("/?view=maintenance&tab=status");
+  // evaluateAll does not wait. The card draws after the overview loads, and an
+  // instance host is the only one that lists every command, backup-now among them.
+  await expect(page.locator('[data-host-command="backup-now"]')).toBeVisible();
   const ids = await page
     .locator("[data-host-command]")
     .evaluateAll((nodes) =>
