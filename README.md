@@ -162,6 +162,29 @@ Cada uno debe devolver una sola línea con `max-age=15552000` y sin `includeSubD
 
 La CSP se aplica en dos capas. Los documentos (login, panel y 404) reciben desde `src/proxy.ts` una política con un nonce nuevo por petición y `'strict-dynamic'`, sin `'unsafe-inline'` en `script-src`, con `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`, `connect-src 'self'` y `frame-ancestors 'none'`. Las respuestas de la API llevan su propia política mínima, `default-src 'none'; frame-ancestors 'none'`, declarada en `next.config.ts`; los documentos no la reciben. Para revertir la CSP de documentos basta con borrar `src/proxy.ts`; el HSTS y la CSP de la API seguirían declarados en `next.config.ts`. La política conserva `style-src 'unsafe-inline'` porque el panel serializa atributos `style` con anchos dependientes de datos.
 
+## Límites de cuerpo y de respuesta
+
+**Cuerpo de las mutaciones.** El hub lee el cuerpo de cada mutación con un lector acotado que corta en streaming, sin fiarse solo de `Content-Length`. El tope es de 16 KiB por defecto, de 64 KiB en los ajustes de despliegue y de 32 KiB en las rutas de autenticación (`POST /api/auth/*`). Un cuerpo mayor responde `413` y no deja operación, incidencia ni línea de log.
+
+**Respuesta del agente.** Todo lo que el hub lee de un agente pasa por un único lector acotado en `nasEffectForHost` (`src/lib/nas.ts`). Si la respuesta declara un `Content-Length` por encima del tope de su camino no se lee; si no lo declara se lee en streaming y se corta al pasar el tope. Los topes están en `AGENT_RESPONSE_LIMITS`:
+
+| Camino | Tope |
+| --- | --- |
+| `/metrics` | 2 MiB |
+| `/maintenance` | 1 MiB |
+| `/deployments` | 2 MiB |
+| `/files` | 8 MiB |
+| `/trash` | 2 MiB |
+| `/logs` | 8 MiB |
+| Respuesta a un `POST` | 256 KiB |
+| Cualquier otro | 1 MiB |
+
+Al superar el tope la ruta responde `502` con `code: "agent_response_too_large"` y un mensaje fijo, nunca datos parciales. La vista conserva el último dato válido y muestra el error (el estado de mantenimiento queda marcado como obsoleto y el listado de archivos mantiene las entradas de la misma carpeta). El colector lo trata como un contrato roto: no escribe muestra, no resuelve incidencias y no cuenta como desconexión. Si un `POST` ya ejecutado devuelve una respuesta demasiado grande, el resultado queda pendiente de verificar, igual que una respuesta ilegible.
+
+Limitación conocida: un directorio con más entradas de las que caben en 8 MiB no podrá listarse con el tope actual, porque el agente aún no pagina el listado. Los valores de los topes son suposiciones sin medir; se revisan con los tamaños reales de `/metrics`, `/files` y `/logs` en producción, y bajar el tope de 64 MiB de los logs del agente y paginar el listado son tareas posteriores.
+
+**Acciones protegidas.** La lista de acciones, comandos y rutas que exigen una verificación reciente vive en `src/lib/sensitive-actions.ts` y es la única que leen el servidor y la interfaz. La ventana de verificación es de 5 minutos. Una acción, comando o ruta nuevos deben declararse allí: una prueba falla si no lo están.
+
 ## Móvil y notificaciones
 
 Añade hub. a la pantalla de inicio. En Ajustes, activa los avisos y envía una prueba. El permiso debe concederse en cada dispositivo. En iPhone se requiere una aplicación añadida a la pantalla de inicio; en Android depende del navegador y sus permisos.

@@ -10,6 +10,7 @@ import {
   it,
   vi,
 } from "vitest";
+import { AGENT_RESPONSE_LIMITS } from "../src/lib/nas";
 import {
   createTestDatabase,
   dropTestDatabase,
@@ -49,6 +50,8 @@ type FakeAgent = {
   token: string;
   url: string;
   requests: Recorded[];
+  /** Answer /logs with more than its cap allows. */
+  oversize: boolean;
   reset(): void;
   close(): Promise<void>;
 };
@@ -58,8 +61,10 @@ async function fakeAgent(token: string): Promise<FakeAgent> {
     token,
     url: "",
     requests: [] as Recorded[],
+    oversize: false,
     reset() {
       agent.requests = [];
+      agent.oversize = false;
     },
     async close() {
       await new Promise<void>((resolve, reject) =>
@@ -77,6 +82,19 @@ async function fakeAgent(token: string): Promise<FakeAgent> {
     if (request.headers.authorization !== `Bearer ${token}`)
       return send(401, { error: "No autorizado" });
     if (url.pathname !== "/logs") return send(404, { error: "No encontrado" });
+    if (agent.oversize)
+      return send(200, {
+        id: ID,
+        lines: [
+          {
+            stream: "stdout",
+            at: T1,
+            message: "x".repeat(AGENT_RESPONSE_LIMITS.logs),
+          },
+        ],
+        cursor: `${T1}#1`,
+        truncated: false,
+      });
     const since = url.searchParams.get("since");
     const lines = since
       ? logLines.filter((entry) => entry.at > since.split("#")[0])
@@ -257,6 +275,19 @@ describe.skipIf(!baseUrl)("container logs API", () => {
     );
     expect(response.status).toBe(404);
     expect(agent.requests).toEqual([]);
+  });
+
+  it("answers 502 with a stable code and no log line when the agent answer is over its cap", async () => {
+    agent.oversize = true;
+    const response = await api("GET", `/api/logs?host=apps&id=${ID}`);
+    expect(response.status).toBe(502);
+    const text = await response.text();
+    expect(JSON.parse(text).code).toBe("agent_response_too_large");
+    expect(JSON.parse(text)).not.toHaveProperty("lines");
+    expect(text).not.toContain("xxxx");
+
+    agent.oversize = false;
+    expect((await api("GET", `/api/logs?host=apps&id=${ID}`)).status).toBe(200);
   });
 
   it("never exposes a log write or console route", async () => {

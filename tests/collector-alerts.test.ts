@@ -10,6 +10,7 @@ import {
   type TestDatabase,
 } from "./database";
 import { deploymentsSnapshot, maintenanceSnapshot, metricsSnapshot } from "./host-fixtures";
+import { AGENT_RESPONSE_LIMITS } from "@/lib/nas";
 import type { RuntimeConfig } from "@/lib/runtime-config";
 import type { TelegramTransport } from "@/lib/telegram";
 
@@ -652,6 +653,25 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
     expect(await db.select().from(tables.samples)).toHaveLength(0);
     expect(await db.select().from(tables.incidents)).toHaveLength(0);
     expect(await db.select().from(tables.notificationOutbox)).toHaveLength(0);
+  });
+
+  it("treats a metrics answer over its cap as a contract failure, not a disconnect", async () => {
+    const start = Date.UTC(2026, 10, 20, 11);
+    const host = getHosts().find((entry) => entry.id === "nas-home")!;
+    const open = await openContainer("nas-home", "sonarr", start - 60_000);
+    const before = await state();
+    nas.rawMetrics = "x".repeat(AGENT_RESPONSE_LIMITS.metrics + 1);
+
+    await collectHost(host, start);
+    await collectHost(host, start + 61_000);
+    await collectHost(host, start + 122_000);
+
+    const after = await state();
+    expect(await db.select().from(tables.samples)).toHaveLength(0);
+    expect(after.incidents.map((row) => row.key)).toEqual(["container:sonarr"]);
+    expect(after.incidents[0]).toMatchObject({ id: open, resolvedAt: null });
+    expect(after.events).toHaveLength(before.events.length);
+    expect(after.outbox).toHaveLength(before.outbox.length);
   });
 
   it("keeps the disconnect policy and the planned-reboot grace on real failures", async () => {
