@@ -255,6 +255,61 @@ describe("recent verification for sensitive actions", () => {
     expect(store.records.size).toBe(0);
   });
 
+  it("does not give the password to a forged alternate Origin on the primary host", async () => {
+    process.env.BETTER_AUTH_URL = "https://hub.example";
+    const store = new MemoryStore();
+    const verifyPassword = vi.fn().mockResolvedValue({ status: true });
+
+    const response = await handlePasswordVerification({
+      request: new Request("https://hub.example/api/verification/password", {
+        method: "POST",
+        headers: {
+          host: "hub.example",
+          origin: "https://private.example",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ password: "a long enough password" }),
+      }),
+      session,
+      store,
+      now,
+      verifyPassword,
+    });
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({
+      code: "password_not_allowed",
+      method: "passkey",
+    });
+    expect(verifyPassword).not.toHaveBeenCalled();
+    expect(store.records.size).toBe(0);
+  });
+
+  it("does not let a stored password verification satisfy an action sent with a forged Origin", async () => {
+    process.env.BETTER_AUTH_URL = "https://hub.example";
+    const store = new MemoryStore();
+    await recordRecentVerification(store, session, "password", now);
+
+    const response = await guardSensitiveAction({
+      request: new Request("https://hub.example/api/action", {
+        method: "POST",
+        headers: {
+          host: "hub.example",
+          origin: "https://private.example",
+        },
+      }),
+      session,
+      store,
+      now,
+    });
+
+    expect(response?.status).toBe(403);
+    expect(await response?.json()).toMatchObject({
+      code: "recent_verification_required",
+      method: "passkey",
+    });
+  });
+
   it("reports whether a verification is still valid", async () => {
     process.env.BETTER_AUTH_URL = "https://hub.example";
     const store = new MemoryStore();
