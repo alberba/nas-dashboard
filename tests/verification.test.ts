@@ -33,6 +33,7 @@ const now = new Date("2026-11-13T10:00:00.000Z");
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   delete process.env.BETTER_AUTH_URL;
 });
 
@@ -307,6 +308,151 @@ describe("recent verification for sensitive actions", () => {
     expect(await response?.json()).toMatchObject({
       code: "recent_verification_required",
       method: "passkey",
+    });
+  });
+
+  it("keeps the password on the genuine alternate entry, end to end", async () => {
+    process.env.BETTER_AUTH_URL = "https://hub.example";
+    const store = new MemoryStore();
+    const verifyPassword = vi.fn().mockResolvedValue({ status: true });
+    const headers = {
+      host: "private.example",
+      origin: "https://private.example",
+    };
+
+    const verified = await handlePasswordVerification({
+      request: new Request("http://127.0.0.1:3000/api/verification/password", {
+        method: "POST",
+        headers: { ...headers, "content-type": "application/json" },
+        body: JSON.stringify({ password: "a long enough password" }),
+      }),
+      session,
+      store,
+      now,
+      verifyPassword,
+    });
+
+    expect(verified.status).toBe(200);
+    expect(await verified.json()).toMatchObject({ method: "password" });
+    expect(store.records.get("session-1")).toMatchObject({ method: "password" });
+
+    const guarded = await guardSensitiveAction({
+      request: new Request("http://127.0.0.1:3000/api/action", {
+        method: "POST",
+        headers,
+      }),
+      session,
+      store,
+      now,
+    });
+    expect(guarded).toBeNull();
+  });
+
+  describe("method by connection host", () => {
+    type Row = {
+      name: string;
+      headers: Record<string, string>;
+      method: "passkey" | "password";
+      primary?: string | null;
+    };
+    const rows: Row[] = [
+      {
+        name: "alternate Host and Origin",
+        headers: { host: "private.example", origin: "https://private.example" },
+        method: "password",
+      },
+      {
+        name: "alternate Host without Origin",
+        headers: { host: "private.example" },
+        method: "password",
+      },
+      {
+        name: "primary Host without Origin",
+        headers: { host: "hub.example" },
+        method: "passkey",
+      },
+      {
+        name: "primary Origin against an alternate Host",
+        headers: { host: "private.example", origin: "https://hub.example" },
+        method: "passkey",
+      },
+      {
+        name: "alternate Origin against the primary Host",
+        headers: { host: "hub.example", origin: "https://private.example" },
+        method: "passkey",
+      },
+      {
+        name: "the literal null Origin against an alternate Host",
+        headers: { host: "private.example", origin: "null" },
+        method: "passkey",
+      },
+      {
+        name: "the same name on another port",
+        headers: {
+          host: "private.example:8443",
+          origin: "https://private.example",
+        },
+        method: "password",
+      },
+      {
+        name: "a forwarded host against the primary Host",
+        headers: { host: "hub.example", "x-forwarded-host": "private.example" },
+        method: "passkey",
+      },
+      {
+        name: "a forwarded host and protocol against the primary Host",
+        headers: {
+          host: "hub.example",
+          "x-forwarded-host": "private.example",
+          "x-forwarded-proto": "https",
+          origin: "https://private.example",
+        },
+        method: "passkey",
+      },
+      {
+        name: "a Host list",
+        headers: { host: "private.example, hub.example" },
+        method: "passkey",
+      },
+      {
+        name: "an empty Host",
+        headers: { host: "" },
+        method: "passkey",
+      },
+      {
+        name: "an unreadable Host",
+        headers: { host: "private example" },
+        method: "passkey",
+      },
+      {
+        name: "a bracketed IPv6 Host",
+        headers: { host: "[::1]:3000" },
+        method: "passkey",
+      },
+      {
+        name: "no primary domain configured",
+        headers: { host: "private.example", origin: "https://private.example" },
+        method: "passkey",
+        primary: null,
+      },
+    ];
+
+    it.each(rows)("answers $method for $name", async (row) => {
+      // primaryOrigin() falls back to TRUSTED_ORIGINS, so both go for "none".
+      const primary = row.primary === null ? undefined : "https://hub.example";
+      vi.stubEnv("BETTER_AUTH_URL", primary);
+      if (!primary) vi.stubEnv("TRUSTED_ORIGINS", undefined);
+
+      const response = await handleVerificationStatus({
+        request: new Request("http://127.0.0.1:3000/api/verification", {
+          headers: row.headers,
+        }),
+        session,
+        store: new MemoryStore(),
+        now,
+      });
+
+      expect((await response.json()).method).toBe(row.method);
     });
   });
 

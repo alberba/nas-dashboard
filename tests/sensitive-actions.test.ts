@@ -50,7 +50,11 @@ const session = vi.hoisted(() => ({
 vi.mock("@/lib/auth", () => ({
   auth: { api: { getSession: vi.fn(async () => session.value) } },
   bootstrapAuth: { api: { signUpEmail: vi.fn() } },
-  origins: ["http://localhost:3000"],
+  origins: [
+    "http://localhost:3000",
+    "https://hub.example",
+    "https://private.example",
+  ],
 }));
 
 type RecordedRequest = {
@@ -945,6 +949,84 @@ describe.skipIf(!baseUrl)("sensitive actions", () => {
         }
       },
     );
+  });
+  describe("verification factor by entry", () => {
+    const primary = { Host: "hub.example", Origin: "https://hub.example" };
+    const alternate = {
+      Host: "private.example",
+      Origin: "https://private.example",
+    };
+    const forged = { Host: "hub.example", Origin: "https://private.example" };
+    let previousPrimary: string | undefined;
+
+    beforeEach(() => {
+      previousPrimary = process.env.BETTER_AUTH_URL;
+      process.env.BETTER_AUTH_URL = "https://hub.example";
+    });
+
+    afterEach(async () => {
+      if (previousPrimary === undefined) delete process.env.BETTER_AUTH_URL;
+      else process.env.BETTER_AUTH_URL = previousPrimary;
+      await clearVerification(db, tables);
+    });
+
+    it("refuses the password route on the primary host with a forged Origin", async () => {
+      await clearVerification(db, tables);
+
+      const response = await api(
+        "/api/verification/password",
+        { password: "a long enough password" },
+        forged,
+      );
+
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({
+        code: "password_not_allowed",
+        method: "passkey",
+      });
+      expect(await db.select().from(tables.recentVerification)).toEqual([]);
+    });
+
+    it("does not let a password verification run a protected action sent with a forged Origin", async () => {
+      await seedVerifiedSession(db, tables, { method: "password" });
+
+      const response = await api("/api/action?host=nas-home", bodies.stop, {
+        ...forged,
+        "Idempotency-Key": crypto.randomUUID(),
+      });
+
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({
+        code: "recent_verification_required",
+        method: "passkey",
+      });
+      expect(agent.requests).toEqual([]);
+      expect(await db.select().from(tables.operations)).toEqual([]);
+    });
+
+    it("lets a password verification run a protected action on the genuine alternate entry", async () => {
+      await seedVerifiedSession(db, tables, { method: "password" });
+
+      const response = await api("/api/action?host=nas-home", bodies.stop, {
+        ...alternate,
+        "Idempotency-Key": crypto.randomUUID(),
+      });
+
+      expect(response.status).toBe(200);
+      expect(agent.requests).toHaveLength(1);
+    });
+
+    it("lets a passkey verification run a protected action on the primary host", async () => {
+      await seedVerifiedSession(db, tables, { method: "passkey" });
+
+      const response = await api("/api/action?host=nas-home", bodies.stop, {
+        ...primary,
+        "Idempotency-Key": crypto.randomUUID(),
+      });
+
+      expect(response.status).toBe(200);
+      expect(agent.requests).toHaveLength(1);
+    });
   });
   describe("request body limit on every mutation", () => {
     /** Row counts of every table a rejected request must leave untouched. */
