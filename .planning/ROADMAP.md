@@ -174,12 +174,15 @@ Plans:
   1. Toda ruta destructiva (stop, restart, update, purge, empty-trash, clean-images, reconnect-apps, host-command, merge de Renovate) rechaza la acción sin verificación reciente en el servidor.
   2. La lista de acciones protegidas vive en un único módulo y un test falla si una ruta nueva no la declara.
   3. Las respuestas incluyen CSP conservadora y HSTS, y una mutación con cuerpo excesivo se rechaza antes de parsear.
-**Plans**: 3 plans
+**Plans**: 6 plans
 
 Plans:
-- [ ] 06-01: Módulo único de acciones sensibles y `guardSensitiveAction` en todas las rutas destructivas
-- [ ] 06-02: Test que falla si una ruta destructiva no declara su protección
-- [ ] 06-03: CSP, HSTS y límites de cuerpo y de tamaño de respuesta
+- [ ] 06-01-PLAN.md — Manifiesto único de acciones sensibles y guard de verificación reciente en acciones y comandos de host
+- [ ] 06-02-PLAN.md — CSP con nonce por petición y HSTS
+- [ ] 06-03-PLAN.md — UI: comandos protegidos con diálogo de passkey y e2e adaptados
+- [ ] 06-04-PLAN.md — Límite de cuerpo de las mutaciones con 413 antes de parsear
+- [ ] 06-05-PLAN.md — Manifiesto de rutas fail-closed, escaneos que fallan ante una ruta sin declarar y cuerpo acotado de Better Auth
+- [ ] 06-06-PLAN.md — Tope de respuesta del agente (502) y vistas que conservan el último dato
 
 **Repo:** hub (incluye `agent/`)
 **Research flag:** No — `guardSensitiveAction`, CSP/HSTS y límites son configuración conocida.
