@@ -17,6 +17,7 @@ import {
   testDatabaseUrl,
   type TestDatabase,
 } from "./database";
+import { madridClock } from "@/lib/madrid-day";
 import { createFakeBotApi } from "./telegram-fake";
 import { seedVerifiedSession } from "./verified-session";
 import type { RuntimeConfig } from "@/lib/runtime-config";
@@ -1002,6 +1003,77 @@ describe.skipIf(!baseUrl)("telegram intents", () => {
       const rows = await intents();
       expect(rows).toHaveLength(2);
       expect(rows.filter((row) => row.status === "pending")).toHaveLength(1);
+    });
+  });
+
+  describe("result of the action", () => {
+    /** Runs an intent to a terminal state and queues a render of the notice. */
+    async function finished(status: "executed" | "failed" | "uncertain") {
+      await seedVerifiedSession(db, tables);
+      const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
+      const client = await lockOwner();
+      const incidentId = await sendNotice(fake, client, "backup-failed");
+      const created = await createdIntent(incidentId);
+      const closedAt = START + 90_000;
+      await intentsModule.claimIntent(db, created.id, START + 61_000);
+      await intentsModule.finishIntent(db, created.id, status, closedAt);
+      await db.transaction((tx) =>
+        store.queueKeyboardEdit(tx, incidentId, "result-probe"),
+      );
+      // Deliver every pending render of the notice: the last one carries the result.
+      let call: FakeCall | undefined;
+      for (let turn = 0; turn < 4; turn += 1) {
+        const outcome = await dispatch.runDispatchOnce({
+          client,
+          config,
+          now: () => START + 200_000,
+          fetchImpl: fake.transport,
+        });
+        if (outcome.action !== "edited") break;
+        call = edits(fake).at(-1);
+      }
+      return { fake, client, incidentId, closedAt, call: call! };
+    }
+
+    for (const status of ["executed", "failed", "uncertain"] as const)
+      it(`shows the hour of a ${status} intent and does not acknowledge the notice`, async () => {
+        const { incidentId, closedAt, call, fake } = await finished(status);
+
+        expect(String(call.body.text)).toContain(madridClock(closedAt));
+        const offered = await actionsOf(call);
+        expect(offered.has("menu_open")).toBe(true);
+        expect(handoffButtonOf(call)).toBeUndefined();
+        expect(offered.has("intent_cancel")).toBe(false);
+        const [incident] = await db
+          .select()
+          .from(tables.incidents)
+          .where(eq(tables.incidents.id, incidentId));
+        expect(incident.acknowledgedAt).toBeNull();
+        expect(sends(fake)).toHaveLength(1);
+      });
+
+    it("keeps the result and only the explanation once the episode resolves", async () => {
+      const { fake, client, incidentId, closedAt } = await finished("executed");
+      await store.recordIncidentObservation({
+        hostId: "nas-home",
+        key: "backup-failed",
+        failing: false,
+        now: START + 210_000,
+      });
+      let call: FakeCall | undefined;
+      for (let turn = 0; turn < 4; turn += 1) {
+        const outcome = await dispatch.runDispatchOnce({
+          client,
+          config,
+          now: () => START + 300_000,
+          fetchImpl: fake.transport,
+        });
+        if (outcome.action !== "edited") break;
+        call = edits(fake).at(-1);
+      }
+      expect(String(call!.body.text)).toContain(madridClock(closedAt));
+      expect([...(await actionsOf(call!)).keys()]).toEqual(["why"]);
+      expect(incidentId).toBeGreaterThan(0);
     });
   });
 

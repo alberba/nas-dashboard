@@ -442,8 +442,30 @@ describe.skipIf(!baseUrl)("telegram lane hardening", () => {
       updatedAt: new Date(now - 1_000),
     });
 
+    // Two intents past the retention window and one still inside it.
+    await db.insert(tables.user).values({ id: "cleanup-user", name: "C", email: "c@hub.invalid" });
+    const intent = (id: string, expiresAt: number) => ({
+      id,
+      incidentId,
+      hostId: "nas-home",
+      action: "backup-now",
+      target: "nas-home",
+      userId: "cleanup-user",
+      handoffHash: id.repeat(64).slice(0, 64),
+      status: "expired",
+      createdAt: new Date(expiresAt - 300_000),
+      expiresAt: new Date(expiresAt),
+    });
+    await db.insert(tables.telegramActionIntents).values([
+      intent("a", now - 2 * DAY),
+      intent("b", now - DAY - 1_000),
+      intent("c", now - 3_600_000),
+    ]);
+
     const deleted = await cleanup.cleanupTelegramState(db, new Date(now));
-    expect(deleted).toEqual({ tokens: 1, snoozes: 1 });
+    expect(deleted).toEqual({ tokens: 1, snoozes: 1, intents: 2 });
+    const kept = await db.select().from(tables.telegramActionIntents);
+    expect(kept.map((row) => row.id)).toEqual(["c"]);
 
     const tokens = await db.select().from(tables.telegramActionTokens);
     expect(tokens.map((row) => row.tokenHash).sort()).toEqual([
@@ -461,6 +483,7 @@ describe.skipIf(!baseUrl)("telegram lane hardening", () => {
     const cleanup = await import("@/lib/telegram-cleanup");
     expect(cleanup.TOKEN_RETENTION_AFTER_EXPIRY_MS).toBe(DAY);
     expect(cleanup.SNOOZE_RETENTION_MS).toBe(7 * DAY);
+    expect(cleanup.INTENT_RETENTION_AFTER_EXPIRY_MS).toBe(DAY);
     expect(lane.POISON_MAX_ATTEMPTS).toBe(3);
     expect(lane.OFFSET_RESET_AFTER_MS).toBe(6 * DAY);
   });
