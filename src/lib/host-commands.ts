@@ -14,6 +14,13 @@ import {
 } from "./hosts";
 import { nasForHost, NasRejected } from "./nas";
 import { operations, samples } from "./schema";
+import { requiresVerificationForCommand } from "./sensitive-actions";
+import { guardSensitiveAction } from "./verification-api";
+import {
+  verificationStore,
+  type VerificationSession,
+  type VerificationStore,
+} from "./verification";
 
 export {
   hostCommandIds,
@@ -211,19 +218,32 @@ export async function executeHostCommand({
  * Runs one named host command from the HTTP route. The body only carries the
  * command name; the agent owns the unit names and the fixed argv. Idempotency
  * is per host and a lost response stays pending, never retried automatically.
+ *
+ * The command still has to clear the recent-verification gate the manifest
+ * declares for it (D-03). The host and the idempotency key are validated first,
+ * so a bad request never looks like a verification failure; a 403 records no
+ * operation and sends nothing to the agent.
  */
 export async function runHostCommand({
   request,
   session,
   hosts,
+  store = verificationStore,
+  now = new Date(),
 }: {
   request: Request & { nextUrl?: URL };
-  session: { user: { id: string } };
+  session: VerificationSession;
   hosts: HostConfig[];
+  store?: VerificationStore;
+  now?: Date;
 }) {
   const input = hostCommandRequestSchema.parse(await request.json());
   const host = resolveHost(hosts, request.nextUrl?.searchParams.get("host"));
   const operationId = z.uuid().parse(request.headers.get("idempotency-key"));
+  if (requiresVerificationForCommand(input.command)) {
+    const denied = await guardSensitiveAction({ request, session, store, now });
+    if (denied) return denied;
+  }
   const outcome = await executeHostCommand({
     host,
     userId: session.user.id,
