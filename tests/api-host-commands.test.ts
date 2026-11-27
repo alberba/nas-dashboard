@@ -16,13 +16,10 @@ import {
   testDatabaseUrl,
   type TestDatabase,
 } from "./database";
+import { seedVerifiedSession, testSession } from "./verified-session";
 
 const session = vi.hoisted(() => ({
-  value: {
-    user: { id: "test-user", name: "Test", email: "test@hub.invalid" },
-  } as {
-    user: { id: string; name: string; email: string };
-  } | null,
+  value: null as unknown,
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -239,6 +236,7 @@ describe.skipIf(!baseUrl)("host command API", () => {
     await migrate(db, { migrationsFolder: "./drizzle" });
     tables = await import("@/lib/schema");
     routes = await import("../src/app/api/[...path]/route");
+    await seedVerifiedSession(db, tables);
   });
 
   afterAll(async () => {
@@ -250,13 +248,12 @@ describe.skipIf(!baseUrl)("host command API", () => {
   });
 
   beforeEach(async () => {
-    session.value = {
-      user: { id: "test-user", name: "Test", email: "test@hub.invalid" },
-    };
+    session.value = testSession;
     await db.delete(tables.operations);
     await db.delete(tables.samples);
     await sample("nas-home");
     await sample("apps");
+    await seedVerifiedSession(db, tables);
     nas.reset();
     apps.reset();
   });

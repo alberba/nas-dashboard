@@ -12,9 +12,12 @@ import {
 } from "vitest";
 import {
   actionPolicies,
+  hostCommandPolicies,
   requiresVerificationForAction,
+  requiresVerificationForCommand,
   type ActionId,
 } from "@/lib/sensitive-actions";
+import { hostCommandIds } from "@/lib/host-command-contract";
 import { actionSchema } from "@/lib/validation";
 import {
   clearVerification,
@@ -93,13 +96,51 @@ async function fakeAgent(token: string): Promise<FakeAgent> {
       return;
     }
     const path = new URL(request.url ?? "/", "http://agent").pathname;
-    if (path !== "/action") {
+    if (path !== "/action" && path !== "/command") {
       response.writeHead(404, { "Content-Type": "application/json" });
       response.end(JSON.stringify({ error: "No encontrado" }));
       return;
     }
     agent.requests.push({ method: request.method ?? "", path, body });
     response.writeHead(200, { "Content-Type": "application/json" });
+    if (path === "/command") {
+      const command = (body as { command: string }).command;
+      const extra =
+        command === "backup-now"
+          ? {
+              backup: {
+                started: true,
+                lastStatus: { status: "ok", at: "2026-11-13T04:04:49Z" },
+              },
+            }
+          : command === "clean-images"
+            ? {
+                cleanup: {
+                  reclaimedBytes: 30_000_000_000,
+                  imagesRemoved: 12,
+                  imagesPreserved: 4,
+                  imagesFailed: 0,
+                },
+              }
+            : command === "check-health"
+              ? {
+                  health: {
+                    vpn: {
+                      applicable: true,
+                      connected: true,
+                      state: "running",
+                      health: "healthy",
+                    },
+                    apps: [],
+                    healthy: true,
+                  },
+                }
+              : command === "reconnect-apps"
+                ? { wiring: { started: true } }
+                : {};
+      response.end(JSON.stringify({ command, status: "success", ...extra }));
+      return;
+    }
     response.end(JSON.stringify({ state: "ok" }));
   });
   await new Promise<void>((resolve) =>
@@ -365,4 +406,79 @@ describe.skipIf(!baseUrl)("sensitive actions", () => {
   it("still keeps the verification window at five minutes", () => {
     expect(VERIFICATION_TTL_MS).toBe(300_000);
   });
+
+  it("declares every host command of the closed list with a reason", () => {
+    expect(Object.keys(hostCommandPolicies).sort()).toEqual(
+      [...hostCommandIds].sort(),
+    );
+    for (const [id, policy] of Object.entries(hostCommandPolicies)) {
+      expect(policy.kind, id).toMatch(/^(protected|exempt)$/);
+      expect(policy.reason.trim().length, id).toBeGreaterThan(0);
+    }
+  });
+
+  it("protects exactly the host commands that change state", () => {
+    const protectedIds = hostCommandIds
+      .filter((command) => requiresVerificationForCommand(command))
+      .sort();
+
+    expect(protectedIds).toEqual(
+      [
+        "backup-now",
+        "clean-images",
+        "deploy-now",
+        "pause-follower",
+        "reconnect-apps",
+        "resume-follower",
+        "run-security",
+      ].sort(),
+    );
+    expect(requiresVerificationForCommand("check-health")).toBe(false);
+    expect(requiresVerificationForCommand("unknown")).toBe(false);
+  });
+
+  it.each(hostCommandIds)(
+    "without verification the host command %s answers 403 only when it changes state",
+    async (command) => {
+      await clearVerification(db, tables);
+
+      const response = await api(
+        "/api/host-command?host=nas-home",
+        { command },
+        { "Idempotency-Key": crypto.randomUUID() },
+      );
+
+      if (requiresVerificationForCommand(command)) {
+        expect(response.status, command).toBe(403);
+        expect(await response.json()).toMatchObject({
+          code: "recent_verification_required",
+          reason: "missing",
+        });
+        expect(agent.requests, command).toEqual([]);
+        expect(await db.select().from(tables.operations)).toEqual([]);
+      } else {
+        expect(response.status, command).toBe(200);
+        expect((await response.json()).code).not.toBe(
+          "recent_verification_required",
+        );
+        expect(agent.requests, command).toHaveLength(1);
+      }
+    },
+  );
+
+  it.each(hostCommandIds)(
+    "with a recent verification the host command %s answers 200",
+    async (command) => {
+      await seedVerifiedSession(db, tables);
+
+      const response = await api(
+        "/api/host-command?host=nas-home",
+        { command },
+        { "Idempotency-Key": crypto.randomUUID() },
+      );
+
+      expect(response.status, command).toBe(200);
+      expect(agent.requests, command).toHaveLength(1);
+    },
+  );
 });
