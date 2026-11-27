@@ -20,7 +20,19 @@ export function useHostRead<T>(path: string, revision = 0) {
       controller = attempt;
       try {
         const response = await fetch(url, { signal: attempt.signal });
-        if (!response.ok) throw new Error("No se pudo actualizar esta sección");
+        if (!response.ok) {
+          // The only server message the view shows is the stable too-large one.
+          const failure = (await response.json().catch(() => null)) as {
+            code?: unknown;
+            error?: unknown;
+          } | null;
+          throw new Error(
+            failure?.code === "agent_response_too_large" &&
+              typeof failure.error === "string"
+              ? failure.error
+              : "No se pudo actualizar esta sección",
+          );
+        }
         const data = (await response.json()) as T;
         if (!stopped && !attempt.signal.aborted)
           setHeld({ key, data, error: "" });

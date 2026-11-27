@@ -39,7 +39,13 @@ import {
   updatePendingOperation,
 } from "@/lib/lifecycle";
 import { verificationStore } from "@/lib/verification";
-import { nasForHost, NasRejected, CONTAINER_UPDATE_TIMEOUT_MS } from "@/lib/nas";
+import {
+  nasForHost,
+  NasInvalidResponse,
+  NasRejected,
+  ResponseTooLarge,
+  CONTAINER_UPDATE_TIMEOUT_MS,
+} from "@/lib/nas";
 import {
   getHosts,
   primaryHost,
@@ -899,6 +905,21 @@ async function handle(
     // line (D-09), and no later branch may turn it into a 400 or a 503.
     if (error instanceof BodyTooLarge)
       return json({ error: "La solicitud es demasiado grande." }, 413);
+    // An oversized agent answer is never shown, not even in part (D-11). The
+    // log line carries the cap only: it is an operational signal, not content.
+    if (
+      error instanceof NasInvalidResponse &&
+      error.cause instanceof ResponseTooLarge
+    ) {
+      console.error("Agent response over its cap", error.cause.limit);
+      return json(
+        {
+          error: "La respuesta del host es demasiado grande para mostrarla.",
+          code: "agent_response_too_large",
+        },
+        502,
+      );
+    }
     if (error instanceof HostNotFound)
       return json({ error: "Host no configurado" }, 404);
     if (error instanceof HostConfigError)

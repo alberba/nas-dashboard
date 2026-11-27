@@ -90,6 +90,46 @@ function rejectedMessage(data: unknown) {
   return "El NAS rechazó la operación";
 }
 
+/**
+ * The only way the hub reads an agent body. It never holds more than `limit`
+ * bytes, and decodes once at the end, so `JSON.parse` only ever sees a body
+ * that fit whole: a cut anywhere, even inside a multibyte character or a JSON
+ * token, is a ResponseTooLarge and never partial data.
+ */
+async function readBounded(
+  response: Response,
+  limit: number,
+  signal: AbortSignal,
+): Promise<string> {
+  const declared = response.headers.get("content-length")?.trim();
+  if (declared && /^\d+$/.test(declared) && Number(declared) > limit) {
+    await response.body?.cancel().catch(() => {});
+    throw new ResponseTooLarge(limit);
+  }
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const stop = () => void reader.cancel().catch(() => {});
+  signal.addEventListener("abort", stop, { once: true });
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (signal.aborted) throw signal.reason;
+      if (done) break;
+      received += value.byteLength;
+      if (received > limit) throw new ResponseTooLarge(limit);
+      chunks.push(value);
+    }
+  } catch (error) {
+    stop();
+    throw error;
+  } finally {
+    signal.removeEventListener("abort", stop);
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks));
+}
+
 export function nasEffectForHost<T>(
   host: AgentHost,
   path: string,
@@ -111,9 +151,21 @@ export function nasEffectForHost<T>(
         }),
       catch: (cause) => new NasUnavailable({ cause }),
     });
+    const limit = responseLimitFor(path, body);
     const raw = yield* Effect.tryPromise({
-      try: () => response.text(),
-      catch: (cause) => new NasUnavailable({ cause }),
+      try: (signal) => readBounded(response, limit, signal),
+      catch: (cause) => {
+        if (!(cause instanceof ResponseTooLarge))
+          return new NasUnavailable({ cause });
+        // A correct answer that does not fit is a broken contract (pending for
+        // a POST), never a rejection; an error answer keeps its status.
+        return response.ok
+          ? new NasInvalidResponse({ cause })
+          : new NasRejected({
+              status: response.status,
+              message: rejectedMessage(undefined),
+            });
+      },
     });
     let data: unknown;
     let parseError: unknown;
