@@ -169,9 +169,9 @@ async function settledResponse(intent: LoadedIntent) {
  * needs a recent verification before anything is claimed or sent (BOT-08).
  *
  * Order: body, lookup by digest (uniform 404), state (410 or replay), guard
- * (403 without consuming), 501 for an action the hub cannot run yet, host and
- * recent sample (503 without consuming), atomic claim, execution with the
- * intent id as the operation id, and closure plus the `:done` edit in one
+ * (403 without consuming), host and recent sample (503 without consuming),
+ * the container by name (409 without consuming), atomic claim, execution with
+ * the intent id as the operation id, and closure plus the `:done` edit in one
  * transaction.
  */
 export async function handleIntentExecute({
@@ -200,17 +200,6 @@ export async function handleIntentExecute({
     now: new Date(clock()),
   });
   if (denied) return denied;
-
-  // Start and reboot are wired in the next step; until then the hub fails
-  // closed and leaves the intent untouched.
-  if (!isHostCommandIntent(action) && action !== "restart")
-    return json(
-      {
-        error: "Esta acción todavía no se puede confirmar desde el hub",
-        code: "action_unavailable",
-      },
-      501,
-    );
 
   const host = resolveHost(getHosts(), intent.hostId);
   const latest = await loadLatestSample(host.id);

@@ -1096,6 +1096,9 @@ describe.skipIf(!baseUrl)("telegram intent API", () => {
           expect(response.status, action).toBe(200);
           expect(nas.requests, action).toHaveLength(1);
           expect((await intentRow(intent.id)).status, action).toBe("executed");
+          // An executed intent queues its `:done` edit; the next handoff of
+          // this loop must find a clean outbox to deliver its own notice first.
+          await db.delete(tables.notificationOutbox);
         }
         await seedVerifiedSession(db, tables);
       }
