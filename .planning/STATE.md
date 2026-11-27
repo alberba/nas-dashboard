@@ -2,17 +2,17 @@
 gsd_state_version: "1.0"
 current_phase: 06
 current_phase_name: Puerta de seguridad
-status: executing
-stopped_at: Completed 06-05-PLAN.md
-last_updated: "2026-11-27T12:14:48.921Z"
+status: verifying
+stopped_at: Completed 06-06-PLAN.md
+last_updated: "2026-11-27T12:24:07.441Z"
 last_activity: 2026-11-27
 last_activity_desc: Phase 06 execution started
-state_head: 59f9ae7641124a33cb436224ab89263e28fde747
+state_head: 7e6136225efa5b64271120ca357685aeaacbcb7c
 progress:
   total_phases: 8
   completed_phases: 5
   total_plans: 26
-  completed_plans: 25
+  completed_plans: 26
   percent: 63
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-11-27)
 
 Phase: 06 (Puerta de seguridad) — EXECUTING
 Plan: 6 of 6
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-11-27 — Phase 06 execution started
 
 Progress: [██████░░░░] 63%
@@ -77,6 +77,7 @@ Progress: [██████░░░░] 63%
 | Phase 06 P03 | 7 min | 2 tasks | 7 files |
 | Phase 06 P04 | 12 min | 3 tasks | 10 files |
 | Phase 06 P05 | 6 min | 3 tasks | 7 files |
+| Phase 06 P06 | 9 min | 3 tasks | 14 files |
 
 ## Accumulated Context
 
@@ -137,6 +138,8 @@ Recent decisions affecting current work:
 - [Phase 06]: 06-05: routeVerdict compara el nombre exacto con Object.hasOwn y el catch-all lo consulta tras la sesión (401 antes de 404 y 405); setup comprueba el método antes de la sesión
 - [Phase 06]: 06-05: las expresiones regulares de incidencias viven en el manifiesto y el despachador las importa; ProtectedPostRoute se deriva del tipo y exige un fixture por ruta protegida
 - [Phase 06]: 06-05: el envoltorio de Better Auth acota el POST a 32 KiB, reconstruye la petición sin content-length y deja pendiente confirmar las exenciones presence, verification/password y DELETE push (A10)
+- [Phase 06]: 06-06: un exceso de respuesta del agente es NasInvalidResponse(ResponseTooLarge), o NasRejected con su estado si la respuesta ya era un error, para que colector y deploy-progress lo traten como contrato roto sin cambios
+- [Phase 06]: 06-06: el listado de archivos solo conserva las entradas cuando el fallo es de la misma raiz y carpeta que las cargadas
 
 ### Pending Todos
 
@@ -160,6 +163,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-27T12:14:48.557Z
-Stopped at: Completed 06-05-PLAN.md
+Last session: 2026-11-27T12:24:07.134Z
+Stopped at: Completed 06-06-PLAN.md
 Resume file: None
