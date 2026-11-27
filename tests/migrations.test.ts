@@ -982,6 +982,228 @@ describe.skipIf(!baseUrl)("bot migration runner", () => {
   }, 120_000);
 });
 
+describe.skipIf(!baseUrl)("action intents migration 0008", () => {
+  it("adds the intent table and the channel columns without rewriting history", async () => {
+    const context = await createTestDatabase(baseUrl!);
+    const client = new Client({ connectionString: context.url });
+    await client.connect();
+    try {
+      await migrateThrough(client, 7);
+      const seeded = await client.query<{ id: number }>(`
+        INSERT INTO incidents ("hostId", key, title, detail, severity, fingerprint, seq, origin)
+        VALUES ('nas-home','backup-failed','Copia fallida','', 'warning','fp-intent-open', 1, 'live')
+        RETURNING id
+      `);
+      const incidentId = seeded.rows[0].id;
+      await client.query(
+        `INSERT INTO incident_events ("incidentId", seq, kind, severity, title, detail)
+         VALUES ($1, 1, 'opened', 'warning', 'Copia fallida', '')`,
+        [incidentId],
+      );
+      await client.query(
+        `INSERT INTO notification_outbox
+           (key, "incidentId", kind, channel, status, revision, "chatId", "messageId")
+         VALUES ($1, $2, 'incident-open', 'telegram', 'sent', 1, '123456789', '501')`,
+        [`incident:${incidentId}:open`, incidentId],
+      );
+      await client.query(
+        `INSERT INTO operations (id, "hostId", "userId", action, target, status, detail)
+         VALUES ('op-before-0008', 'nas-home', 'user-1', 'restart', 'plex', 'success', 'ok')`,
+      );
+
+      await migrateAll(client);
+
+      // Rows written before the migration survive and read as hub operations
+      // with no requester and a normal keyboard.
+      const counts = await client.query<{ incidents: number; events: number }>(
+        `SELECT (SELECT count(*) FROM incidents)::int AS incidents,
+                (SELECT count(*) FROM incident_events)::int AS events`,
+      );
+      expect(counts.rows[0]).toEqual({ incidents: 1, events: 1 });
+      const operations = await client.query(
+        `SELECT id, action, target, status, detail, channel, "requestedBy"
+           FROM operations`,
+      );
+      expect(operations.rows).toEqual([
+        {
+          id: "op-before-0008",
+          action: "restart",
+          target: "plex",
+          status: "success",
+          detail: "ok",
+          channel: "hub",
+          requestedBy: null,
+        },
+      ]);
+      const outbox = await client.query(
+        `SELECT key, status, revision, "messageId", "keyboardView"
+           FROM notification_outbox`,
+      );
+      expect(outbox.rows).toEqual([
+        {
+          key: `incident:${incidentId}:open`,
+          status: "sent",
+          revision: 1,
+          messageId: "501",
+          keyboardView: "normal",
+        },
+      ]);
+
+      // The table, its columns, nullability and indexes match the snapshot.
+      const current = snapshot("0008_acciones_telegram");
+      expect(current.prevId).toBe(snapshot("0007_bot_reconocimiento").id);
+      for (const table of [
+        "telegram_action_intents",
+        "operations",
+        "notification_outbox",
+      ] as const) {
+        const expected = current.tables[`public.${table}`];
+        expect(expected).toBeDefined();
+        const live = await liveColumns(client, table);
+        expect(live.map((column) => column.column_name).sort()).toEqual(
+          Object.keys(expected.columns).sort(),
+        );
+        const nullability = new Map(
+          live.map((column) => [column.column_name, column.is_nullable]),
+        );
+        for (const column of Object.values(expected.columns))
+          expect(nullability.get(column.name)).toBe(
+            column.notNull ? "NO" : "YES",
+          );
+        const actualIndexes = (await liveIndexes(client, table))
+          .filter((name) => !name.endsWith("_pkey") && !name.endsWith("_pk"))
+          .sort();
+        expect(actualIndexes).toEqual(Object.keys(expected.indexes).sort());
+      }
+
+      // The partial unique index keeps its predicate: without it a finished
+      // intent would block the notice forever.
+      const index = await client.query<{ indexdef: string }>(
+        `SELECT indexdef FROM pg_indexes
+          WHERE schemaname = 'public'
+            AND indexname = 'telegram_action_intents_live_idx'`,
+      );
+      expect(index.rows[0].indexdef).toMatch(/UNIQUE/);
+      expect(index.rows[0].indexdef).toMatch(/WHERE/);
+
+      await client.query(
+        `INSERT INTO "user" (id, name, email) VALUES ('user-1', 'Operador', 'op@hub.invalid')`,
+      );
+      const insert = (id: string, hash: string, status: string) =>
+        client.query(
+          `INSERT INTO telegram_action_intents
+             (id, "incidentId", "hostId", action, target, "userId", "handoffHash", status, "expiresAt")
+           VALUES ($1, $2, 'nas-home', 'backup-now', 'nas-home', 'user-1', $3, $4,
+                   now() + interval '5 minutes')`,
+          [id, incidentId, hash, status],
+        );
+      await insert("intent-1", "hash-1", "pending");
+      await expect(insert("intent-2", "hash-2", "pending")).rejects.toMatchObject({
+        code: "23505",
+      });
+      // A finished intent does not occupy the notice; a repeated hash is void.
+      await insert("intent-3", "hash-3", "executed");
+      await expect(insert("intent-4", "hash-3", "executed")).rejects.toMatchObject({
+        code: "23505",
+      });
+
+      // An intent follows its episode.
+      await client.query("DELETE FROM incidents WHERE id = $1", [incidentId]);
+      const left = await client.query<{ count: number }>(
+        "SELECT count(*)::int AS count FROM telegram_action_intents",
+      );
+      expect(left.rows[0].count).toBe(0);
+
+      // Re-running the real migrator applies nothing twice.
+      await migrateAll(client);
+      const reapplied = await client.query<{ count: number }>(
+        "SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations",
+      );
+      expect(reapplied.rows[0].count).toBe(journal().entries.length);
+    } finally {
+      await client.end();
+      await dropTestDatabase(context);
+    }
+  });
+});
+
+describe.skipIf(!baseUrl)("action intents migration runner", () => {
+  async function appliedCount(url: string) {
+    const client = new Client({ connectionString: url });
+    await client.connect();
+    try {
+      const applied = await client.query<{ count: number }>(
+        "SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations",
+      );
+      const table = await client.query<{ name: string | null }>(
+        "SELECT to_regclass('public.telegram_action_intents') AS name",
+      );
+      return { count: applied.rows[0].count, table: table.rows[0].name };
+    } finally {
+      await client.end();
+    }
+  }
+
+  it("applies 0008 to a new database and on top of 0007 with pnpm db:migrate", async () => {
+    const fresh = await createTestDatabase(baseUrl!);
+    try {
+      const first = await runMigrator(fresh.url);
+      expect(first.stderr).toBe("");
+      expect(first.code).toBe(0);
+      expect(await appliedCount(fresh.url)).toEqual({
+        count: journal().entries.length,
+        table: "telegram_action_intents",
+      });
+      const again = await runMigrator(fresh.url);
+      expect(again.code).toBe(0);
+      expect((await appliedCount(fresh.url)).count).toBe(
+        journal().entries.length,
+      );
+    } finally {
+      await dropTestDatabase(fresh);
+    }
+
+    const legacy = await createTestDatabase(baseUrl!);
+    try {
+      const before = new Client({ connectionString: legacy.url });
+      await before.connect();
+      try {
+        await migrateThrough(before, 7);
+        await before.query(
+          `INSERT INTO operations (id, "hostId", "userId", action, target, status)
+           VALUES ('op-runner', 'nas-home', 'user-1', 'reboot', 'nas-home', 'success')`,
+        );
+      } finally {
+        await before.end();
+      }
+      const runner = await runMigrator(legacy.url);
+      expect(runner.stderr).toBe("");
+      expect(runner.code).toBe(0);
+      expect(await appliedCount(legacy.url)).toEqual({
+        count: journal().entries.length,
+        table: "telegram_action_intents",
+      });
+      const after = new Client({ connectionString: legacy.url });
+      await after.connect();
+      try {
+        const operations = await after.query(
+          `SELECT id, channel, "requestedBy" FROM operations`,
+        );
+        expect(operations.rows).toEqual([
+          { id: "op-runner", channel: "hub", requestedBy: null },
+        ]);
+        const second = await runMigrator(legacy.url);
+        expect(second.stderr).toBe("");
+        expect(second.code).toBe(0);
+      } finally {
+        await after.end();
+      }
+    } finally {
+      await dropTestDatabase(legacy);
+    }
+  }, 120_000);
+});
+
 describe.skipIf(!baseUrl)("incidents rollback rehearsal", () => {
   async function rehearsal() {
     const context = await createTestDatabase(baseUrl!);
