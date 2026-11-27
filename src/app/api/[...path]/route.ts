@@ -16,6 +16,7 @@ import {
 import { getSettings, mutateSettings } from "@/lib/settings";
 import { pendingWatch } from "@/lib/container-watch";
 import { actionSchema, settingsSchema } from "@/lib/validation";
+import { requiresVerificationForAction } from "@/lib/sensitive-actions";
 import {
   logsResponseSchema,
   parseLogsQuery,
@@ -594,7 +595,10 @@ async function handle(
           );
         return json(publicOperation(existing));
       }
-      if (body.action === "reboot") {
+      // The manifest decides, not a hardcoded action: a new protected action
+      // is guarded as soon as it is declared. A 403 here records no operation
+      // and sends nothing to the agent, so the UI can retry with the same key.
+      if (requiresVerificationForAction(body.action)) {
         const denied = await guardSensitiveAction({
           request,
           session: current,

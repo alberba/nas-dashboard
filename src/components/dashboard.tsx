@@ -18,6 +18,7 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
+import { requiresVerificationForAction } from "@/lib/sensitive-actions";
 import { updatePresentIncidentNotification } from "@/lib/incident-push";
 import type { Alert, HostStatus, Overview } from "@/lib/types";
 import { FileBrowser, type ActionRequest } from "./file-browser";
@@ -32,6 +33,10 @@ import { Settings } from "./settings";
 import { AlertsView, type IncidentHubAction } from "./views/alerts";
 import { AppsView } from "./views/apps";
 import { CommandSearch } from "./command-search";
+import {
+  useSensitiveAction,
+  type SensitiveActionOutcome,
+} from "./sensitive-action/sensitive-action";
 import { Deployments } from "./views/deployments";
 import { MaintenanceStatus } from "./views/maintenance";
 import { ResourcesView } from "./views/resources";
@@ -105,6 +110,7 @@ export function Dashboard({ name }: { name: string }) {
   const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
+  const sensitive = useSensitiveAction();
   const nav = useRef<HTMLElement>(null);
   const tabId = useRef("");
   /** Last revision already checked against the device tray, per episode. */
@@ -465,8 +471,51 @@ export function Dashboard({ name }: { name: string }) {
     setError("");
     go({ view: "maintenance", tab: route.tab, host }, view !== "maintenance");
   }
+  /** Completion notice for a sensitive action, same wording as the own dialog. */
+  function settled(outcome: SensitiveActionOutcome, hostLabel: string) {
+    if (outcome.status === "failed") return;
+    setToast(
+      outcome.status === "pending"
+        ? `Acción solicitada. Esperando confirmación de ${hostLabel}.`
+        : "Operación completada.",
+    );
+  }
   function request(action: ActionRequest) {
     const reboot = action.body.action === "reboot";
+    // The server is the authority; the UI only asks for a passkey where the
+    // shared manifest says the action is protected (D-07).
+    if (
+      requiresVerificationForAction(action.body.action) &&
+      !(reboot && !canReboot)
+    ) {
+      const hostLabel = hostName;
+      sensitive.request({
+        title: action.title,
+        consequences: [{ tone: "warn", text: action.detail }],
+        confirmLabel: "Confirmar",
+        destructive:
+          action.body.action === "purge" ||
+          action.body.action === "empty-trash",
+        endpoint: withHost("/api/action", scope),
+        body: action.body,
+        ...(action.phrase
+          ? {
+              typedConfirmation: {
+                label: `Escribe ${action.phrase}`,
+                value: action.phrase,
+              },
+            }
+          : {}),
+        onSettled: (outcome) => {
+          settled(outcome, hostLabel);
+          void (async () => {
+            if (outcome.status !== "failed") await action.after?.();
+            await refresh();
+          })();
+        },
+      });
+      return;
+    }
     setOperation(action);
     setOperationHost({ id: scope, name: hostName });
     setBlocked(reboot && !canReboot);
@@ -888,6 +937,7 @@ export function Dashboard({ name }: { name: string }) {
               </div>
             </form>
           </dialog>
+          {sensitive.dialog}
           {toast && (
             <div className="toast" role="status">
               <CircleCheck />
