@@ -173,14 +173,22 @@ const bodies = {
   "empty-trash": { action: "empty-trash", confirmation: "VACIAR PAPELERA" },
 } satisfies Record<ActionId, unknown>;
 
+/** The shape of zod 4's introspection def this test reads. */
+type EnumeratedDef = {
+  type: string;
+  entries?: Record<string, string>;
+  values?: string[];
+};
+
 /** The ids `actionSchema` accepts, read through zod 4's introspection. */
 function schemaActionIds(): string[] {
   const ids: string[] = [];
   for (const option of actionSchema.options) {
-    const def = (option.shape as Record<string, { _zod: { def: any } }>).action
-      ._zod.def;
-    if (def.type === "enum") ids.push(...(Object.values(def.entries) as string[]));
-    else if (def.type === "literal") ids.push(...(def.values as string[]));
+    const def = (
+      option.shape as Record<string, { _zod: { def: EnumeratedDef } }>
+    ).action._zod.def;
+    if (def.type === "enum") ids.push(...Object.values(def.entries ?? {}));
+    else if (def.type === "literal") ids.push(...(def.values ?? []));
   }
   return ids;
 }
