@@ -3,7 +3,7 @@ status: complete
 phase: 07-acciones-verificadas-desde-telegram
 source: [07-VERIFICATION.md]
 started: 2026-11-27T19:41:02Z
-updated: 2026-11-27T20:18:22.593Z
+updated: 2026-11-27T20:22:09.725Z
 ---
 
 ## Current Test
@@ -40,31 +40,26 @@ evidence: |
   - POST alternativo con contraseña errónea → 403 invalid_password (se ofrece contraseña)
   Entrada alternativa: verificación method=password a las 20:18:02Z y backup-now success a las 20:18:02Z (confirmado por el usuario).
 
-### 4. Al recuperarse un aviso con una intención viva, el enlace de confirmación desaparece
-expected: Cuando la incidencia se cierra (p. ej. «Copia recuperada») mientras hay una intención pendiente, la edición de recuperación no muestra «Confirmar en el hub»; la intención deja de estar viva
-result: issue
-reported: "si — vi el enlace «Confirmar en el hub» en el aviso de «Copia recuperada» hasta que caducó"
-severity: minor
+### 4. Al recuperarse un aviso con una intención viva, se aplica D-05
+expected: Si la incidencia se resuelve con una intención pendiente, la intención sigue valiendo hasta caducar (D-05): el aviso recuperado conserva el enlace «Confirmar en el hub» y «Cancelar», y la edición :expire lo retira al caducar
+result: pass
+note: |
+  Registrada primero como incidencia («vi el enlace en el aviso de Copia recuperada hasta que caducó»). El diagnóstico
+  (.planning/debug/resolved-notice-shows-intent-link.md) mostró que es el comportamiento decidido en D-05/D-06 de 07-CONTEXT.md.
+  El usuario decidió mantener D-05 el 2026-11-27, así que el criterio se reescribió para reflejarlo.
 evidence: |
-  Incidencia 153 resuelta 20:02:47Z con la intención 18a7eac0 aún pending; la edición de recuperación (edit:2, 20:02:49Z)
-  se renderizó con la intención viva y el enlace siguió visible hasta el :expire de las 20:04:02Z.
+  Incidencia 153 resuelta 20:02:47Z con la intención 18a7eac0 pending; edición de recuperación 20:02:49Z con el enlace;
+  :expire enviada 20:04:02Z y el enlace desapareció.
 
 ## Summary
 
 total: 4
-passed: 3
-issues: 1
+passed: 4
+issues: 0
 pending: 0
 skipped: 0
 blocked: 0
 
 ## Gaps
 
-- gap_id: G-07-4
-  truth: "Al cerrarse una incidencia con una intención pendiente, el aviso recuperado no muestra el enlace «Confirmar en el hub» y la intención deja de estar viva"
-  status: failed
-  reason: "User reported: vio el enlace «Confirmar en el hub» en el aviso de «Copia recuperada» hasta que caducó"
-  severity: minor
-  test: 4
-  artifacts: []
-  missing: []
+[none — G-07-4 se retiró: comportamiento conforme a D-05, mantenido por decisión del usuario]
