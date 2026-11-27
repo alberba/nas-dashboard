@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AUTH_BODY_LIMIT } from "@/lib/request-body";
 
 const handler = vi.hoisted(() =>
-  vi.fn(async (_request: Request) => Response.json({ delegated: true })),
+  vi.fn<(request: Request) => Promise<Response>>(async () =>
+    Response.json({ delegated: true }),
+  ),
 );
 
 vi.mock("@/lib/auth", () => ({ auth: { handler } }));
