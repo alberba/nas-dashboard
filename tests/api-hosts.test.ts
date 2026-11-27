@@ -17,15 +17,14 @@ import {
   testDatabaseUrl,
   type TestDatabase,
 } from "./database";
+import { seedVerifiedSession, testSession } from "./verified-session";
+
+const session = vi.hoisted(() => ({
+  value: null as unknown,
+}));
 
 vi.mock("@/lib/auth", () => ({
-  auth: {
-    api: {
-      getSession: vi.fn(async () => ({
-        user: { id: "test-user", name: "Test", email: "test@hub.invalid" },
-      })),
-    },
-  },
+  auth: { api: { getSession: vi.fn(async () => session.value) } },
   bootstrapAuth: { api: { signUpEmail: vi.fn() } },
   origins: ["http://localhost:3000"],
 }));
@@ -206,6 +205,7 @@ describe.skipIf(!baseUrl)("multi-host API", () => {
     ({ collectAll } = await import("@/lib/collector"));
     tables = await import("@/lib/schema");
     routes = await import("../src/app/api/[...path]/route");
+    await seedVerifiedSession(db, tables);
   });
 
   afterAll(async () => {
@@ -217,10 +217,13 @@ describe.skipIf(!baseUrl)("multi-host API", () => {
   });
 
   beforeEach(async () => {
+    session.value = testSession;
     await db.delete(tables.operations);
     await db.delete(tables.alerts);
     await db.delete(tables.samples);
     await db.delete(tables.configuration);
+    await db.delete(tables.recentVerification);
+    await seedVerifiedSession(db, tables);
     nas.reset();
     apps.reset();
   });

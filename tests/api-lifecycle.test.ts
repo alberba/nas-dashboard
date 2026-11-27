@@ -17,6 +17,7 @@ import {
   testDatabaseUrl,
   type TestDatabase,
 } from "./database";
+import { seedVerifiedSession } from "./verified-session";
 
 vi.mock("@/lib/auth", () => ({
   auth: {
@@ -192,16 +193,6 @@ describe.skipIf(!baseUrl)("container removal API", () => {
     });
   }
 
-  async function verify() {
-    await db.insert(tables.recentVerification).values({
-      sessionId: "test-session",
-      userId: "test-user",
-      method: "passkey",
-      verifiedAt: new Date(),
-      expiresAt: new Date(Date.now() + 300_000),
-    });
-  }
-
   async function seedContainerIncident(hostId: string, sent: boolean) {
     const opened = await store.recordIncidentObservation({
       hostId,
@@ -290,7 +281,7 @@ describe.skipIf(!baseUrl)("container removal API", () => {
     await db.delete(tables.recentVerification);
     await sample("nas-home");
     await sample("apps");
-    await verify();
+    await seedVerifiedSession(db, tables);
     agent.reset();
   });
 

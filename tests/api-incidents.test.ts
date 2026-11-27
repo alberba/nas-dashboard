@@ -17,6 +17,7 @@ import {
   testDatabaseUrl,
   type TestDatabase,
 } from "./database";
+import { clearVerification, seedVerifiedSession } from "./verified-session";
 
 const sessionState = vi.hoisted(() => ({ authenticated: true }));
 
@@ -326,6 +327,8 @@ describe.skipIf(!baseUrl)("incidents API", () => {
     await db.delete(tables.operations);
     await db.delete(tables.samples);
     await db.delete(tables.configuration);
+    await db.delete(tables.recentVerification);
+    await seedVerifiedSession(db, tables);
     await sample("nas-home");
     await sample("apps");
     await db.insert(tables.configuration).values([
@@ -1837,6 +1840,39 @@ describe.skipIf(!baseUrl)("incidents API", () => {
     expect(edits.map((row) => row.revision).sort()).toEqual([2, 3, 4]);
     expect((await incidentEvents(incidentId)).map((event) => event.kind))
       .toEqual(["opened", "acknowledged", "snoozed", "unsnoozed"]);
+  });
+
+  it("keeps acknowledge, silence and unsilence exempt from recent verification", async () => {
+    const incidentId = await openIncident("nas-home");
+    await markSent(incidentId);
+    // D-05: the hub routes never ask for a passkey, even with no verification.
+    await clearVerification(db, tables);
+
+    const acknowledged = await hubAction(incidentId, "acknowledge", {
+      host: "nas-home",
+    });
+    expect(acknowledged.status).toBe(200);
+    expect((await acknowledged.json()).code).toBeUndefined();
+
+    const snoozed = await hubAction(incidentId, "snooze", {
+      host: "nas-home",
+      hours: 1,
+    });
+    expect(snoozed.status).toBe(200);
+    expect(await silenceOf("nas-home", containerKey)).not.toBeNull();
+
+    const unsnoozed = await hubAction(incidentId, "unsnooze", {
+      host: "nas-home",
+    });
+    expect(unsnoozed.status).toBe(200);
+    expect(await silenceOf("nas-home", containerKey)).toBeNull();
+
+    const [row] = await db
+      .select()
+      .from(tables.incidents)
+      .where(eq(tables.incidents.id, incidentId));
+    expect(row.acknowledgedAt).toBeInstanceOf(Date);
+    expect(row.seq).toBe(4);
   });
 
   it("queues no edit when the episode never had a Telegram notice", async () => {
