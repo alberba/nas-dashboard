@@ -7,6 +7,7 @@ import {
   type Page,
   type Request,
 } from "@playwright/test";
+import { submitLogin } from "./login";
 
 const email = "ci@hub.invalid";
 const password = "Ci-only-password-not-used-in-production!";
@@ -234,5 +235,206 @@ test("HANDOFF-02 stays idle and calls nothing when the URL has no fragment", asy
 
   await expect(panel(page)).toHaveCount(0);
   expect(inspected).toHaveLength(0);
+  expect(sent).toHaveLength(0);
+});
+
+async function loginWithEmail(page: Page) {
+  await page.getByLabel("Correo", { exact: true }).fill(email);
+  await page.getByLabel("Contraseña", { exact: true }).fill(password);
+  await submitLogin(page);
+  await expect(page.locator("[data-view]").first()).toBeVisible();
+}
+
+test("HANDOFF-03 survives the login and a reload without losing the intent", async ({
+  page,
+}) => {
+  const seeded = await seedIntent({
+    name: "login",
+    action: "start",
+    target: "plex",
+  });
+  await page.context().clearCookies();
+  const sent = await answerExecute(page, success(seeded.intentId));
+
+  await page.goto(link(seeded));
+  await expect(page.getByLabel("Contraseña", { exact: true })).toBeVisible();
+  // The fragment is captured before the login and the route stays in the URL.
+  const url = new URL(page.url());
+  expect(url.hash).toBe("");
+  expect(url.searchParams.get("incident")).toBe(String(seeded.incidentId));
+  expect(await stored(page)).toBe(seeded.token);
+
+  await loginWithEmail(page);
+  await expect(panel(page)).toHaveAttribute("data-handoff-state", "ready");
+  await expect(dialog(page)).toBeVisible();
+
+  await page.reload();
+  await expect(panel(page)).toHaveAttribute("data-handoff-state", "ready");
+  expect(await stored(page)).toBe(seeded.token);
+  expect(sent).toHaveLength(0);
+});
+
+for (const [state, status] of [
+  ["expired", "expired"],
+  ["cancelled", "cancelled"],
+] as const) {
+  test(`HANDOFF-04 explains a ${state} intent without opening the dialog or calling execute`, async ({
+    page,
+  }) => {
+    const seeded = await seedIntent({
+      name: state,
+      action: "start",
+      target: "plex",
+      status,
+    });
+    await signIn(page);
+    const sent = await answerExecute(page, { status: 200, json: { ok: true } });
+
+    await page.goto(link(seeded));
+
+    await expect(panel(page)).toHaveAttribute("data-handoff-state", state);
+    await expect(dialog(page)).toHaveCount(0);
+    expect(sent).toHaveLength(0);
+    expect(await stored(page)).toBeNull();
+  });
+}
+
+test("HANDOFF-05 shows an unknown token as invalid without opening the dialog", async ({
+  page,
+}) => {
+  await signIn(page);
+  const sent = await answerExecute(page, { status: 200, json: { ok: true } });
+
+  await page.goto(
+    `/?view=alerts&host=${host}#intent=${newToken()}`,
+  );
+
+  await expect(panel(page)).toHaveAttribute("data-handoff-state", "invalid");
+  await expect(dialog(page)).toHaveCount(0);
+  expect(sent).toHaveLength(0);
+  expect(await stored(page)).toBeNull();
+});
+
+test("HANDOFF-06 shows the existing operation of a consumed intent and does not run it again", async ({
+  page,
+}) => {
+  const seeded = await seedIntent({
+    name: "consumed",
+    action: "backup-now",
+    target: host,
+    status: "executed",
+  });
+  await database.query(
+    `INSERT INTO operations
+       (id, "hostId", "userId", action, target, status, detail, channel,
+        "requestedBy")
+     VALUES ($1, $2, $3, 'backup-now', $2, 'success', 'Copia lanzada', 'telegram', $3)`,
+    [seeded.intentId, host, userId],
+  );
+  await signIn(page);
+  const sent = await answerExecute(page, { status: 200, json: { ok: true } });
+
+  await page.goto(link(seeded));
+
+  await expect(panel(page)).toHaveAttribute("data-handoff-state", "consumed");
+  await expect(page.locator("[data-handoff-operation]")).toHaveAttribute(
+    "data-handoff-operation",
+    seeded.intentId,
+  );
+  await expect(dialog(page)).toHaveCount(0);
+  expect(sent).toHaveLength(0);
+  expect(await stored(page)).toBeNull();
+});
+
+test("HANDOFF-07 asks for the passkey on backup-now and not on start", async ({
+  page,
+}) => {
+  const seeded = await seedIntent({
+    name: "backup",
+    action: "backup-now",
+    target: host,
+  });
+  await signIn(page);
+
+  await page.goto(link(seeded));
+
+  await expect(panel(page)).toHaveAttribute("data-handoff-state", "ready");
+  await expect(panel(page)).toHaveAttribute("data-handoff-action", "backup-now");
+  await expect(dialog(page)).toHaveAttribute(
+    "data-verification-required",
+    "true",
+  );
+});
+
+test("HANDOFF-08 asks for a tap and the passkey on reboot, with no typed phrase", async ({
+  page,
+}) => {
+  const seeded = await seedIntent({
+    name: "reboot",
+    action: "reboot",
+    target: host,
+  });
+  await signIn(page);
+
+  await page.goto(link(seeded));
+
+  await expect(panel(page)).toHaveAttribute("data-handoff-state", "ready");
+  await expect(dialog(page)).toHaveAttribute(
+    "data-verification-required",
+    "true",
+  );
+  await expect(dialog(page).locator("[data-typed-confirmation]")).toHaveCount(0);
+  await expect(dialog(page).locator("[data-confirm]")).toBeEnabled();
+});
+
+test("HANDOFF-09 marks a resolved incident and still lets the operator confirm", async ({
+  page,
+}) => {
+  const seeded = await seedIntent({
+    name: "resolved",
+    action: "start",
+    target: "plex",
+    resolved: true,
+  });
+  await signIn(page);
+  const sent = await answerExecute(page, success(seeded.intentId));
+
+  await page.goto(link(seeded));
+
+  await expect(panel(page)).toHaveAttribute("data-handoff-state", "ready");
+  await expect(panel(page)).toHaveAttribute("data-handoff-resolved", "true");
+  await dialog(page).locator("[data-confirm]").click();
+
+  await expect(panel(page)).toHaveAttribute("data-handoff-state", "succeeded");
+  expect(sent).toHaveLength(1);
+});
+
+test("HANDOFF-10 keeps the intent alive when the dialog is closed and lets the operator reopen or discard it", async ({
+  page,
+}) => {
+  const seeded = await seedIntent({
+    name: "dismiss",
+    action: "start",
+    target: "plex",
+  });
+  await signIn(page);
+  const sent = await answerExecute(page, success(seeded.intentId));
+
+  await page.goto(link(seeded));
+  await expect(dialog(page)).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await expect(panel(page)).toHaveAttribute("data-handoff-state", "dismissed");
+  expect(await stored(page)).toBe(seeded.token);
+
+  await page.locator("[data-handoff-reopen]").click();
+  await expect(panel(page)).toHaveAttribute("data-handoff-state", "ready");
+  await expect(dialog(page)).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(panel(page)).toHaveAttribute("data-handoff-state", "dismissed");
+
+  await page.locator("[data-handoff-discard]").click();
+  await expect(panel(page)).toHaveCount(0);
+  expect(await stored(page)).toBeNull();
   expect(sent).toHaveLength(0);
 });
