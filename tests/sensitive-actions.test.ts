@@ -15,6 +15,8 @@ import {
   hostCommandPolicies,
   requiresVerificationForAction,
   requiresVerificationForCommand,
+  routeManifest,
+  routeVerdict,
   type ActionId,
 } from "@/lib/sensitive-actions";
 import { hostCommandIds } from "@/lib/host-command-contract";
@@ -209,7 +211,7 @@ describe.skipIf(!baseUrl)("sensitive actions", () => {
     path: string,
     body?: unknown,
     headers: Record<string, string> = {},
-    method: "POST" | "DELETE" = "POST",
+    method: "GET" | "POST" | "DELETE" = "POST",
   ) {
     const url = new URL(`http://localhost${path}`);
     const route = url.pathname.replace(/^\/api\//, "").split("/");
@@ -495,6 +497,146 @@ describe.skipIf(!baseUrl)("sensitive actions", () => {
       expect(agent.requests, command).toHaveLength(1);
     },
   );
+  describe("route manifest dispatch", () => {
+    it.each([
+      ["/api/action?host=nas-home", "POST"],
+      ["/api/settings?host=nas-home", "GET, POST"],
+    ])(
+      "answers 405 with Allow for DELETE %s and never reaches the handler",
+      async (path, allow) => {
+        await seedVerifiedSession(db, tables);
+
+        const response = await api(path, undefined, {}, "DELETE");
+
+        expect(response.status).toBe(405);
+        expect(response.headers.get("Allow")).toBe(allow);
+        expect(await db.select().from(tables.operations)).toEqual([]);
+        expect(agent.requests).toEqual([]);
+      },
+    );
+
+    it("answers 405 to a read-only method on a mutation route and the reverse", async () => {
+      const get = await api("/api/action?host=nas-home", undefined, {}, "GET");
+      const post = await api("/api/hosts", { padding: "x" });
+
+      expect(get.status).toBe(405);
+      expect(get.headers.get("Allow")).toBe("POST");
+      expect(post.status).toBe(405);
+      expect(post.headers.get("Allow")).toBe("GET");
+      expect(agent.requests).toEqual([]);
+    });
+
+    it.each(["GET", "POST"] as const)(
+      "answers 404 to an unknown route with %s",
+      async (method) => {
+        const response = await api(
+          "/api/no-existe",
+          method === "POST" ? {} : undefined,
+          {},
+          method,
+        );
+
+        expect(response.status).toBe(404);
+      },
+    );
+
+    it.each(["/api/ACTION", "/api/action/extra", "/api/constructor"])(
+      "answers 404 to %s because only the exact route name matches",
+      async (path) => {
+        await seedVerifiedSession(db, tables);
+
+        const response = await api(path, bodies.stop);
+
+        expect(response.status).toBe(404);
+        expect(agent.requests).toEqual([]);
+        expect(await db.select().from(tables.operations)).toEqual([]);
+      },
+    );
+
+    it.each([
+      ["DELETE", "/api/action?host=nas-home"],
+      ["POST", "/api/no-existe"],
+      ["GET", "/api/no-existe"],
+      ["GET", "/api/action?host=nas-home"],
+    ] as const)(
+      "answers 401 before 404 or 405 without a session for %s %s",
+      async (method, path) => {
+        session.value = null;
+
+        const response = await api(
+          path,
+          method === "POST" ? {} : undefined,
+          {},
+          method,
+        );
+
+        expect(response.status).toBe(401);
+      },
+    );
+
+    it("answers 405 to an undeclared method on the public setup route without a session", async () => {
+      session.value = null;
+
+      const response = await api("/api/setup", undefined, {}, "DELETE");
+
+      expect(response.status).toBe(405);
+      expect(response.headers.get("Allow")).toBe("GET, POST");
+    });
+
+    it("gives a verdict for every declared pair and rejects the rest", () => {
+      const methods = ["GET", "POST", "DELETE", "PUT", "PATCH"];
+      for (const [route, entry] of Object.entries(routeManifest)) {
+        const declared = methods.filter((method) =>
+          Object.hasOwn(entry, method),
+        );
+        expect(declared.length, route).toBeGreaterThan(0);
+        for (const method of methods) {
+          const verdict = routeVerdict(route, method);
+          if (declared.includes(method)) {
+            expect(verdict, `${method} ${route}`).toEqual({ verdict: "ok" });
+          } else {
+            expect(verdict, `${method} ${route}`).toEqual({
+              verdict: "method_not_allowed",
+              allow: declared,
+            });
+          }
+        }
+      }
+    });
+
+    it("gives a verdict for the incident pattern routes", () => {
+      expect(routeVerdict("incidents/7", "GET")).toEqual({ verdict: "ok" });
+      expect(routeVerdict("incidents/7", "POST")).toEqual({
+        verdict: "method_not_allowed",
+        allow: ["GET"],
+      });
+      for (const action of ["acknowledge", "snooze", "unsnooze"]) {
+        expect(routeVerdict(`incidents/7/${action}`, "POST")).toEqual({
+          verdict: "ok",
+        });
+        expect(routeVerdict(`incidents/7/${action}`, "DELETE")).toEqual({
+          verdict: "method_not_allowed",
+          allow: ["POST"],
+        });
+      }
+      for (const route of [
+        "incidents",
+        "incidents/7/other",
+        "incidents/7/acknowledge/extra",
+        "INCIDENTS/7",
+      ])
+        expect(routeVerdict(route, "GET"), route).toEqual({
+          verdict: "not_found",
+        });
+    });
+
+    it("does not resolve inherited object keys as routes", () => {
+      for (const route of ["constructor", "__proto__", "toString", ""])
+        expect(routeVerdict(route, "GET"), route).toEqual({
+          verdict: "not_found",
+        });
+    });
+  });
   describe("request body limit on /api/action", () => {
     const oversized = {
       ...bodies.stop,
