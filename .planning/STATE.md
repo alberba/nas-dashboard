@@ -1,18 +1,18 @@
 ---
 gsd_state_version: "1.0"
-current_phase: 6
+current_phase: 06
 current_phase_name: Puerta de seguridad
 status: executing
-stopped_at: Phase 6 context gathered
-last_updated: "2026-11-27T09:49:35.112Z"
+stopped_at: Completed 06-01-PLAN.md
+last_updated: "2026-11-27T10:44:32.357Z"
 last_activity: 2026-11-27
-last_activity_desc: Phase 05 complete, transitioned to Phase 6
-state_head: 50cfd2568457a66ff2a8ade3ad6dd874b80bd1c5
+last_activity_desc: Phase 06 execution started
+state_head: 91cfb3d7b98582360ba0e0f64f0bf953137579ae
 progress:
   total_phases: 8
   completed_phases: 5
   total_plans: 26
-  completed_plans: 20
+  completed_plans: 21
   percent: 63
 ---
 
@@ -23,14 +23,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-27)
 
 **Core value:** Saber en segundos qué está pasando en los dos servidores y poder actuar sobre ellos sin abrir una consola.
-**Current focus:** Phase 6 — Puerta de seguridad
+**Current focus:** Phase 06 — Puerta de seguridad
 
 ## Current Position
 
-Phase: 6 (Puerta de seguridad) — READY TO EXECUTE
-Plan: Not started
+Phase: 06 (Puerta de seguridad) — EXECUTING
+Plan: 2 of 6
 Status: Ready to execute
-Last activity: 2026-11-27 — Phase 05 complete, transitioned to Phase 6
+Last activity: 2026-11-27 — Phase 06 execution started
 
 Progress: [██████░░░░] 63%
 
@@ -72,6 +72,7 @@ Progress: [██████░░░░] 63%
 | Phase 05 P03 | 9 min | 2 tasks | 10 files |
 | Phase 05 P04 | 23 min | 3 tasks | 9 files |
 | Phase 05 P05 | 11 min | 3 tasks | 7 files |
+| Phase 06 P01 | 10 min | 3 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -116,6 +117,10 @@ Recent decisions affecting current work:
 - [Phase 05]: El 409 re-arma el deleteWebhook para el siguiente run y aplica el retroceso, en lugar de reintentar el poll sobre el conflicto
 - [Phase 05]: La limpieza horaria borra tokens vencidos desde hace más de un día y silencios vencidos desde hace más de 7 días y nunca toca telegram_poll_state
 - [Phase 05]: La cota del update veneno y la omisión del offset tras seis días se nombran POISON_MAX_ATTEMPTS y OFFSET_RESET_AFTER_MS; el descarte no imprime el update_id
+- [Phase 06]: El manifiesto puro src/lib/sensitive-actions.ts es la única autoridad de lo protegido: /api/action y la UI lo leen y un id nuevo sin entrada no compila
+- [Phase 06]: El guard de /api/action se decide por la acción del cuerpo tras el replay idempotente y antes de la muestra reciente y del insert; un 403 no registra operación
+- [Phase 06]: runHostCommand valida cuerpo, host y clave antes del guard por comando; executeHostCommand queda sin guard porque la decisión pertenece a quien lo invoca
+- [Phase 06]: Un replay de un comando de host ya terminado exige verificación vigente: efecto menor aceptado para no partir executeHostCommand
 
 ### Pending Todos
 
@@ -139,6 +144,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-27T08:52:05.075Z
-Stopped at: Phase 6 context gathered
-Resume file: .planning/phases/06-puerta-de-seguridad/06-CONTEXT.md
+Last session: 2026-11-27T10:44:32.012Z
+Stopped at: Completed 06-01-PLAN.md
+Resume file: None
