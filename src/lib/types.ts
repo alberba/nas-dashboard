@@ -359,6 +359,10 @@ export type Operation = {
   status: string;
   detail: string | null;
   at: string;
+  /** Where the action was confirmed; absent in older answers. */
+  channel?: "hub" | "telegram";
+  /** Internal name of the requester; null for rows that predate the channel. */
+  requestedBy?: string | null;
 };
 export type RenovateUpdateType =
   | "major"

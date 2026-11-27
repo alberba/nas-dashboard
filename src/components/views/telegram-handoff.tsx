@@ -291,6 +291,22 @@ export function TelegramHandoff() {
             {operation.detail}
           </p>
         )}
+        {shown === "failed" && (
+          <div className="toolbar">
+            <button
+              type="button"
+              className="primary"
+              data-handoff-retry
+              onClick={() => {
+                // Only asks the hub again; nothing is sent without a new
+                // confirmation in the reopened dialog.
+                if (token.current) void inspect(token.current);
+              }}
+            >
+              Reintentar
+            </button>
+          </div>
+        )}
         {shown === "dismissed" && intent && (
           <div className="toolbar">
             <button

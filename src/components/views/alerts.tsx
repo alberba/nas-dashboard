@@ -21,6 +21,21 @@ export type IncidentHubAction =
   | "snooze-24h"
   | "unsnooze";
 
+/** Labels of «Acciones recientes»; an action without one shows its identifier. */
+const operationLabels: Record<string, string> = {
+  start: "Iniciar",
+  stop: "Detener",
+  restart: "Reiniciar",
+  reboot: "Reiniciar NAS",
+  move: "Mover",
+  trash: "Enviar a papelera",
+  restore: "Restaurar",
+  purge: "Eliminar definitivamente",
+  "empty-trash": "Vaciar papelera",
+  "backup-now": "Copia ahora",
+  "deploy-now": "Desplegar ahora",
+};
+
 const stateLabels: Record<PublicDeliveryState, string> = {
   pending: "En cola",
   sent: "Enviado",
@@ -533,24 +548,16 @@ export function AlertsView({
         <h2>Acciones recientes</h2>
         {!data.operations.length && <p className="subtle">Sin acciones</p>}
         {data.operations.map((op) => (
-          <div className="alert-row" key={op.id}>
+          <div
+            className="alert-row"
+            key={op.id}
+            data-operation={op.id}
+            data-operation-action={op.action}
+            data-operation-channel={op.channel ?? "hub"}
+          >
             <RefreshCw />
             <div>
-              <strong>
-                {(
-                  {
-                    start: "Iniciar",
-                    stop: "Detener",
-                    restart: "Reiniciar",
-                    reboot: "Reiniciar NAS",
-                    move: "Mover",
-                    trash: "Enviar a papelera",
-                    restore: "Restaurar",
-                    purge: "Eliminar definitivamente",
-                    "empty-trash": "Vaciar papelera",
-                  } as Record<string, string>
-                )[op.action] ?? op.action}
-              </strong>
+              <strong>{operationLabels[op.action] ?? op.action}</strong>
               <p className="subtle">
                 {op.target.length === 64
                   ? "Contenedor " + op.target.slice(0, 12)
@@ -564,6 +571,7 @@ export function AlertsView({
                   : op.status === "failed"
                     ? "No realizada"
                     : "Pendiente de verificar"}
+                {op.channel === "telegram" ? " · Desde Telegram" : ""}
               </time>
             </div>
           </div>
