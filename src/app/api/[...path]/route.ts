@@ -32,19 +32,12 @@ import {
   handlePasswordVerification,
   handleVerificationStatus,
 } from "@/lib/verification-api";
-import {
-  finalizeContainerOperation,
-  publicOperation,
-  removeContainer,
-  updatePendingOperation,
-} from "@/lib/lifecycle";
+import { publicOperation, removeContainer } from "@/lib/lifecycle";
 import { verificationStore } from "@/lib/verification";
 import {
   nasForHost,
   NasInvalidResponse,
-  NasRejected,
   ResponseTooLarge,
-  CONTAINER_UPDATE_TIMEOUT_MS,
 } from "@/lib/nas";
 import {
   getHosts,
@@ -61,6 +54,7 @@ import { saveDeploymentSettings } from "@/lib/deployment-settings";
 import { hostStatuses } from "@/lib/host-status";
 import { maintenanceForHost } from "@/lib/maintenance";
 import { runHostCommand } from "@/lib/host-commands";
+import { runAgentAction } from "@/lib/operation-runner";
 import { BodyTooLarge, readJsonBody } from "@/lib/request-body";
 import { handleIntentExecute, handleIntentInspect } from "@/lib/telegram-intent-api";
 import { projectIncidents } from "@/lib/incident-store";
@@ -646,128 +640,36 @@ async function handle(
         });
         if (denied) return denied;
       }
-      const latest = await db
-        .select()
-        .from(samples)
-        .where(eq(samples.hostId, host.id))
-        .orderBy(desc(samples.at))
-        .limit(1);
-      if (!latest[0] || Date.now() - latest[0].at.getTime() > 75000)
-        return json(
-          {
-            error: `${host.name} no está conectado. No se ha enviado la acción.`,
-          },
-          503,
-        );
-      const target =
-        "id" in body ? body.id : "path" in body ? body.path : host.name;
-      const inserted = await db
-        .insert(operations)
-        .values({
-          id: operationId,
-          hostId: host.id,
-          userId: current.user.id,
-          action: body.action,
-          target,
-          status: "pending",
-          bootAt:
-            body.action === "reboot"
-              ? new Date(
-                  (latest[0].data.timestamp - latest[0].data.uptime) * 1000,
-                )
-              : null,
-        })
-        .onConflictDoNothing()
-        .returning();
-      if (!inserted.length) return json({ status: "pending" });
-      try {
-        const result = await nasForHost<{ state?: string }>(
-          host,
-          "/action",
-          body,
-          body.action === "update-container"
-            ? CONTAINER_UPDATE_TIMEOUT_MS
-            : undefined,
-        );
-        if (body.action === "reboot") {
-          await db
-            .update(operations)
-            .set({
+      const outcome = await runAgentAction({
+        host,
+        userId: current.user.id,
+        body,
+        operationId,
+        channel: "hub",
+        requestedBy: current.user.id,
+      });
+      switch (outcome.status) {
+        case "unavailable":
+          return json({ error: outcome.error }, 503);
+        case "duplicate":
+          return json({ status: "pending" });
+        case "success":
+          return json({ ok: true, status: "success", result: outcome.result });
+        case "requested":
+          return json({ ok: true, status: "pending", result: outcome.result });
+        case "failed":
+          if (outcome.settled) return json(outcome.settled);
+          return json({ error: outcome.error, status: "failed" }, 400);
+        case "uncertain":
+          if (outcome.settled) return json(outcome.settled);
+          return json(
+            {
+              error:
+                "Resultado pendiente de verificar. No se ha repetido la acción.",
               status: "pending",
-              detail:
-                "Reinicio solicitado; esperando que el host vuelva a responder.",
-            })
-            .where(eq(operations.id, operationId));
-          return json({ ok: true, status: "pending", result });
-        }
-        if (
-          (body.action === "start" ||
-            body.action === "stop" ||
-            body.action === "restart") &&
-          "id" in body
-        ) {
-          const metrics = latest[0].data as Metrics;
-          const container = metrics.containers.find(
-            (c) => c.id === body.id,
+            },
+            502,
           );
-          if (container) {
-            // The shared close-out locks the operation and the settings row,
-            // applies the watching intention and closes the episode once.
-            await finalizeContainerOperation({
-              hostId: host.id,
-              hostName: host.name,
-              operationId,
-              action: body.action,
-              name: container.name,
-              containerId: body.id,
-              container,
-              detail: "Operación completada y comprobada.",
-            });
-            return json({ ok: true, status: "success", result });
-          }
-          await db
-            .update(operations)
-            .set({
-              status: "success",
-              detail: "Operación completada y comprobada.",
-            })
-            .where(eq(operations.id, operationId));
-          return json({ ok: true, status: "success", result });
-        }
-        await db
-          .update(operations)
-          .set({
-            status: "success",
-            detail:
-              body.action === "update-container"
-                ? "Contenedor actualizado: imagen descargada y servicio recreado."
-                : "Operación completada y comprobada.",
-          })
-          .where(eq(operations.id, operationId));
-        return json({ ok: true, status: "success", result });
-      } catch (error) {
-        if (error instanceof NasRejected && error.status < 500) {
-          const { updated, operation } = await updatePendingOperation(operationId, {
-            status: "failed",
-            detail: error.message,
-          });
-          if (!updated && operation) return json(operation);
-          return json({ error: error.message, status: "failed" }, 400);
-        }
-        // A timeout may occur after the NAS executed the action. Never retry it automatically.
-        const { updated, operation } = await updatePendingOperation(operationId, {
-          detail:
-            "No se pudo confirmar el resultado. Comprueba el estado antes de repetir.",
-        });
-        if (!updated && operation) return json(operation);
-        return json(
-          {
-            error:
-              "Resultado pendiente de verificar. No se ha repetido la acción.",
-            status: "pending",
-          },
-          502,
-        );
       }
     }
     if (route === "files" && !mutation) {

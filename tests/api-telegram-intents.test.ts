@@ -56,7 +56,9 @@ type FakeAgent = {
   close(): Promise<void>;
 };
 
-function metrics(hostId: string) {
+const PLEX_ID = "c".repeat(64);
+
+function metrics(hostId: string, containers: unknown[] = []) {
   return {
     timestamp: Date.now() / 1000,
     hostname: hostId,
@@ -67,7 +69,7 @@ function metrics(hostId: string) {
     uptime: 1000,
     disks: [],
     temperatures: [],
-    containers: [],
+    containers,
   };
 }
 
@@ -106,6 +108,15 @@ async function fakeAgent(token: string): Promise<FakeAgent> {
     if (agent.behaviour === "reject") {
       response.writeHead(400, { "Content-Type": "application/json" });
       response.end(JSON.stringify({ error: "La unidad no está configurada" }));
+      return;
+    }
+    if (path === "/action") {
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(
+        JSON.stringify({
+          state: (body as { action: string }).action === "reboot" ? "rebooting" : "done",
+        }),
+      );
       return;
     }
     const command = (body as { command: string }).command;
@@ -171,13 +182,35 @@ describe.skipIf(!baseUrl)("telegram intent API", () => {
   const execute = (token: string, headers?: Record<string, string>) =>
     api("/api/telegram/intents/execute", { token }, headers);
 
-  async function sample(hostId: string) {
+  async function sample(hostId: string, containers: unknown[] = []) {
     await db.insert(tables.samples).values({
       hostId,
       at: new Date(),
-      data: metrics(hostId) as never,
+      data: metrics(hostId, containers) as never,
     });
   }
+
+  /** A newer sample that carries the container `plex` under the given id. */
+  const withPlex = (id = PLEX_ID) =>
+    sample("nas-home", [
+      {
+        id,
+        name: "plex",
+        image: "plex:latest",
+        state: "running",
+        status: "Up",
+        protected: false,
+        composeProject: null,
+        composeService: null,
+        oneShot: false,
+        exitCode: null,
+        orphan: false,
+        recreateOnCompose: false,
+        cpu: 1,
+        memory: 1,
+        compose: null,
+      },
+    ]);
 
   beforeAll(async () => {
     nas = await fakeAgent("a".repeat(32));
@@ -376,6 +409,84 @@ describe.skipIf(!baseUrl)("telegram intent API", () => {
     expect(finished.status).toBe("executed");
     expect(finished.usedAt).not.toBeNull();
     expect(finished.finishedAt).not.toBeNull();
+  });
+
+  it("restarts a container once from the chat handoff through the shared runner", async () => {
+    const { token, intent } = await handoffFor("container:plex", "act_restart");
+    await withPlex();
+
+    const response = await execute(token);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      status: "success",
+      operation: { id: intent.id, action: "restart", status: "success" },
+    });
+    expect(nas.requests).toEqual([
+      {
+        method: "POST",
+        path: "/action",
+        body: { action: "restart", id: PLEX_ID },
+      },
+    ]);
+    const rows = await operations();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: intent.id,
+      hostId: "nas-home",
+      action: "restart",
+      target: PLEX_ID,
+      userId: TEST_USER_ID,
+      channel: "telegram",
+      requestedBy: TEST_USER_ID,
+    });
+    expect((await intentRow(intent.id)).status).toBe("executed");
+
+    const again = await execute(token);
+
+    expect(again.status).toBe(200);
+    expect(await again.json()).toMatchObject({
+      status: "success",
+      operation: { id: intent.id },
+    });
+    expect(nas.requests).toHaveLength(1);
+    expect(await operations()).toHaveLength(1);
+  });
+
+  it("records the channel and the requester of an operation by the surface that asked", async () => {
+    await withPlex();
+    const { token, intent } = await handoffFor("container:plex", "act_restart");
+    await execute(token);
+    await api(
+      "/api/action?host=nas-home",
+      { action: "restart", id: PLEX_ID },
+      { "Idempotency-Key": crypto.randomUUID() },
+    );
+    await api(
+      "/api/host-command?host=nas-home",
+      { command: "check-health" },
+      { "Idempotency-Key": crypto.randomUUID() },
+    );
+
+    const rows = await operations();
+
+    expect(rows).toHaveLength(3);
+    const byAction = Object.fromEntries(
+      rows.map((row) => [row.id === intent.id ? "intent" : row.action, row]),
+    );
+    expect(byAction.intent).toMatchObject({
+      channel: "telegram",
+      requestedBy: TEST_USER_ID,
+    });
+    expect(byAction.restart).toMatchObject({
+      channel: "hub",
+      requestedBy: TEST_USER_ID,
+    });
+    expect(byAction["check-health"]).toMatchObject({
+      channel: "hub",
+      requestedBy: TEST_USER_ID,
+    });
   });
 
   it("answers 403 without a recent verification and leaves the intent pending", async () => {
@@ -743,7 +854,6 @@ describe.skipIf(!baseUrl)("telegram intent API", () => {
 
     it.each([
       ["container:plex", "act_start"],
-      ["container:plex", "act_restart"],
       ["reboot-pending", "act_reboot"],
     ] as const)(
       "answers 501 for %s %s before claiming the intent",

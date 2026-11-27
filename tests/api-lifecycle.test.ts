@@ -425,6 +425,22 @@ describe.skipIf(!baseUrl)("container removal API", () => {
     });
   });
 
+  it("records the hub channel and the session user on an operation from /api/action", async () => {
+    const response = await api(
+      "/api/action?host=nas-home",
+      { action: "update-container", id: containerId },
+      { "Idempotency-Key": crypto.randomUUID() },
+    );
+
+    expect(response.status).toBe(200);
+    const [operation] = await db.select().from(tables.operations);
+    expect(operation).toMatchObject({
+      channel: "hub",
+      requestedBy: "test-user",
+      userId: "test-user",
+    });
+  });
+
   it("updates a container image on the selected host and records the operation", async () => {
     const response = await api(
       "/api/action?host=nas-home",
