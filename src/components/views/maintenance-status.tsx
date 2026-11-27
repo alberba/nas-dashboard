@@ -232,7 +232,7 @@ export function MaintenanceSnapshotStatus({
 }: {
   vpn?: "healthy" | "unhealthy" | "starting" | "none";
 }) {
-  const { phase, snapshot, stale } = useMaintenanceSnapshot();
+  const { phase, snapshot, stale, tooLarge } = useMaintenanceSnapshot();
   const scope = useHostScope();
   const deploymentsHref = routeHref({
     view: "maintenance",
@@ -333,11 +333,19 @@ export function MaintenanceSnapshotStatus({
         <p
           className={styles.note}
           role="status"
-          data-snapshot-note={phase === "error" ? "error" : "stale"}
+          data-snapshot-note={
+            tooLarge ? "too-large" : phase === "error" ? "error" : "stale"
+          }
         >
-          {phase === "error"
-            ? "No se pudo leer el estado de mantenimiento de este host."
-            : `No se pudo actualizar: se muestran los datos de las ${readAt}.`}
+          {tooLarge
+            ? `El estado de mantenimiento de este host es demasiado grande para mostrarlo.${
+                phase === "error"
+                  ? ""
+                  : ` Se muestran los datos de las ${readAt}.`
+              }`
+            : phase === "error"
+              ? "No se pudo leer el estado de mantenimiento de este host."
+              : `No se pudo actualizar: se muestran los datos de las ${readAt}.`}
           <button
             type="button"
             className={`text-button ${styles.retry}`}

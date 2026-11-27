@@ -12,7 +12,7 @@ const comparison: MaintenanceReview = {
   reason: "major version: manual review",
 };
 function state(review: MaintenanceReview[] = [comparison]): SnapshotState {
-  return { phase: "ready", stale: false, snapshot: {
+  return { phase: "ready", stale: false, tooLarge: false, snapshot: {
     timestamp: 1_800_000_000,
     security: { review, pins: [], pending: null }, degraded: [],
   } as unknown as MaintenanceSnapshot };
@@ -34,7 +34,7 @@ describe("security comparison decisions", () => {
     expect(html).toContain('data-cves-new="0"');
   });
   it("does not turn an unavailable or partial source into a successful empty result", () => {
-    const unavailable = render({ phase: "error", stale: false, snapshot: null });
+    const unavailable = render({ phase: "error", stale: false, tooLarge: false, snapshot: null });
     expect(unavailable).toContain('data-phase="error"');
     expect(unavailable).not.toContain('data-security-review-empty');
     const partial = state([]);

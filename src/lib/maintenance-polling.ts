@@ -8,12 +8,15 @@ export type SnapshotState = {
   snapshot: MaintenanceSnapshot | null;
   /** The last refresh failed: `snapshot` is older than the latest attempt. */
   stale: boolean;
+  /** The hub refused the last answer as too large; the snapshot is not partial. */
+  tooLarge: boolean;
 };
 
 export const initialSnapshotState: SnapshotState = {
   phase: "loading",
   snapshot: null,
   stale: false,
+  tooLarge: false,
 };
 
 function isSnapshot(value: unknown): value is MaintenanceSnapshot {
@@ -54,21 +57,34 @@ export function startSnapshotPolling({
 
   async function load() {
     controller = new AbortController();
+    let tooLarge = false;
     try {
       const response = await fetcher(url, {
         cache: "no-store",
         signal: controller.signal,
       });
-      if (!response.ok) throw new Error(String(response.status));
+      if (!response.ok) {
+        // A refusal for size has a stable code; any other body is just a failure.
+        const failure = (await response.json().catch(() => null)) as {
+          code?: unknown;
+        } | null;
+        tooLarge = failure?.code === "agent_response_too_large";
+        throw new Error(String(response.status));
+      }
       const data = (await response.json()) as Partial<MaintenanceResponse>;
       if (!isSnapshot(data.snapshot)) throw new Error("invalid snapshot");
-      publish({ phase: "ready", snapshot: data.snapshot, stale: false });
+      publish({
+        phase: "ready",
+        snapshot: data.snapshot,
+        stale: false,
+        tooLarge: false,
+      });
     } catch {
       if (stopped) return;
       publish(
         current.snapshot
-          ? { phase: "ready", snapshot: current.snapshot, stale: true }
-          : { phase: "error", snapshot: null, stale: false },
+          ? { phase: "ready", snapshot: current.snapshot, stale: true, tooLarge }
+          : { phase: "error", snapshot: null, stale: false, tooLarge },
       );
     }
     if (!stopped) timer = setTimeout(load, intervalMs);

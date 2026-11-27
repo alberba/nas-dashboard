@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowUp,
   File,
@@ -70,6 +70,9 @@ export function FileBrowser({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(true);
   const [revision, setRevision] = useState(0);
+  // The folder the entries on screen belong to: only a refresh of that same
+  // folder may keep them when it fails; anything else would show another one.
+  const listed = useRef<{ root: Root; path: string } | null>(null);
 
   const load = useCallback(() => {
     setBusy(true);
@@ -85,12 +88,16 @@ export function FileBrowser({
       .then(async (response) => {
         const result = await response.json();
         if (!response.ok) throw new Error(result.error);
+        listed.current = { root, path };
         setEntries(result);
         setError("");
       })
       .catch((err) => {
         if (controller.signal.aborted) return;
-        setEntries([]);
+        if (listed.current?.root !== root || listed.current.path !== path) {
+          listed.current = null;
+          setEntries([]);
+        }
         setError(
           err instanceof Error ? err.message : "No se pudo leer la carpeta",
         );
@@ -387,6 +394,7 @@ export function FileBrowser({
             <p
               className={`${styles.status} ${error ? "error" : "muted"}`}
               role={error ? "alert" : "status"}
+              data-files-error={error ? "" : undefined}
             >
               {error || "Leyendo el NAS…"}
             </p>
