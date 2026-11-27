@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 07
 current_phase_name: Acciones verificadas desde Telegram
 status: executing
-stopped_at: Completed 07-01-PLAN.md
-last_updated: "2026-11-27T18:14:44.078Z"
+stopped_at: Completed 07-06-PLAN.md
+last_updated: "2026-11-27T18:18:49.306Z"
 last_activity: 2026-11-27
 last_activity_desc: Phase 07 execution started
-state_head: 3a790916ac823604ece1e79114df62c59cd39732
+state_head: 5949767fa349b14c951a7f028ec540a7704f4fb8
 progress:
   total_phases: 8
   completed_phases: 6
   total_plans: 32
-  completed_plans: 27
+  completed_plans: 28
   percent: 75
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-27)
 ## Current Position
 
 Phase: 07 (Acciones verificadas desde Telegram) — EXECUTING
-Plan: 2 of 6
+Plan: 3 of 6
 Status: Ready to execute
 Last activity: 2026-11-27 — Phase 07 execution started
 
@@ -80,6 +80,7 @@ Progress: [████████░░] 75%
 | Phase 06 P05 | 6 min | 3 tasks | 7 files |
 | Phase 06 P06 | 9 min | 3 tasks | 14 files |
 | Phase 07 P01 | 8 min | 3 tasks | 13 files |
+| Phase 07 P06 | 10 min | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -146,6 +147,10 @@ Recent decisions affecting current work:
 - [Phase 07]: P-03: keyboard-only edits use outbox key incident:<id>:kb:<discriminator> because queueEdit keys on seq
 - [Phase 07]: P-04: an intent binds to the sole user of the instance; zero or several users fail closed
 - [Phase 07]: P-06: TELEGRAM_ACTIONS gains eight values at once; menu_open, menu_close and intent_cancel stay ignored until 07-03
+- [Phase 07]: P-26: decide Host, not forwarded host or protocol, because the client can set those and the proxy need not overwrite them
+- [Phase 07]: P-27: Origin and Host compared by hostname without the port
+- [Phase 07]: P-28: no Host header falls back to the request.url hostname; a Host list, empty or unreadable value falls to passkey
+- [Phase 07]: P-30: login host not stored in the session; the method is decided per request
 
 ### Pending Todos
 
@@ -170,6 +175,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-27T18:14:43.688Z
-Stopped at: Completed 07-01-PLAN.md
+Last session: 2026-11-27T18:18:49.009Z
+Stopped at: Completed 07-06-PLAN.md
 Resume file: None
