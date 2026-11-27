@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { BodyTooLarge, readJsonBody } from "./request-body";
 import {
   recordRecentVerification,
   requireRecentVerification,
@@ -62,8 +63,10 @@ export async function handlePasswordVerification({
   try {
     ({ password } = z
       .object({ password: z.string().min(1).max(128) })
-      .parse(await request.json()));
-  } catch {
+      .parse(await readJsonBody(request)));
+  } catch (error) {
+    // An oversized body is not "invalid data": the catch-all answers 413.
+    if (error instanceof BodyTooLarge) throw error;
     return json({ error: "Datos no válidos" }, 400);
   }
 

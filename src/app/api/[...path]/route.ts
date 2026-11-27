@@ -145,7 +145,7 @@ async function handle(
           password: z.string().min(12).max(128),
           name: z.string().min(1).max(80),
         })
-        .parse(await request.json());
+        .parse(await readJsonBody(request));
       const expected = Buffer.from(process.env.SETUP_TOKEN ?? "");
       const provided = Buffer.from(input.token);
       if (
@@ -183,7 +183,9 @@ async function handle(
         store: verificationStore,
       });
     if (route === "verification/password" && request.method === "POST")
-      return handlePasswordVerification({
+      // `await` keeps a rethrown BodyTooLarge inside this try, so it reaches
+      // the 413 branch instead of escaping as an unhandled rejection.
+      return await handlePasswordVerification({
         request,
         session: current,
         store: verificationStore,
@@ -312,7 +314,7 @@ async function handle(
             path: ["hours"],
           },
         )
-        .parse(await request.json());
+        .parse(await readJsonBody(request));
       const host = resolveHost(getHosts(), body.host);
       // The pair, never the id alone: another host's episode is not found.
       const [row] = await db
@@ -547,7 +549,7 @@ async function handle(
     if (route === "presence" && mutation) {
       const input = z
         .object({ id: z.uuid(), visible: z.boolean() })
-        .parse(await request.json());
+        .parse(await readJsonBody(request));
       if (input.visible) {
         await db
           .insert(presence)
@@ -785,7 +787,7 @@ async function handle(
       });
     }
     if (route === "settings" && mutation) {
-      const raw = await request.json();
+      const raw = await readJsonBody(request);
       const host = resolveHost(
         getHosts(),
         request.nextUrl.searchParams.get("host") ?? requestHost(raw),
@@ -826,7 +828,7 @@ async function handle(
             auth: z.string().min(10).max(128),
           }),
         })
-        .parse(await request.json());
+        .parse(await readJsonBody(request));
       await db
         .insert(subscriptions)
         .values({ ...body, userId: current.user.id })
@@ -854,7 +856,7 @@ async function handle(
     if (route === "push" && request.method === "DELETE") {
       const { endpoint } = z
         .object({ endpoint: z.url() })
-        .parse(await request.json());
+        .parse(await readJsonBody(request));
       await db
         .delete(subscriptions)
         .where(
