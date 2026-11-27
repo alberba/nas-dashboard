@@ -149,7 +149,7 @@ None yet.
 ### Blockers/Concerns
 
 Ningún bloqueo para planificar la fase 7.
-- [Fase 06] CR-01 de `06-REVIEW.md` sigue `open` en `06-REVIEW-DISPOSITION.md` (el factor passkey/contraseña se elige por la cabecera Origin). La fase 7 confía en esa verificación: resolverlo o registrar la decisión antes de planificarla. WR-01 a WR-04 también siguen `open`.
+- [Fase 06] CR-01 de `06-REVIEW.md` sigue `open` en `06-REVIEW-DISPOSITION.md` (el factor passkey/contraseña se elige por la cabecera Origin). Decidido al planificar la fase 7: se corrige en esa fase (D-13 de `07-CONTEXT.md`). WR-01 a WR-04 siguen `open`.
 - [Fase 06] Producción ya tiene la fase 6 desplegada y `main` coincide con `origin/main`. La entrada pública pasó al NPM de Oracle el 2026-11-27; el NPM del NAS se retiró y el cron de DonDNS del NAS está desactivado.
 - [Fase 05] Pendiente de observar: la etiqueta del episodio reconocido en el resumen del 2026-11-28 y la escalada con Por qué (temperature es siempre crítica).
 - [Fase 05] `05-VALIDATION.md` sigue en draft: `/gsd-validate-phase 5` no se completó.
