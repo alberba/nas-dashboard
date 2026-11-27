@@ -195,6 +195,56 @@ export async function queueEdit(
 }
 
 /**
+ * Queues a silent edit that changes only the keyboard of the confirmed notice.
+ * `queueEdit` derives its key from `seq`, which a keyboard change does not move,
+ * so these rows live under their own `incident:<id>:kb:<discriminator>` key and
+ * the same discriminator is idempotent. The edit carries the current `seq` as
+ * its revision, so it never supersedes or is superseded by a state change. No
+ * confirmed message means no edit: nothing is ever re-sent.
+ */
+export async function queueKeyboardEdit(
+  tx: Transaction,
+  incidentId: number,
+  discriminator: string,
+  options: { notBefore?: Date } = {},
+): Promise<"queued" | "none"> {
+  const [first] = await tx
+    .select()
+    .from(notificationOutbox)
+    .where(eq(notificationOutbox.key, openKey(incidentId)))
+    .limit(1);
+  if (
+    !first ||
+    first.status !== "sent" ||
+    first.channel !== "telegram" ||
+    !first.chatId ||
+    !first.messageId
+  )
+    return "none";
+  const [incident] = await tx
+    .select({ seq: incidents.seq })
+    .from(incidents)
+    .where(eq(incidents.id, incidentId))
+    .limit(1);
+  if (!incident) return "none";
+  await tx
+    .insert(notificationOutbox)
+    .values({
+      key: `incident:${incidentId}:kb:${discriminator}`,
+      incidentId,
+      kind: "incident-edit",
+      channel: "telegram",
+      status: "pending",
+      revision: incident.seq,
+      chatId: first.chatId,
+      messageId: first.messageId,
+      ...(options.notBefore ? { nextAttemptAt: options.notBefore } : {}),
+    })
+    .onConflictDoNothing();
+  return "queued";
+}
+
+/**
  * Stable identity of the watched condition. The length prefixes make the
  * concatenation injective and exactly match the 0004 backfill:
  * md5('incident:' || length(hostId) || ':' || hostId || ':' || length(key) ||

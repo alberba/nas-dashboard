@@ -14,9 +14,10 @@
  */
 
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
-import { and, eq, lte } from "drizzle-orm";
+import { and, eq, gt, lte } from "drizzle-orm";
+import { incidentHref } from "../components/views/routes";
 import type { HostCommand } from "./host-command-contract";
-import type { Transaction } from "./incident-store";
+import { queueKeyboardEdit, type Transaction } from "./incident-store";
 import { telegramActionIntents, user } from "./schema";
 import type { ActionId } from "./sensitive-actions";
 import type { TelegramAction } from "./telegram-keyboard";
@@ -140,6 +141,42 @@ export async function soleOperatorId(
   return rows.length === 1 ? rows[0].id : null;
 }
 
+/**
+ * The link the notice button opens: the incident view of the hub with the token
+ * in the fragment, which the browser never sends to the server or to a proxy
+ * log. `incidentHref` already validates the base URL and the host.
+ */
+export function handoffHref(
+  base: string,
+  hostId: string,
+  incidentId: number,
+  token: string,
+): string {
+  const url = new URL(incidentHref(base, hostId, incidentId));
+  url.hash = `intent=${token}`;
+  return url.toString();
+}
+
+/** The pending intent of a notice that has not yet expired, if any. */
+export async function liveIntentOf(
+  executor: Pick<Transaction, "select">,
+  incidentId: number,
+  now: number,
+): Promise<typeof telegramActionIntents.$inferSelect | null> {
+  const [intent] = await executor
+    .select()
+    .from(telegramActionIntents)
+    .where(
+      and(
+        eq(telegramActionIntents.incidentId, incidentId),
+        eq(telegramActionIntents.status, "pending"),
+        gt(telegramActionIntents.expiresAt, new Date(now)),
+      ),
+    )
+    .limit(1);
+  return intent ?? null;
+}
+
 /** Container actions target the container; the rest target the host. */
 function targetOf(key: string, hostId: string): string {
   return key.startsWith(CONTAINER_PREFIX)
@@ -215,5 +252,8 @@ export async function createIntent(
     .onConflictDoNothing()
     .returning({ id: telegramActionIntents.id });
   if (!created) return { state: "live" };
+  // The notice learns about the intent through a silent, keyboard-only edit
+  // that commits or rolls back with the row itself (D-08).
+  await queueKeyboardEdit(tx, input.incident.id, `i${id}:open`);
   return { state: "created", id, expiresAt };
 }

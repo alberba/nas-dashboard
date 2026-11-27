@@ -19,14 +19,6 @@ import {
 } from "./database";
 import { createFakeBotApi } from "./telegram-fake";
 import { seedVerifiedSession } from "./verified-session";
-import {
-  HANDOFF_TTL_MS,
-  handoffToken,
-  hostActionsFor,
-  intentActionIds,
-  intentActionOfToken,
-  tokenActionOf,
-} from "@/lib/telegram-intents";
 import type { RuntimeConfig } from "@/lib/runtime-config";
 
 const baseUrl = testDatabaseUrl();
@@ -38,45 +30,6 @@ const SECRET = "b".repeat(32);
 // clock comfortably ahead so a freshly opened row is due in the test timeline.
 const START = Date.now() + 60 * 60_000;
 
-describe("hostActionsFor", () => {
-  it("offers start and restart only to a container", () => {
-    expect(hostActionsFor("container:plex")).toEqual(["start", "restart"]);
-  });
-
-  it("offers each maintenance condition its own action", () => {
-    expect(hostActionsFor("backup-failed")).toEqual(["backup-now"]);
-    expect(hostActionsFor("deploy-failed")).toEqual(["deploy-now"]);
-    expect(hostActionsFor("reboot-pending")).toEqual(["reboot"]);
-  });
-
-  it("offers nothing to the outage or to any other condition", () => {
-    for (const key of [
-      "connection",
-      "disk-health",
-      "services-down",
-      "stack-unit-failed",
-      "container:",
-      "",
-    ])
-      expect(hostActionsFor(key)).toEqual([]);
-  });
-
-  it("never offers update, stop or remove as an intent action", () => {
-    expect([...intentActionIds].sort()).toEqual(
-      ["backup-now", "deploy-now", "reboot", "restart", "start"].sort(),
-    );
-    for (const forbidden of ["update", "update-container", "stop", "remove"])
-      expect(intentActionIds).not.toContain(forbidden);
-  });
-
-  it("maps every keyboard button to one intent action and back", () => {
-    for (const action of intentActionIds)
-      expect(intentActionOfToken(tokenActionOf(action))).toBe(action);
-    expect(intentActionOfToken("ack")).toBeNull();
-    expect(intentActionOfToken("menu_open")).toBeNull();
-  });
-});
-
 describe.skipIf(!baseUrl)("telegram intents", () => {
   let context: TestDatabase;
   let db: typeof import("@/lib/db").db;
@@ -86,6 +39,7 @@ describe.skipIf(!baseUrl)("telegram intents", () => {
   let dispatch: typeof import("@/lib/notification-dispatch");
   let lane: typeof import("@/lib/telegram-updates");
   let keyboard: typeof import("@/lib/telegram-keyboard");
+  let intentsModule: typeof import("@/lib/telegram-intents");
   let config: RuntimeConfig;
   const openClients = new Set<Client>();
 
@@ -102,6 +56,7 @@ describe.skipIf(!baseUrl)("telegram intents", () => {
     dispatch = await import("@/lib/notification-dispatch");
     lane = await import("@/lib/telegram-updates");
     keyboard = await import("@/lib/telegram-keyboard");
+    intentsModule = await import("@/lib/telegram-intents");
     config = {
       databaseUrl: context.url,
       betterAuthSecret: SECRET,
@@ -140,6 +95,45 @@ describe.skipIf(!baseUrl)("telegram intents", () => {
     await db.delete(tables.incidents);
     await db.delete(tables.subscriptions);
     await db.delete(tables.user);
+  });
+
+  describe("hostActionsFor", () => {
+    it("offers start and restart only to a container", () => {
+      expect(intentsModule.hostActionsFor("container:plex")).toEqual(["start", "restart"]);
+    });
+
+    it("offers each maintenance condition its own action", () => {
+      expect(intentsModule.hostActionsFor("backup-failed")).toEqual(["backup-now"]);
+      expect(intentsModule.hostActionsFor("deploy-failed")).toEqual(["deploy-now"]);
+      expect(intentsModule.hostActionsFor("reboot-pending")).toEqual(["reboot"]);
+    });
+
+    it("offers nothing to the outage or to any other condition", () => {
+      for (const key of [
+        "connection",
+        "disk-health",
+        "services-down",
+        "stack-unit-failed",
+        "container:",
+        "",
+      ])
+        expect(intentsModule.hostActionsFor(key)).toEqual([]);
+    });
+
+    it("never offers update, stop or remove as an intent action", () => {
+      expect([...intentsModule.intentActionIds].sort()).toEqual(
+        ["backup-now", "deploy-now", "reboot", "restart", "start"].sort(),
+      );
+      for (const forbidden of ["update", "update-container", "stop", "remove"])
+        expect(intentsModule.intentActionIds).not.toContain(forbidden);
+    });
+
+    it("maps every keyboard button to one intent action and back", () => {
+      for (const action of intentsModule.intentActionIds)
+        expect(intentsModule.intentActionOfToken(intentsModule.tokenActionOf(action))).toBe(action);
+      expect(intentsModule.intentActionOfToken("ack")).toBeNull();
+      expect(intentsModule.intentActionOfToken("menu_open")).toBeNull();
+    });
   });
 
   async function lockOwner(): Promise<Client> {
@@ -240,11 +234,11 @@ describe.skipIf(!baseUrl)("telegram intents", () => {
       usedAt: null,
       finishedAt: null,
     });
-    expect(intent.expiresAt.getTime()).toBe(at + HANDOFF_TTL_MS);
+    expect(intent.expiresAt.getTime()).toBe(at + intentsModule.HANDOFF_TTL_MS);
 
     // Only the digest of the derived handoff token is stored; the token is not
     // in any column of the row.
-    const handoff = handoffToken(SECRET, intent.id);
+    const handoff = intentsModule.handoffToken(SECRET, intent.id);
     expect(handoff).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(intent.handoffHash).toBe(
       createHash("sha256").update(handoff).digest("hex"),
@@ -501,7 +495,7 @@ describe.skipIf(!baseUrl)("telegram intents", () => {
     const edited = await dispatch.runDispatchOnce({
       client,
       config,
-      now: () => START + 60_000 + HANDOFF_TTL_MS + 1_000,
+      now: () => START + 60_000 + intentsModule.HANDOFF_TTL_MS + 1_000,
       fetchImpl: fake.transport,
     });
     expect(edited.action).toBe("edited");

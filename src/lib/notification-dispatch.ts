@@ -25,6 +25,13 @@ import {
   renderActionRows,
 } from "./telegram-keyboard";
 import { activeSnooze, SNOOZE_SUPPRESSION_REASON } from "./incident-snooze";
+import {
+  handoffHref,
+  handoffToken,
+  INTENT_VERBS,
+  liveIntentOf,
+  type IntentActionId,
+} from "./telegram-intents";
 import { notificationPolicy } from "./notification-policy";
 import { renderWhyText, whyFacts } from "./incident-why";
 import { deliverPush, type PushTransport } from "./push";
@@ -1074,6 +1081,25 @@ async function dispatchEdit(
       now: context.now,
     }),
   );
+  // A live intent adds the confirmation link; its token is recomputed from the
+  // intent id, so no render ever writes it anywhere (D-08, D-00b).
+  const intent = await liveIntentOf(
+    workerDb(context.client),
+    incident.id,
+    context.now,
+  );
+  if (intent)
+    actionRows.push([
+      {
+        text: `Confirmar en el hub: ${INTENT_VERBS[intent.action as IntentActionId]} ${intent.target}`,
+        url: handoffHref(
+          context.config.betterAuthUrl,
+          incident.hostId,
+          incident.id,
+          handoffToken(context.config.betterAuthSecret, intent.id),
+        ),
+      },
+    ]);
 
   const attempts = await beginOutboxAttempt(
     context.client,

@@ -53,11 +53,13 @@ export type TelegramSendResult =
 
 export type TelegramEditResult = TelegramSendResult;
 
-/** One `callback_data` button of the keyboard rendered by `telegram-keyboard`. */
-export type TelegramActionButton = {
-  text: string;
-  callbackData: string;
-};
+/**
+ * One button of the keyboard rendered by `telegram-keyboard`: a `callback_data`
+ * action or a url that opens the hub. A url button never carries callback data.
+ */
+export type TelegramActionButton =
+  | { text: string; callbackData: string }
+  | { text: string; url: string };
 
 export type TelegramClientOptions = {
   botToken: string;
@@ -353,10 +355,11 @@ function buttons(buttonUrl: string, actionRows?: TelegramActionButton[][]) {
   for (const row of actionRows ?? []) {
     if (row.length === 0) continue;
     rows.push(
-      row.map((button) => ({
-        text: button.text,
-        callback_data: button.callbackData,
-      })),
+      row.map((button) =>
+        "url" in button
+          ? { text: button.text, url: button.url }
+          : { text: button.text, callback_data: button.callbackData },
+      ),
     );
   }
   return { inline_keyboard: rows };
