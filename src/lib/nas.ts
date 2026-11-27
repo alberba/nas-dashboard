@@ -13,6 +13,60 @@ export class NasInvalidResponse extends Data.TaggedError("NasInvalidResponse")<{
   readonly cause: unknown;
 }> {}
 
+/** An agent response went over the cap of its path. It is never partial data. */
+export class ResponseTooLarge extends Error {
+  constructor(readonly limit: number) {
+    super("La respuesta del agente supera el tope de su camino");
+    this.name = "ResponseTooLarge";
+  }
+}
+
+const KIB = 1024;
+const MIB = 1024 * KIB;
+
+/**
+ * Per-path caps on what the hub reads from an agent (D-10). They are
+ * unmeasured guesses (A1): revisit them with the sizes seen in production.
+ */
+export const AGENT_RESPONSE_LIMITS = {
+  metrics: 2 * MIB,
+  maintenance: 1 * MIB,
+  deployments: 2 * MIB,
+  files: 8 * MIB,
+  trash: 2 * MIB,
+  logs: 8 * MIB,
+  /** The answer to any POST: an action result or a command outcome. */
+  post: 256 * KIB,
+  other: 1 * MIB,
+} as const;
+
+/** A defined `body` marks a POST; the query string never changes the cap. */
+export function responseLimitFor(path: string, body?: unknown): number {
+  if (body !== undefined) return AGENT_RESPONSE_LIMITS.post;
+  let pathname: string;
+  try {
+    pathname = new URL(path, "http://agent").pathname;
+  } catch {
+    return AGENT_RESPONSE_LIMITS.other;
+  }
+  switch (pathname) {
+    case "/metrics":
+      return AGENT_RESPONSE_LIMITS.metrics;
+    case "/maintenance":
+      return AGENT_RESPONSE_LIMITS.maintenance;
+    case "/deployments":
+      return AGENT_RESPONSE_LIMITS.deployments;
+    case "/files":
+      return AGENT_RESPONSE_LIMITS.files;
+    case "/trash":
+      return AGENT_RESPONSE_LIMITS.trash;
+    case "/logs":
+      return AGENT_RESPONSE_LIMITS.logs;
+    default:
+      return AGENT_RESPONSE_LIMITS.other;
+  }
+}
+
 export type AgentHost = Pick<HostConfig, "url" | "token">;
 
 /** A Compose pull and recreate can outlast the normal action timeout. */
