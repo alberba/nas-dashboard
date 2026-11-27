@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Client } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { and, desc, eq, inArray, isNull, lt } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm";
 import { incidentHref, routeHref } from "../components/views/routes";
 import type { RuntimeConfig } from "./runtime-config";
 import { madridClock } from "./madrid-day";
@@ -1033,9 +1033,64 @@ async function recordEditSent(
   };
 }
 
+/**
+ * Past tense of each action for the result line. Keyed by the closed action set,
+ * so adding an action stops compiling until its wording exists. A reboot is only
+ * requested here: the confirmation that the host came back is read in the hub (A8).
+ */
+const INTENT_DONE: Record<IntentActionId, string> = {
+  start: "Arrancado",
+  restart: "Reiniciado",
+  reboot: "Reinicio solicitado de",
+  "backup-now": "Copia lanzada en",
+  "deploy-now": "Despliegue lanzado en",
+};
+
+type IntentResult = Pick<
+  typeof telegramActionIntents.$inferSelect,
+  "action" | "target" | "status" | "finishedAt"
+>;
+
+/** The last intent of the notice that reached a terminal outcome, if any. */
+async function latestIntentResult(
+  database: ReturnType<typeof workerDb>,
+  incidentId: number,
+): Promise<IntentResult | null> {
+  const [result] = await database
+    .select({
+      action: telegramActionIntents.action,
+      target: telegramActionIntents.target,
+      status: telegramActionIntents.status,
+      finishedAt: telegramActionIntents.finishedAt,
+    })
+    .from(telegramActionIntents)
+    .where(
+      and(
+        eq(telegramActionIntents.incidentId, incidentId),
+        inArray(telegramActionIntents.status, ["executed", "failed", "uncertain"]),
+        isNotNull(telegramActionIntents.finishedAt),
+      ),
+    )
+    .orderBy(desc(telegramActionIntents.finishedAt))
+    .limit(1);
+  return result ?? null;
+}
+
+function resultLine(result: IntentResult): string {
+  const action = result.action as IntentActionId;
+  const at = madridClock(result.finishedAt ?? new Date());
+  if (result.status === "executed")
+    return `${INTENT_DONE[action]} ${result.target} · ${at}`;
+  const verb = `${INTENT_VERBS[action]} ${result.target}`;
+  return result.status === "failed"
+    ? `Falló: ${verb} · ${at}`
+    : `Sin confirmar: ${verb} · ${at}`;
+}
+
 function editText(
   incident: typeof incidents.$inferSelect,
   snoozed: { until: Date } | null,
+  result: IntentResult | null,
 ): string {
   const lines = [incident.title];
   if (incident.detail) lines.push(incident.detail);
@@ -1046,6 +1101,8 @@ function editText(
   // A live silence keeps interrupting nothing, so the notice says until when.
   if (!incident.resolvedAt && snoozed)
     lines.push(`Silenciada hasta ${madridClock(snoozed.until)}`);
+  // Acting never acknowledges: the outcome is a line, not a state change.
+  if (result) lines.push(resultLine(result));
   lines.push(
     `${incident.hostId} · ${incident.severity}${
       incident.resolvedAt ? " · resuelta" : ""
@@ -1123,6 +1180,7 @@ async function dispatchEdit(
     incident.id,
     context.now,
   );
+  const outcome = await latestIntentResult(workerDb(context.client), incident.id);
   const actionRows = await composeActionRows(context, {
     incident,
     chatId: original.chatId,
@@ -1147,7 +1205,7 @@ async function dispatchEdit(
     {
       chatId: original.chatId,
       messageId: original.messageId,
-      text: editText(incident, snoozed),
+      text: editText(incident, snoozed, outcome),
       buttonUrl: incidentHref(
         context.config.betterAuthUrl,
         incident.hostId,

@@ -3,8 +3,9 @@
  *
  * Buttons rendered for a long episode and silences that already expired would
  * otherwise accumulate forever: the token table grows with every render and the
- * silence table keeps one row per watched condition. The hourly worker cleanup
- * calls this, and only this, on the two tables (T-05-18).
+ * silence table keeps one row per watched condition; the intents of the chat
+ * handoff are kept a day past their expiry like the tokens. The hourly worker
+ * cleanup calls this, and only this, on the three tables (T-05-18).
  *
  * A token is kept one day past its expiry, so a press on an old message still
  * receives the generic answer with the row present or already gone. A silence is
@@ -15,10 +16,16 @@
 
 import { lt } from "drizzle-orm";
 import type { Transaction } from "./incident-store";
-import { incidentSnoozes, telegramActionTokens } from "./schema";
+import {
+  incidentSnoozes,
+  telegramActionIntents,
+  telegramActionTokens,
+} from "./schema";
 
 /** A token lives this long after its expiry before the cleanup removes it. */
 export const TOKEN_RETENTION_AFTER_EXPIRY_MS = 86_400_000;
+/** An intent is kept this long after its expiry, like the tokens (P-15). */
+export const INTENT_RETENTION_AFTER_EXPIRY_MS = 86_400_000;
 /** An expired silence is kept this long before the cleanup removes it. */
 export const SNOOZE_RETENTION_MS = 7 * 86_400_000;
 
@@ -30,6 +37,8 @@ export type TelegramCleanupCounts = {
   tokens: number;
   /** Rows removed from `incident_snoozes`. */
   snoozes: number;
+  /** Rows removed from `telegram_action_intents`. */
+  intents: number;
 };
 
 /**
@@ -57,5 +66,18 @@ export async function cleanupTelegramState(
       lt(incidentSnoozes.until, new Date(at.getTime() - SNOOZE_RETENTION_MS)),
     )
     .returning({ key: incidentSnoozes.key });
-  return { tokens: tokens.length, snoozes: snoozes.length };
+  const intents = await executor
+    .delete(telegramActionIntents)
+    .where(
+      lt(
+        telegramActionIntents.expiresAt,
+        new Date(at.getTime() - INTENT_RETENTION_AFTER_EXPIRY_MS),
+      ),
+    )
+    .returning({ id: telegramActionIntents.id });
+  return {
+    tokens: tokens.length,
+    snoozes: snoozes.length,
+    intents: intents.length,
+  };
 }
