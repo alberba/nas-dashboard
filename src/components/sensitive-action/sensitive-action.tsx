@@ -51,6 +51,12 @@ export type SensitiveActionRequest = {
   acknowledgement?: string;
   /** Reuse the key of an attempt the server already refused; new UUID otherwise. */
   idempotencyKey?: string;
+  /**
+   * False for an action the server does not protect: the dialog skips the
+   * verification lookup and never asks for a passkey. The server still decides;
+   * a 403 reopens the verification. Defaults to true.
+   */
+  requiresVerification?: boolean;
   onSettled?: (outcome: SensitiveActionOutcome) => void;
 };
 
@@ -105,7 +111,11 @@ export function useSensitiveAction() {
     const active = document.activeElement;
     setPhase("ready");
     setError("");
-    setVerification(null);
+    setVerification(
+      action.requiresVerification === false
+        ? { method: "passkey", recent: true, reason: null }
+        : null,
+    );
     setPassword("");
     setPasswordRejected(false);
     setTyped("");
@@ -123,7 +133,7 @@ export function useSensitiveAction() {
   }, [open]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || open.requiresVerification === false) return;
     const controller = new AbortController();
     fetch("/api/verification", { signal: controller.signal })
       .then((response) => {
@@ -300,6 +310,7 @@ export function useSensitiveAction() {
       aria-busy={busy}
       data-sensitive-action
       data-phase={phase}
+      data-verification-required={String(open.requiresVerification !== false)}
       data-verification-method={verification?.method}
       data-verification-recent={
         verification ? String(verification.recent) : undefined

@@ -12,6 +12,7 @@ import type {
   PublicDigestStatus,
   Overview,
 } from "@/lib/types";
+import { TelegramHandoff } from "./telegram-handoff";
 
 /** The operator actions Avisos offers, shared with the hub API verbs. */
 export type IncidentHubAction =
@@ -413,6 +414,7 @@ export function AlertsView({
 
   return (
     <div className="stack section-gap">
+      <TelegramHandoff />
       <section className="panel stack">
         <h2>Resumen diario</h2>
         {data.digest ? (
