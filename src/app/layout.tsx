@@ -2,6 +2,9 @@ import type { Metadata, Viewport } from "next";
 import "@fontsource-variable/manrope";
 import "@fontsource-variable/unbounded";
 import "./globals.css";
+// Every page, including the generated 404, must render per request so the
+// proxy nonce reaches its scripts.
+export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
   title: "hub. — Tu NAS, a la vista",
   description: "Salud, recursos y control de tu NAS.",
