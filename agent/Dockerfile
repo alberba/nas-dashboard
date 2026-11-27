@@ -1,4 +1,4 @@
-FROM python:3.14-slim
+FROM python:3.15-slim
 COPY requirements.txt /tmp/agent-requirements.txt
 RUN apt-get update && apt-get install -y --no-install-recommends \
       util-linux smartmontools git systemd \
