@@ -366,9 +366,11 @@ describe.skipIf(!baseUrl)("telegram intents", () => {
       .select()
       .from(tables.incidents)
       .where(eq(tables.incidents.id, incidentId));
-    const edits = await keyboardEdits(incidentId);
-    expect(edits).toHaveLength(1);
-    expect(edits[0]).toMatchObject({
+    const queued = await keyboardEdits(incidentId);
+    // The edit that shows the link and the delayed one that will remove it.
+    expect(queued).toHaveLength(2);
+    const open = queued.find((row) => row.key.endsWith(":open"));
+    expect(open).toMatchObject({
       key: `incident:${incidentId}:kb:i${intent.id}:open`,
       kind: "incident-edit",
       channel: "telegram",
@@ -377,6 +379,9 @@ describe.skipIf(!baseUrl)("telegram intents", () => {
       messageId: "501",
       revision: incident.seq,
     });
+    expect(
+      queued.find((row) => row.key === `incident:${incidentId}:kb:i${intent.id}:expire`),
+    ).toMatchObject({ status: "pending", revision: incident.seq });
   });
 
   it("queues a keyboard edit once per discriminator and never without a confirmed message", async () => {

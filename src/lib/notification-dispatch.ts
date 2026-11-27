@@ -30,6 +30,7 @@ import { activeSnooze, SNOOZE_SUPPRESSION_REASON } from "./incident-snooze";
 import {
   handoffHref,
   handoffToken,
+  expireDueIntents,
   hostActionsFor,
   INTENT_VERBS,
   liveIntentOf,
@@ -1112,6 +1113,9 @@ async function dispatchEdit(
     incident.key,
     new Date(context.now),
   );
+  // A lapsed intent is closed here, so this render and any other never show its
+  // link; the `:expire` row only guarantees that some render happens (D-09).
+  await expireDueIntents(workerDb(context.client), incident.id, context.now);
   // A live intent adds the confirmation link; its token is recomputed from the
   // intent id, so no render ever writes it anywhere (D-08, D-00b).
   const intent = await liveIntentOf(

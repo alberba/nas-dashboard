@@ -48,6 +48,7 @@ import {
   createIntent,
   hostActionsFor,
   intentActionOfToken,
+  cancelLiveIntent,
   liveIntentOf,
   setKeyboardView,
   type IntentActionId,
@@ -307,9 +308,14 @@ export async function applyTokenAction(
       return switchMenu(tx, consumed, "actions", context.now);
     case "menu_close":
       return switchMenu(tx, consumed, "normal", context.now);
-    // The cancellation arrives with the live intent view (07-03 task 2).
-    case "intent_cancel":
-      return "ignored";
+    case "intent_cancel": {
+      // An old or repeated cancel finds no live intent: nothing to edit.
+      const cancelled = await cancelLiveIntent(tx, consumed.incidentId, context.now);
+      if (!cancelled) return "unchanged";
+      await setKeyboardView(tx, consumed.incidentId, "normal");
+      await queueKeyboardEdit(tx, consumed.incidentId, menuDiscriminator(consumed.tokenHash));
+      return "applied";
+    }
   }
 }
 

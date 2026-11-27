@@ -231,6 +231,30 @@ export async function setKeyboardView(
   return rows.length > 0;
 }
 
+/**
+ * Invalidates the live intent of a notice (D-10). A single conditional `UPDATE`
+ * is the whole decision: only a pending intent still in time is cancelled, so an
+ * old or repeated press finds nothing and the caller answers `unchanged`.
+ */
+export async function cancelLiveIntent(
+  executor: IntentExecutor,
+  incidentId: number,
+  now: number,
+): Promise<IntentRow | null> {
+  const [cancelled] = await executor
+    .update(telegramActionIntents)
+    .set({ status: "cancelled" })
+    .where(
+      and(
+        eq(telegramActionIntents.incidentId, incidentId),
+        eq(telegramActionIntents.status, "pending"),
+        gt(telegramActionIntents.expiresAt, new Date(now)),
+      ),
+    )
+    .returning();
+  return cancelled ?? null;
+}
+
 export type CreateIntentResult =
   | { state: "created"; id: string; expiresAt: Date }
   | { state: "live" }
@@ -276,8 +300,15 @@ export async function createIntent(
     .returning({ id: telegramActionIntents.id });
   if (!created) return { state: "live" };
   // The notice learns about the intent through a silent, keyboard-only edit
-  // that commits or rolls back with the row itself (D-08).
+  // that commits or rolls back with the row itself (D-08). The link and the
+  // menu exclude each other, so the menu view is closed.
+  await setKeyboardView(tx, input.incident.id, "normal");
   await queueKeyboardEdit(tx, input.incident.id, `i${id}:open`);
+  // The same transaction schedules the visible expiry (D-09): the outbox row is
+  // not eligible before `expiresAt`, and its render restores the keyboard.
+  await queueKeyboardEdit(tx, input.incident.id, `i${id}:expire`, {
+    notBefore: expiresAt,
+  });
   return { state: "created", id, expiresAt };
 }
 
