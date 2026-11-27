@@ -201,3 +201,22 @@ export function routeVerdict(route: string, method: string): RouteVerdict {
   if ((allow as string[]).includes(method)) return { verdict: "ok" };
   return { verdict: "method_not_allowed", allow };
 }
+
+/**
+ * Every `route.ts` under `src/app/api` and how it dispatches. A new route file
+ * must be declared here, or the scan in `tests/sensitive-actions.test.ts`
+ * fails. The catch-all is governed by `routeManifest`; a delegated route says
+ * who owns its policy.
+ */
+export const routeFiles = {
+  "src/app/api/[...path]/route.ts": { dispatch: "catch-all" },
+  "src/app/api/auth/[...all]/route.ts": {
+    dispatch: "better-auth",
+    policy: exempt(
+      "Better Auth valida credenciales y limita intentos; el cuerpo se acota en su envoltorio de 32 KiB",
+    ),
+  },
+} satisfies Record<
+  string,
+  { dispatch: "catch-all" } | { dispatch: "better-auth"; policy: Policy }
+>;
