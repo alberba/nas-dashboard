@@ -15,6 +15,7 @@ import {
 import { nasForHost, NasRejected } from "./nas";
 import { operations, samples } from "./schema";
 import { requiresVerificationForCommand } from "./sensitive-actions";
+import { readJsonBody } from "./request-body";
 import { guardSensitiveAction } from "./verification-api";
 import {
   verificationStore,
@@ -237,7 +238,7 @@ export async function runHostCommand({
   store?: VerificationStore;
   now?: Date;
 }) {
-  const input = hostCommandRequestSchema.parse(await request.json());
+  const input = hostCommandRequestSchema.parse(await readJsonBody(request));
   const host = resolveHost(hosts, request.nextUrl?.searchParams.get("host"));
   const operationId = z.uuid().parse(request.headers.get("idempotency-key"));
   if (requiresVerificationForCommand(input.command)) {

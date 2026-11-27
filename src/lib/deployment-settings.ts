@@ -8,6 +8,7 @@ import {
 } from "./hosts";
 import { nasForHost, NasRejected } from "./nas";
 import { operations, samples } from "./schema";
+import { readJsonBody } from "./request-body";
 import { guardSensitiveAction } from "./verification-api";
 import {
   verificationStore,
@@ -102,7 +103,9 @@ export async function saveDeploymentSettings({
   store?: VerificationStore;
   now?: Date;
 }) {
-  const input = deploymentSettingsSchema.parse(await request.json());
+  const input = deploymentSettingsSchema.parse(
+    await readJsonBody(request, { limit: DEPLOYMENT_SETTINGS_BODY_LIMIT }),
+  );
   const host = resolveHost(hosts, request.nextUrl?.searchParams.get("host"));
   const operationId = z.uuid().parse(request.headers.get("idempotency-key"));
   const [existing] = await db

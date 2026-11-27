@@ -12,6 +12,7 @@ import { operations, samples } from "./schema";
 import { mutateSettings } from "./settings";
 import { identityOf, watchOf } from "./container-watch";
 import type { Container, ContainerIdentity } from "./types";
+import { readJsonBody } from "./request-body";
 import { guardSensitiveAction } from "./verification-api";
 import {
   verificationStore,
@@ -189,7 +190,7 @@ export async function removeContainer({
   store?: VerificationStore;
   now?: Date;
 }) {
-  const input = removalRequestSchema.parse(await request.json());
+  const input = removalRequestSchema.parse(await readJsonBody(request));
   const host = resolveHost(
     hosts,
     request.nextUrl?.searchParams.get("host") ?? input.host,

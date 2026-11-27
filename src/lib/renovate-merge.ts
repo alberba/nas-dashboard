@@ -16,6 +16,7 @@ import {
 } from "./host-commands";
 import { resolveHost, type HostConfig } from "./hosts";
 import { operations } from "./schema";
+import { readJsonBody } from "./request-body";
 import { guardSensitiveAction } from "./verification-api";
 import { verificationStore } from "./verification";
 
@@ -145,7 +146,7 @@ export async function mergeRenovatePullRequest({
   session: { user: { id: string }; session: { id: string } };
   hosts: HostConfig[];
 }) {
-  const input = mergeRequestSchema.parse(await request.json());
+  const input = mergeRequestSchema.parse(await readJsonBody(request));
   const denied = await guardSensitiveAction({
     request,
     session,
