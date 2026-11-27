@@ -11,7 +11,11 @@ import { createHash, randomBytes } from "node:crypto";
 import type { Transaction } from "./incident-store";
 import { telegramActionTokens } from "./schema";
 import type { TelegramActionButton } from "./telegram";
-import { INTENT_VERBS } from "./telegram-intents";
+import {
+  INTENT_VERBS,
+  tokenActionOf,
+  type IntentActionId,
+} from "./telegram-intents";
 
 /** A rendered keyboard is usable for a week; later renders renew it. */
 export const TELEGRAM_TOKEN_TTL_MS = 7 * 86_400_000;
@@ -69,24 +73,42 @@ export function parseCallbackData(data: unknown): string | null {
   return typeof data === "string" && CALLBACK_DATA_PATTERN.test(data) ? data : null;
 }
 
+/** The two keyboards of an open notice: the usual one and the actions menu. */
+export type KeyboardView = "normal" | "actions";
+
 export type KeyboardState = {
   resolved: boolean;
   acknowledged: boolean;
   snoozed: boolean;
+  /** Host actions the notice offers (D-01 to D-03); absent means none. */
+  offered?: readonly IntentActionId[];
+  view?: KeyboardView;
+  /** A pending, unexpired intent already holds the notice (D-10). */
+  liveIntent?: boolean;
 };
 
 /**
  * Actions a state offers. The explanation accompanies every state, resolved
  * included: it only reads the notice (D-10). A resolved episode offers no state
- * control; a silenced one replaces both silence buttons with `unsnooze` (D-13)
- * and acknowledging is never undone from the chat (D-13, D-02).
+ * control and no menu (D-06); a silenced one replaces both silence buttons with
+ * `unsnooze` (D-13) and acknowledging is never undone from the chat (D-13,
+ * D-02). A live intent is the only thing the menu slot may show: its cancel
+ * button, even after the episode resolved (D-05).
  */
 export function keyboardActions(state: KeyboardState): TelegramAction[] {
-  if (state.resolved) return ["why"];
+  if (state.resolved)
+    return state.liveIntent ? ["intent_cancel", "why"] : ["why"];
   const actions: TelegramAction[] = [];
   if (!state.acknowledged) actions.push("ack");
   if (state.snoozed) actions.push("unsnooze");
   else actions.push("snooze_1h", "snooze_24h");
+  const offered = state.offered ?? [];
+  if (state.liveIntent) actions.push("intent_cancel");
+  else if (offered.length > 0) {
+    if (state.view === "actions")
+      actions.push(...offered.map(tokenActionOf), "menu_close");
+    else actions.push("menu_open");
+  }
   actions.push("why");
   return actions;
 }
@@ -131,11 +153,13 @@ export async function issueActionTokens(
  * Turns issued tokens into the callback rows appended after the URL button.
  * Acknowledging keeps its own row; the silence controls share the next one, so
  * a live silence shows a single "Quitar silencio" where the two buttons were.
- * The explanation follows in its own row, which is the only action a resolved
- * notice keeps (D-10).
+ * The host actions of the open menu follow, then the confirmation link of a live
+ * intent, and the menu, cancel and explanation controls close the keyboard in
+ * one row. The explanation is the only action a resolved notice keeps (D-10).
  */
 export function renderActionRows(
   issued: Partial<Record<TelegramAction, string>>,
+  options: { confirm?: { text: string; url: string } } = {},
 ): TelegramActionButton[][] {
   const button = (action: TelegramAction) => {
     const token = issued[action];
@@ -150,14 +174,14 @@ export function renderActionRows(
     ...button("unsnooze"),
   ];
   if (silence.length) rows.push(silence);
-  const rest = TELEGRAM_ACTIONS.filter(
-    (action) =>
-      action !== "ack" &&
-      action !== "snooze_1h" &&
-      action !== "snooze_24h" &&
-      action !== "unsnooze",
+  const hostActions = TELEGRAM_ACTIONS.filter((action) =>
+    action.startsWith("act_"),
   ).flatMap(button);
-  for (let index = 0; index < rest.length; index += 2)
-    rows.push(rest.slice(index, index + 2));
+  for (let index = 0; index < hostActions.length; index += 2)
+    rows.push(hostActions.slice(index, index + 2));
+  if (options.confirm) rows.push([options.confirm]);
+  const controls = (["menu_open", "menu_close", "intent_cancel", "why"] as const)
+    .flatMap(button);
+  if (controls.length) rows.push(controls);
   return rows;
 }

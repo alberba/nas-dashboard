@@ -22,7 +22,12 @@ import {
   holdsCollectionLock,
 } from "./notification-dispatch";
 import { db } from "./db";
-import { incidents, telegramCooldown, telegramPollState } from "./schema";
+import {
+  incidents,
+  notificationOutbox,
+  telegramCooldown,
+  telegramPollState,
+} from "./schema";
 import type { RuntimeConfig } from "./runtime-config";
 import {
   applyIncidentAction,
@@ -31,7 +36,7 @@ import {
   type IncidentActionOutcome,
 } from "./incident-actions";
 import { enqueueWhyReply } from "./incident-why";
-import type { Transaction } from "./incident-store";
+import { queueKeyboardEdit, type Transaction } from "./incident-store";
 import {
   answerTelegramCallback,
   deleteTelegramWebhook,
@@ -43,9 +48,15 @@ import {
   createIntent,
   hostActionsFor,
   intentActionOfToken,
+  liveIntentOf,
+  setKeyboardView,
   type IntentActionId,
 } from "./telegram-intents";
-import { parseCallbackData, type TelegramAction } from "./telegram-keyboard";
+import {
+  parseCallbackData,
+  type KeyboardView,
+  type TelegramAction,
+} from "./telegram-keyboard";
 import { WORKER_IDLE_MS } from "./worker-loop";
 
 /** One row of `telegram_poll_state`; only this consumer exists today. */
@@ -206,13 +217,51 @@ async function registerIntent(
 }
 
 /**
+ * Switches the keyboard of an open notice between its usual view and the actions
+ * menu (D-07). Only an open notice that offers actions and has no live intent
+ * changes; the edit is keyed by the consumed token, so repeating the transaction
+ * repeats nothing and every press edits at most once.
+ */
+async function switchMenu(
+  tx: Transaction,
+  consumed: { incidentId: number; tokenHash: string },
+  view: KeyboardView,
+  now: number,
+): Promise<TokenActionResult> {
+  const [incident] = await tx
+    .select({ id: incidents.id, key: incidents.key, resolvedAt: incidents.resolvedAt })
+    .from(incidents)
+    .where(eq(incidents.id, consumed.incidentId))
+    .limit(1)
+    .for("update");
+  if (!incident || incident.resolvedAt) return "ignored";
+  if (hostActionsFor(incident.key).length === 0) return "ignored";
+  const [opening] = await tx
+    .select({ view: notificationOutbox.keyboardView })
+    .from(notificationOutbox)
+    .where(eq(notificationOutbox.key, `incident:${incident.id}:open`))
+    .limit(1);
+  if (!opening) return "ignored";
+  if (await liveIntentOf(tx, incident.id, now)) return "unchanged";
+  if (opening.view === view) return "unchanged";
+  if (!(await setKeyboardView(tx, incident.id, view))) return "ignored";
+  await queueKeyboardEdit(tx, incident.id, menuDiscriminator(consumed.tokenHash));
+  return "applied";
+}
+
+/** One edit per consumed token: the first 16 hex of its digest. */
+function menuDiscriminator(tokenHash: string): string {
+  return `m${tokenHash.slice(0, 16)}`;
+}
+
+/**
  * Applies a consumed token inside the caller's transaction. Acknowledging,
  * silencing and the "why" explanation all share this seam, so Telegram and the
  * hub cannot drift apart.
  */
 export async function applyTokenAction(
   tx: Transaction,
-  consumed: { incidentId: number; action: TelegramAction },
+  consumed: { incidentId: number; action: TelegramAction; tokenHash: string },
   context: { via: "telegram"; now: number; secret: string },
 ): Promise<TokenActionResult> {
   const target = {
@@ -254,10 +303,11 @@ export async function applyTokenAction(
       if (!action) return "ignored";
       return registerIntent(tx, consumed.incidentId, action, context);
     }
-    // The menu and the cancellation arrive with the keyboard views (07-03);
-    // until then no render emits their tokens and a stray one changes nothing.
     case "menu_open":
+      return switchMenu(tx, consumed, "actions", context.now);
     case "menu_close":
+      return switchMenu(tx, consumed, "normal", context.now);
+    // The cancellation arrives with the live intent view (07-03 task 2).
     case "intent_cancel":
       return "ignored";
   }
@@ -280,6 +330,13 @@ function answerText(outcome: {
       return "No se pudo aplicar";
     }
     if (outcome.result === "applied") return "Hecho";
+    const menu =
+      outcome.consumed.action === "menu_open" ||
+      outcome.consumed.action === "menu_close" ||
+      outcome.consumed.action === "intent_cancel";
+    // A menu press the state no longer allows is not "unchanged": the keyboard
+    // the operator saw was already stale.
+    if (menu && outcome.result === "ignored") return "No se pudo aplicar";
     // A repeated "why" is D-09's "already answered"; the other actions were
     // already applied or had nothing to change.
     if (outcome.consumed.action === "why") return "Ya respondido";

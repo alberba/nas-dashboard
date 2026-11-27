@@ -10,6 +10,7 @@ import {
   incidents,
   notificationOutbox,
   samples,
+  telegramActionIntents,
   type NotificationOutcome,
 } from "./schema";
 import {
@@ -23,11 +24,13 @@ import {
   issueActionTokens,
   keyboardActions,
   renderActionRows,
+  type KeyboardView,
 } from "./telegram-keyboard";
 import { activeSnooze, SNOOZE_SUPPRESSION_REASON } from "./incident-snooze";
 import {
   handoffHref,
   handoffToken,
+  hostActionsFor,
   INTENT_VERBS,
   liveIntentOf,
   type IntentActionId,
@@ -603,6 +606,51 @@ async function recordTelegramUncertain(
   };
 }
 
+/**
+ * The action keyboard of a notice as a pure function of the database state: the
+ * view stored on the opening row, the live intent and the episode itself. Every
+ * render rebuilds it, so no edit can resurrect a control the state no longer
+ * allows (D-05, D-06, D-07).
+ */
+async function composeActionRows(
+  context: DispatcherContext,
+  input: {
+    incident: typeof incidents.$inferSelect;
+    chatId: string;
+    snoozed: boolean;
+    view: KeyboardView;
+    intent: typeof telegramActionIntents.$inferSelect | null;
+  },
+): Promise<TelegramActionButton[][]> {
+  const { incident, intent } = input;
+  const issued = await issueActionTokens(workerDb(context.client), {
+    incidentId: incident.id,
+    chatId: input.chatId,
+    actions: keyboardActions({
+      resolved: incident.resolvedAt !== null,
+      acknowledged: incident.acknowledgedAt !== null,
+      snoozed: input.snoozed,
+      offered: hostActionsFor(incident.key),
+      view: input.view,
+      liveIntent: intent !== null,
+    }),
+    now: context.now,
+  });
+  return renderActionRows(issued, {
+    confirm: intent
+      ? {
+          text: `Confirmar en el hub: ${INTENT_VERBS[intent.action as IntentActionId]} ${intent.target}`,
+          url: handoffHref(
+            context.config.betterAuthUrl,
+            incident.hostId,
+            incident.id,
+            handoffToken(context.config.betterAuthSecret, intent.id),
+          ),
+        }
+      : undefined,
+  });
+}
+
 async function dispatchTelegramOpening(
   context: DispatcherContext,
   job: Job,
@@ -631,18 +679,13 @@ async function dispatchTelegramOpening(
 
   // Tokens are rendered with the notice: a failed send only leaves harmless
   // unused rows, never a button that outlived its message.
-  const actionRows: TelegramActionButton[][] = renderActionRows(
-    await issueActionTokens(workerDb(context.client), {
-      incidentId: incident.id,
-      chatId: telegram.chatId,
-      actions: keyboardActions({
-        resolved: false,
-        acknowledged: incident.acknowledgedAt !== null,
-        snoozed: false,
-      }),
-      now: context.now,
-    }),
-  );
+  const actionRows = await composeActionRows(context, {
+    incident,
+    chatId: telegram.chatId,
+    snoozed: false,
+    view: "normal",
+    intent: null,
+  });
 
   const attempts = await beginOutboxAttempt(
     context.client,
@@ -1069,18 +1112,6 @@ async function dispatchEdit(
     incident.key,
     new Date(context.now),
   );
-  const actionRows: TelegramActionButton[][] = renderActionRows(
-    await issueActionTokens(workerDb(context.client), {
-      incidentId: incident.id,
-      chatId: original.chatId,
-      actions: keyboardActions({
-        resolved: incident.resolvedAt !== null,
-        acknowledged: incident.acknowledgedAt !== null,
-        snoozed: snoozed !== null,
-      }),
-      now: context.now,
-    }),
-  );
   // A live intent adds the confirmation link; its token is recomputed from the
   // intent id, so no render ever writes it anywhere (D-08, D-00b).
   const intent = await liveIntentOf(
@@ -1088,18 +1119,13 @@ async function dispatchEdit(
     incident.id,
     context.now,
   );
-  if (intent)
-    actionRows.push([
-      {
-        text: `Confirmar en el hub: ${INTENT_VERBS[intent.action as IntentActionId]} ${intent.target}`,
-        url: handoffHref(
-          context.config.betterAuthUrl,
-          incident.hostId,
-          incident.id,
-          handoffToken(context.config.betterAuthSecret, intent.id),
-        ),
-      },
-    ]);
+  const actionRows = await composeActionRows(context, {
+    incident,
+    chatId: original.chatId,
+    snoozed: snoozed !== null,
+    view: original.keyboardView === "actions" ? "actions" : "normal",
+    intent,
+  });
 
   const attempts = await beginOutboxAttempt(
     context.client,

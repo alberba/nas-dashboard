@@ -256,7 +256,7 @@ export const notificationOutbox = pgTable(
     chatId: text(),
     messageId: text(),
     /**
-     * Which keyboard the `:open` message currently shows: `normal` or `menu`.
+     * Which keyboard the `:open` message currently shows: `normal` or `actions`.
      * Keyboard-only edits read it so a view change never needs a new `seq`.
      */
     keyboardView: text().notNull().default("normal"),

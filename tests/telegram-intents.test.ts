@@ -173,7 +173,7 @@ describe.skipIf(!baseUrl)("telegram intents", () => {
 
   async function issueToken(
     incidentId: number,
-    action: "act_backup_now" | "act_start" | "act_restart",
+    action: "act_backup_now" | "act_start" | "act_restart" | "menu_open",
   ): Promise<string> {
     const issued = await keyboard.issueActionTokens(db, {
       incidentId,
@@ -665,6 +665,197 @@ describe.skipIf(!baseUrl)("telegram intents", () => {
     const flipped = `${token.slice(0, 10)}${token[10] === "A" ? "B" : "A"}${token.slice(11)}`;
     expect(await intentsModule.findIntentByToken(db, flipped)).toBeNull();
     expect(await intentsModule.findIntentByToken(db, "")).toBeNull();
+  });
+
+  type FakeCall = { method: string; body: Record<string, unknown> };
+
+  /** `callback_data` values of the keyboard a sent or edited call carried. */
+  function callbacksOf(call: FakeCall): string[] {
+    const markup = call.body.reply_markup as {
+      inline_keyboard: Array<Array<{ callback_data?: string }>>;
+    };
+    return markup.inline_keyboard
+      .flat()
+      .flatMap((button) =>
+        typeof button.callback_data === "string" ? [button.callback_data] : [],
+      );
+  }
+
+  /** What each token of a keyboard does, resolved from its stored digest. */
+  async function actionsOf(call: FakeCall): Promise<Map<string, string>> {
+    const found = new Map<string, string>();
+    for (const data of callbacksOf(call)) {
+      const [row] = await db
+        .select()
+        .from(tables.telegramActionTokens)
+        .where(
+          eq(
+            tables.telegramActionTokens.tokenHash,
+            keyboard.hashActionToken(data),
+          ),
+        );
+      found.set(row.action, data);
+    }
+    return found;
+  }
+
+  const sends = (fake: ReturnType<typeof createFakeBotApi>) =>
+    fake.calls.filter((call) => call.method === "sendMessage");
+  const edits = (fake: ReturnType<typeof createFakeBotApi>) =>
+    fake.calls.filter((call) => call.method === "editMessageText");
+
+  async function deliverEdit(
+    fake: ReturnType<typeof createFakeBotApi>,
+    client: Client,
+    at: number,
+  ) {
+    const result = await dispatch.runDispatchOnce({
+      client,
+      config,
+      now: () => at,
+      fetchImpl: fake.transport,
+    });
+    expect(result.action).toBe("edited");
+    return edits(fake).at(-1)!;
+  }
+
+  async function viewOf(incidentId: number) {
+    const [open] = await db
+      .select()
+      .from(tables.notificationOutbox)
+      .where(eq(tables.notificationOutbox.key, `incident:${incidentId}:open`));
+    return open.keyboardView;
+  }
+
+  describe("actions menu", () => {
+    it("offers the menu on a notice with actions and not on one without", async () => {
+      const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
+      const client = await lockOwner();
+      await sendNotice(fake, client, "backup-failed");
+      const withActions = await actionsOf(sends(fake)[0]);
+      expect(withActions.has("menu_open")).toBe(true);
+      expect(withActions.has("act_backup_now")).toBe(false);
+
+      const plain = createFakeBotApi({ chatId: Number(CHAT_ID) });
+      await sendNotice(plain, client, "connection");
+      const without = await actionsOf(sends(plain)[0]);
+      expect(without.has("menu_open")).toBe(false);
+      expect(without.has("ack")).toBe(true);
+    });
+
+    it("opens and closes the menu with silent edits of the same message", async () => {
+      const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
+      const client = await lockOwner();
+      const incidentId = await sendNotice(fake, client, "backup-failed");
+      const opening = await actionsOf(sends(fake)[0]);
+
+      await press(fake, client, opening.get("menu_open")!, 321);
+      expect(await viewOf(incidentId)).toBe("actions");
+      const queued = await keyboardEdits(incidentId);
+      expect(queued).toHaveLength(1);
+      expect(queued[0].key).toMatch(
+        new RegExp(`^incident:${incidentId}:kb:m[0-9a-f]{16}$`),
+      );
+      expect(queued[0].key).toBe(
+        `incident:${incidentId}:kb:m${keyboard
+          .hashActionToken(opening.get("menu_open")!)
+          .slice(0, 16)}`,
+      );
+
+      const opened = await actionsOf(await deliverEdit(fake, client, START + 120_000));
+      expect(opened.has("act_backup_now")).toBe(true);
+      expect(opened.has("menu_close")).toBe(true);
+      expect(opened.has("menu_open")).toBe(false);
+
+      await press(fake, client, opened.get("menu_close")!, 322, START + 130_000);
+      expect(await viewOf(incidentId)).toBe("normal");
+      const closed = await actionsOf(await deliverEdit(fake, client, START + 140_000));
+      expect(closed.has("menu_open")).toBe(true);
+      expect(closed.has("act_backup_now")).toBe(false);
+      expect(closed.has("menu_close")).toBe(false);
+
+      // Only edits of the one message: nothing new was sent.
+      expect(sends(fake)).toHaveLength(1);
+      expect(edits(fake)).toHaveLength(2);
+      expect(await keyboardEdits(incidentId)).toHaveLength(2);
+    });
+
+    it("does not repeat the effect of a token that was already used", async () => {
+      const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
+      const client = await lockOwner();
+      const incidentId = await sendNotice(fake, client, "backup-failed");
+      const token = (await actionsOf(sends(fake)[0])).get("menu_open")!;
+
+      await press(fake, client, token, 331);
+      await press(fake, client, token, 332, START + 61_000);
+
+      expect(await keyboardEdits(incidentId)).toHaveLength(1);
+      expect(await viewOf(incidentId)).toBe("actions");
+    });
+
+    it("ignores a menu press once the episode is resolved", async () => {
+      const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
+      const client = await lockOwner();
+      const incidentId = await sendNotice(fake, client, "backup-failed");
+      const stale = (await actionsOf(sends(fake)[0])).get("menu_open")!;
+      await store.recordIncidentObservation({
+        hostId: "nas-home",
+        key: "backup-failed",
+        failing: false,
+        now: START + 30_000,
+      });
+      const queuedBefore = await keyboardEdits(incidentId);
+
+      await press(fake, client, stale, 341);
+
+      expect(await viewOf(incidentId)).toBe("normal");
+      expect(await keyboardEdits(incidentId)).toHaveLength(queuedBefore.length);
+    });
+
+    it("ignores a menu press on a notice that offers no action", async () => {
+      const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
+      const client = await lockOwner();
+      const incidentId = await sendNotice(fake, client, "connection");
+      const forged = await issueToken(incidentId, "menu_open");
+
+      await press(fake, client, forged, 342);
+
+      expect(await viewOf(incidentId)).toBe("normal");
+      expect(await keyboardEdits(incidentId)).toHaveLength(0);
+    });
+
+    it("does not open the menu while an intent is live", async () => {
+      const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
+      const client = await lockOwner();
+      await seedVerifiedSession(db, tables);
+      const incidentId = await sendNotice(fake, client, "backup-failed");
+      const token = (await actionsOf(sends(fake)[0])).get("menu_open")!;
+      await createdIntent(incidentId);
+      const before = (await keyboardEdits(incidentId)).length;
+
+      await press(fake, client, token, 343, START + 70_000);
+
+      expect(await keyboardEdits(incidentId)).toHaveLength(before);
+      expect(await viewOf(incidentId)).toBe("normal");
+    });
+
+    it("never offers update, stop or remove in the menu", async () => {
+      const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
+      const client = await lockOwner();
+      const incidentId = await sendNotice(fake, client, "container:plex");
+      await press(
+        fake,
+        client,
+        (await actionsOf(sends(fake)[0])).get("menu_open")!,
+        351,
+      );
+      const opened = await actionsOf(await deliverEdit(fake, client, START + 120_000));
+      expect([...opened.keys()].filter((action) => action.startsWith("act_")).sort()).toEqual([
+        "act_restart",
+        "act_start",
+      ]);
+      expect(await viewOf(incidentId)).toBe("actions");
+    });
   });
 
   it("fails closed without exactly one user", async () => {

@@ -18,9 +18,9 @@ import { and, eq, gt, lte } from "drizzle-orm";
 import { incidentHref } from "../components/views/routes";
 import type { HostCommand } from "./host-command-contract";
 import { queueKeyboardEdit, type Transaction } from "./incident-store";
-import { telegramActionIntents, user } from "./schema";
+import { notificationOutbox, telegramActionIntents, user } from "./schema";
 import type { ActionId } from "./sensitive-actions";
-import type { TelegramAction } from "./telegram-keyboard";
+import type { KeyboardView, TelegramAction } from "./telegram-keyboard";
 
 /** A handoff link works for five minutes (D-00b). */
 export const HANDOFF_TTL_MS = 5 * 60_000;
@@ -206,6 +206,29 @@ export async function expireDueIntents(
     )
     .returning({ id: telegramActionIntents.id });
   return rows.length;
+}
+
+/**
+ * Records which keyboard the confirmed notice shows. The view lives on the
+ * `:open` row because a menu change never moves the episode `seq`; the flag says
+ * whether that row exists, so a notice that was never delivered stays untouched.
+ */
+export async function setKeyboardView(
+  executor: Pick<Transaction, "update">,
+  incidentId: number,
+  view: KeyboardView,
+): Promise<boolean> {
+  const rows = await executor
+    .update(notificationOutbox)
+    .set({ keyboardView: view })
+    .where(
+      and(
+        eq(notificationOutbox.key, `incident:${incidentId}:open`),
+        eq(notificationOutbox.status, "sent"),
+      ),
+    )
+    .returning({ id: notificationOutbox.id });
+  return rows.length > 0;
 }
 
 export type CreateIntentResult =

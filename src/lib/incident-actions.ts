@@ -218,7 +218,7 @@ export type ActionTokenFailure =
   | "incident_missing";
 
 export type ActionTokenConsumption =
-  | { ok: true; incidentId: number; action: TelegramAction }
+  | { ok: true; incidentId: number; action: TelegramAction; tokenHash: string }
   | { ok: false; reason: ActionTokenFailure };
 
 const KNOWN_ACTIONS = new Set<TelegramAction>(TELEGRAM_ACTIONS);
@@ -286,5 +286,5 @@ export async function consumeActionToken(
     )
     .returning({ incidentId: telegramActionTokens.incidentId });
   if (!consumed) return { ok: false, reason: "used" };
-  return { ok: true, incidentId: consumed.incidentId, action };
+  return { ok: true, incidentId: consumed.incidentId, action, tokenHash };
 }
