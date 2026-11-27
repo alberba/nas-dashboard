@@ -3,7 +3,7 @@ status: partial
 phase: 06-puerta-de-seguridad
 source: [06-VERIFICATION.md]
 started: 2026-11-27T14:01:06Z
-updated: 2026-11-27T15:06:04.989Z
+updated: 2026-11-27T15:25:45.860Z
 ---
 
 ## Current Test
@@ -19,8 +19,8 @@ result: pass
 ### 2. Comprobar las cabeceras reales por dominio: curl -sI https://<dominio-principal> y https://<entrada-alternativa-tailscale> | grep -i -E 'strict-transport-security|content-security-policy'
 expected: Una sola Strict-Transport-Security: max-age=15552000 (sin includeSubDomains ni preload) y una CSP con nonce y 'strict-dynamic' en el documento; con el interruptor HSTS de Nginx Proxy Manager apagado.
 result: blocked
-blocked_by: release-build
-reason: "Comprobado por Claude el 2026-11-27: https://hub.alberba.es responde con una sola strict-transport-security: max-age=63072000; preload (la pone Nginx Proxy Manager, openresty) y sin CSP; /login da 404. Producción no tiene la fase 6 desplegada (main va 219 commits por delante de origin/main). Falta desplegar, apagar el HSTS de NPM y repetir el curl en hub.alberba.es y en la entrada de Tailscale (ugreen-nas.tailf3703f.ts.net no respondió por HTTPS)."
+blocked_by: third-party
+reason: "Repetido por Claude el 2026-11-27 tras el despliegue (main = origin/main): https://hub.alberba.es ya sirve la CSP con nonce y 'strict-dynamic' y la HSTS de la app (max-age=15552000), pero sigue llegando una segunda strict-transport-security: max-age=63072000; preload que añade Nginx Proxy Manager. Falta apagar el interruptor HSTS de NPM en ese host. La entrada de Tailscale (ugreen-nas.tailf3703f.ts.net) no sirve el panel por HTTPS: :443 responde 400 o nada, y no parece haber un Tailscale Serve hacia 127.0.0.1:4324. Repetir el curl cuando estén las dos cosas."
 
 ### 3. Abrir el panel en Safari y Firefox, verificar con passkey y activar push; mirar la consola
 expected: Ninguna violación de CSP. Playwright solo cubre Chromium.
