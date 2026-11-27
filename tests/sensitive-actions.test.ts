@@ -1,8 +1,12 @@
+import { readdirSync, readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { NextRequest } from "next/server";
 import {
   afterAll,
+  afterEach,
   beforeAll,
   beforeEach,
   describe,
@@ -15,9 +19,13 @@ import {
   hostCommandPolicies,
   requiresVerificationForAction,
   requiresVerificationForCommand,
+  patternRoutes,
+  routeFiles,
   routeManifest,
   routeVerdict,
   type ActionId,
+  type ProtectedPostRoute,
+  type RouteMethod,
 } from "@/lib/sensitive-actions";
 import { hostCommandIds } from "@/lib/host-command-contract";
 import { actionSchema } from "@/lib/validation";
@@ -198,6 +206,162 @@ function schemaActionIds(): string[] {
 
 const allActions = Object.keys(actionPolicies) as ActionId[];
 
+let settingsBodyLimit: number;
+
+type BodyLimitCase = {
+  name: string;
+  path: string;
+  method: "POST" | "DELETE";
+  /** Bytes the route admits; the default is the global limit. */
+  limit?: () => number;
+  /** The setup route answers 403 before reading once an account exists. */
+  withoutAccounts?: true;
+  /** The password route answers 403 before reading on the passkey domain. */
+  passwordDomain?: true;
+  /** The route never reads the body, so a large one is not a 413. */
+  readsBody: boolean;
+};
+
+const bodyLimitCases: BodyLimitCase[] = [
+  { name: "setup", path: "/api/setup", method: "POST", withoutAccounts: true, readsBody: true },
+  { name: "verification/password", path: "/api/verification/password", method: "POST", passwordDomain: true, readsBody: true },
+  { name: "containers/remove", path: "/api/containers/remove?host=nas-home", method: "POST", readsBody: true },
+  { name: "host-command", path: "/api/host-command?host=nas-home", method: "POST", readsBody: true },
+  { name: "incidents acknowledge", path: "/api/incidents/1/acknowledge", method: "POST", readsBody: true },
+  { name: "incidents snooze", path: "/api/incidents/1/snooze", method: "POST", readsBody: true },
+  { name: "incidents unsnooze", path: "/api/incidents/1/unsnooze", method: "POST", readsBody: true },
+  { name: "deployments/settings", path: "/api/deployments/settings?host=nas-home", method: "POST", limit: () => settingsBodyLimit, readsBody: true },
+  { name: "renovate/merge", path: "/api/renovate/merge", method: "POST", readsBody: true },
+  { name: "presence", path: "/api/presence", method: "POST", readsBody: true },
+  { name: "action", path: "/api/action?host=nas-home", method: "POST", readsBody: true },
+  { name: "settings", path: "/api/settings?host=nas-home", method: "POST", readsBody: true },
+  { name: "push POST", path: "/api/push", method: "POST", readsBody: true },
+  { name: "push DELETE", path: "/api/push", method: "DELETE", readsBody: true },
+  { name: "push/test", path: "/api/push/test", method: "POST", readsBody: false },
+];
+
+const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+const catchAllFile = "src/app/api/[...path]/route.ts";
+
+function source(relative: string) {
+  return readFileSync(path.join(repoRoot, relative), "utf8");
+}
+
+function withoutComments(text: string) {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^:])\/\/.*$/gm, "$1");
+}
+
+function typeScriptFiles(directory: string): string[] {
+  return readdirSync(path.join(repoRoot, directory), { recursive: true })
+    .map((entry) => String(entry).split(path.sep).join("/"))
+    .filter((entry) => /\.tsx?$/.test(entry))
+    .map((entry) => `${directory}/${entry}`);
+}
+
+/** The route a body-limit row exercises, without the query string. */
+function rowRoute(row: BodyLimitCase) {
+  return row.path.replace(/^\/api\//, "").split("?")[0];
+}
+
+describe("route declarations", () => {
+  const catchAll = withoutComments(source(catchAllFile));
+  const mutationMethods: RouteMethod[] = ["POST", "DELETE"];
+
+  it("declares every route === literal of the catch-all, and nothing stale", () => {
+    const literals = new Set(
+      [...catchAll.matchAll(/route === "([^"]+)"/g)].map((match) => match[1]),
+    );
+
+    expect([...literals].sort()).toEqual(Object.keys(routeManifest).sort());
+  });
+
+  it("declares every regular-expression route of the catch-all", () => {
+    expect((catchAll.match(/\.exec\(route\)/g) ?? []).length).toBe(
+      patternRoutes.length,
+    );
+  });
+
+  it("dispatches only by exact name or by the declared patterns", () => {
+    expect(catchAll).not.toMatch(/switch\s*\(\s*route\s*\)/);
+    expect(catchAll).not.toMatch(/route\.(startsWith|endsWith|includes)\(/);
+  });
+
+  it("lists every route.ts under src/app/api, and nothing stale", () => {
+    const files = readdirSync(path.join(repoRoot, "src/app/api"), {
+      recursive: true,
+    })
+      .map((entry) => String(entry).split(path.sep).join("/"))
+      .filter((entry) => /(^|\/)route\.(ts|tsx|js|jsx|mjs)$/.test(entry))
+      .map((entry) => `src/app/api/${entry}`);
+
+    expect(files.sort()).toEqual(Object.keys(routeFiles).sort());
+  });
+
+  it("exports exactly the verbs the manifest declares", () => {
+    const exported = new Set(
+      [
+        ...catchAll.matchAll(
+          /export\s+(?:const|async function|function)\s+(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/g,
+        ),
+      ].map((match) => match[1]),
+    );
+    const declared = new Set<string>();
+    for (const entry of [
+      ...Object.values(routeManifest),
+      ...patternRoutes.map((route) => route.entry),
+    ])
+      for (const method of Object.keys(entry)) declared.add(method);
+
+    expect([...exported].sort()).toEqual([...declared].sort());
+  });
+
+  it("reads no request body outside request-body.ts", () => {
+    const readers =
+      /\b\w*(?:[Rr]equest|req)\s*\??\.\s*(?:json|text|formData|arrayBuffer|blob|body)\b/;
+    const offenders = [
+      ...typeScriptFiles("src/app/api"),
+      ...typeScriptFiles("src/lib"),
+    ]
+      .filter((file) => file !== "src/lib/request-body.ts")
+      .filter((file) => readers.test(withoutComments(source(file))));
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("covers every mutation with a 413 row or marks it as not reading a body", () => {
+    const missing: string[] = [];
+    for (const [route, entry] of Object.entries(routeManifest))
+      for (const method of mutationMethods)
+        if (
+          Object.hasOwn(entry, method) &&
+          !bodyLimitCases.some(
+            (row) => rowRoute(row) === route && row.method === method,
+          )
+        )
+          missing.push(`${method} ${route}`);
+    for (const { pattern, entry } of patternRoutes)
+      for (const method of mutationMethods)
+        if (
+          Object.hasOwn(entry, method) &&
+          !bodyLimitCases.some(
+            (row) => pattern.test(rowRoute(row)) && row.method === method,
+          )
+        )
+          missing.push(`${method} ${pattern.source}`);
+
+    expect(missing).toEqual([]);
+  });
+
+  it("keeps no 413 row for a route the manifest does not declare", () => {
+    for (const row of bodyLimitCases)
+      expect(routeVerdict(rowRoute(row), row.method), row.name).toEqual({
+        verdict: "ok",
+      });
+  });
+});
+
 describe.skipIf(!baseUrl)("sensitive actions", () => {
   let context: TestDatabase;
   let agent: FakeAgent;
@@ -205,7 +369,6 @@ describe.skipIf(!baseUrl)("sensitive actions", () => {
   let pool: typeof import("@/lib/db").pool;
   let tables: typeof import("@/lib/schema");
   let routes: typeof import("../src/app/api/[...path]/route");
-  let settingsBodyLimit: number;
 
   async function api(
     path: string,
@@ -637,6 +800,101 @@ describe.skipIf(!baseUrl)("sensitive actions", () => {
         });
     });
   });
+  describe("whole-route protection", () => {
+    /** One valid request per route whose `POST` is protected as a whole. */
+    const protectedRouteRequests = {
+      "containers/remove": {
+        path: "/api/containers/remove?host=nas-home",
+        body: { id: containerId, confirmation: "sonarr" },
+      },
+      "deployments/settings": {
+        path: "/api/deployments/settings?host=nas-home",
+        body: {
+          release: "v2.5.0",
+          values: { NEW_SETTING: "value" },
+          acknowledgedManualSteps: true,
+        },
+      },
+      "renovate/merge": {
+        path: "/api/renovate/merge?host=nas-home",
+        body: { number: 100, headSha: "1".repeat(40), deployNow: false },
+      },
+    } satisfies Record<ProtectedPostRoute, { path: string; body: unknown }>;
+
+    /** Exempt by D-06: they accept a valid request without any verification. */
+    const exemptRouteRequests = {
+      presence: {
+        path: "/api/presence",
+        body: { id: "3f1d9c2a-0000-4000-8000-0000000000aa", visible: true },
+      },
+      "push/test": { path: "/api/push/test", body: {} },
+      settings: {
+        path: "/api/settings?host=nas-home",
+        body: {
+          cpu: 90,
+          memory: 90,
+          disk: 90,
+          temperature: 80,
+          sustainedSeconds: 60,
+        },
+      },
+    };
+
+    // `push/test` queues a job for the session owner; leaving it would make
+    // the next test that deletes the user cascade it away mid-comparison.
+    afterEach(async () => {
+      await db.delete(tables.notificationOutbox);
+      await db.delete(tables.presence);
+    });
+
+    it.each(Object.entries(protectedRouteRequests))(
+      "answers 403 for %s without verification, with no agent request or operation",
+      async (_route, request) => {
+        await clearVerification(db, tables);
+
+        const response = await api(request.path, request.body, {
+          "Idempotency-Key": crypto.randomUUID(),
+        });
+
+        expect(response.status).toBe(403);
+        expect(await response.json()).toMatchObject({
+          code: "recent_verification_required",
+        });
+        expect(agent.requests).toEqual([]);
+        expect(await db.select().from(tables.operations)).toEqual([]);
+      },
+    );
+
+    it.each(Object.entries(exemptRouteRequests))(
+      "accepts %s without a verification",
+      async (_route, request) => {
+        await clearVerification(db, tables);
+
+        const response = await api(request.path, request.body, {
+          "Idempotency-Key": crypto.randomUUID(),
+        });
+
+        expect(response.status).toBeLessThan(300);
+        expect((await response.json()).code).not.toBe(
+          "recent_verification_required",
+        );
+      },
+    );
+
+    it("keeps the typed fixtures in step with the manifest", () => {
+      const protectedRoutes = Object.entries(routeManifest)
+        .filter(([, entry]) => {
+          const post = (entry as { POST?: { kind: string } }).POST;
+          return post?.kind === "protected";
+        })
+        .map(([route]) => route)
+        .sort();
+
+      expect(Object.keys(protectedRouteRequests).sort()).toEqual(
+        protectedRoutes,
+      );
+    });
+  });
   describe("request body limit on /api/action", () => {
     const oversized = {
       ...bodies.stop,
@@ -689,38 +947,6 @@ describe.skipIf(!baseUrl)("sensitive actions", () => {
     );
   });
   describe("request body limit on every mutation", () => {
-    type BodyLimitCase = {
-      name: string;
-      path: string;
-      method: "POST" | "DELETE";
-      /** Bytes the route admits; the default is the global limit. */
-      limit?: () => number;
-      /** The setup route answers 403 before reading once an account exists. */
-      withoutAccounts?: true;
-      /** The password route answers 403 before reading on the passkey domain. */
-      passwordDomain?: true;
-      /** The route never reads the body, so a large one is not a 413. */
-      readsBody: boolean;
-    };
-
-    const bodyLimitCases: BodyLimitCase[] = [
-      { name: "setup", path: "/api/setup", method: "POST", withoutAccounts: true, readsBody: true },
-      { name: "verification/password", path: "/api/verification/password", method: "POST", passwordDomain: true, readsBody: true },
-      { name: "containers/remove", path: "/api/containers/remove?host=nas-home", method: "POST", readsBody: true },
-      { name: "host-command", path: "/api/host-command?host=nas-home", method: "POST", readsBody: true },
-      { name: "incidents acknowledge", path: "/api/incidents/1/acknowledge", method: "POST", readsBody: true },
-      { name: "incidents snooze", path: "/api/incidents/1/snooze", method: "POST", readsBody: true },
-      { name: "incidents unsnooze", path: "/api/incidents/1/unsnooze", method: "POST", readsBody: true },
-      { name: "deployments/settings", path: "/api/deployments/settings?host=nas-home", method: "POST", limit: () => settingsBodyLimit, readsBody: true },
-      { name: "renovate/merge", path: "/api/renovate/merge", method: "POST", readsBody: true },
-      { name: "presence", path: "/api/presence", method: "POST", readsBody: true },
-      { name: "action", path: "/api/action?host=nas-home", method: "POST", readsBody: true },
-      { name: "settings", path: "/api/settings?host=nas-home", method: "POST", readsBody: true },
-      { name: "push POST", path: "/api/push", method: "POST", readsBody: true },
-      { name: "push DELETE", path: "/api/push", method: "DELETE", readsBody: true },
-      { name: "push/test", path: "/api/push/test", method: "POST", readsBody: false },
-    ];
-
     /** Row counts of every table a rejected request must leave untouched. */
     async function traces() {
       return {
