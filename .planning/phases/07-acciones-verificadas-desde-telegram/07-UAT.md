@@ -1,18 +1,14 @@
 ---
-status: testing
+status: complete
 phase: 07-acciones-verificadas-desde-telegram
 source: [07-VERIFICATION.md]
 started: 2026-11-27T19:41:02Z
-updated: 2026-11-27T20:15:00Z
+updated: 2026-11-27T20:18:22.593Z
 ---
 
 ## Current Test
 
-number: 3
-name: En el despliegue real (Nginx Proxy Manager y Tailscale Serve), con sesión iniciada por contraseña, POST a /api/verification/password en el dominio principal con Origin del origen alternativo y aparte con cabecera de host reenviada alternativa; después, por la entrada alternativa, verificar con contraseña y completar una acción
-expected: |
-  En el dominio principal ambos dan 403 password_not_allowed; la entrada alternativa sigue ofreciendo contraseña y la acción se ejecuta
-awaiting: user response
+[testing complete]
 
 ## Tests
 
@@ -34,7 +30,7 @@ evidence: |
 
 ### 3. En el despliegue real (Nginx Proxy Manager y Tailscale Serve), con sesión iniciada por contraseña, POST a /api/verification/password en el dominio principal con Origin del origen alternativo y aparte con cabecera de host reenviada alternativa; después, por la entrada alternativa, verificar con contraseña y completar una acción
 expected: En el dominio principal ambos dan 403 password_not_allowed; la entrada alternativa sigue ofreciendo contraseña y la acción se ejecuta
-result: [pending]
+result: pass
 evidence: |
   2026-11-27T19:5xZ, tras desplegar la fase 7 en webs (migración 0008 aplicada), con sesión de contraseña real:
   - GET hub.alberba.es/api/verification → method=passkey
@@ -42,7 +38,7 @@ evidence: |
   - POST principal con Origin alternativo → 403 password_not_allowed
   - POST principal con Origin + X-Forwarded-Host alternativos → 403 password_not_allowed
   - POST alternativo con contraseña errónea → 403 invalid_password (se ofrece contraseña)
-  Falta: verificar con la contraseña real en la entrada alternativa y completar una acción.
+  Entrada alternativa: verificación method=password a las 20:18:02Z y backup-now success a las 20:18:02Z (confirmado por el usuario).
 
 ### 4. Al recuperarse un aviso con una intención viva, el enlace de confirmación desaparece
 expected: Cuando la incidencia se cierra (p. ej. «Copia recuperada») mientras hay una intención pendiente, la edición de recuperación no muestra «Confirmar en el hub»; la intención deja de estar viva
@@ -56,9 +52,9 @@ evidence: |
 ## Summary
 
 total: 4
-passed: 2
+passed: 3
 issues: 1
-pending: 1
+pending: 0
 skipped: 0
 blocked: 0
 
