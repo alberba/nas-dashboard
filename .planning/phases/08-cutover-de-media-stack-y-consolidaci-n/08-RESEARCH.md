@@ -322,7 +322,7 @@ SELECT series.at, g.cpu FROM series LEFT JOIN g USING(at) ORDER BY series.at;
 | Cubos de tiempo | Aritmética de epoch en JS | `date_bin(interval, ts, timestamp '2000-01-01')` | Mismo ancla que el overview; 15 min divide 1 h, así que los cubos alinean. |
 | Percentiles del presupuesto | Media o máximo | p95 por rango ordenado (nearest-rank) sobre ≥50 ejecuciones tras calentar | D-21 pide p95; la media oculta la cola. |
 | Retención por lotes | `DELETE` monolítico | Bucle de lotes con `LIMIT` sobre `id` | Tamaño de transacción y WAL con filas JSONB de ≈2 KB. |
-| Reintentos del productor | Cola persistente en `issue-automator` | 2–3 intentos en proceso con el mismo `eventId` | El contenedor no tiene estado; una cola durable es un subsistema nuevo (ver Open Question 5). |
+| Reintentos del productor | Un broker o una base de datos para la cola; intentos en proceso sin estado | Bandeja durable en disco en `issue-automator` (un fichero JSON por evento, escritura atómica, retroceso hasta un 2xx, acotada por antigüedad y por número) con el mismo `eventId` | Decisión del usuario (Open Question 5, RESOLVED): una caída del hub no debe perder un «Issue Resolved». Solo biblioteca estándar y un directorio montado, sin broker. Plan 08-15. |
 
 **Key insight:** casi toda la complejidad nueva es de **orden y de bordes** (qué se despliega antes, qué cierra qué incidencia, qué se borra antes de agregar), no de algoritmos. Reutilizar las fronteras transaccionales que el hub ya tiene es lo que mantiene el diseño pequeño.
 
@@ -403,7 +403,7 @@ SELECT series.at, g.cpu FROM series LEFT JOIN g USING(at) ORDER BY series.at;
 
 ### Pitfall 15: Ingest «abre» sin que el colector conozca la clave de Seerr
 **What goes wrong:** ninguna otra parte del hub cierra claves `issue:seerr:*`: no hay reconciliación por snapshot. Si el evento `resolved` se pierde (hub caído, Seerr sin tipo suscrito), la incidencia queda abierta indefinidamente (la limpieza solo borra resueltas antiguas) y ensucia «abiertas ahora».
-**How to avoid:** ver Open Question 3 (cierre automático por antigüedad o sondeo de estado desde issue-automator).
+**How to avoid:** Open Question 3 (RESOLVED): el evento `resolved` no se pierde porque `issue-automator` lo guarda en disco y lo reintenta hasta recibir un 2xx (plan 08-15). No hay cierre por antigüedad en el hub ni sondeo de estado.
 
 ## Code Examples
 
@@ -514,7 +514,8 @@ import hashlib, hmac, json, time, urllib.request
 
 def sign(secret: str, timestamp: str, body: bytes) -> str:
     return hmac.new(secret.encode(), timestamp.encode() + b"." + body, hashlib.sha256).hexdigest()
-# El eventId se calcula una vez por transición; el reintento en proceso reutiliza el cuerpo y cambia solo la marca de tiempo.
+# El eventId se calcula una vez por transición; cada reintento reutiliza el cuerpo y cambia solo la marca de tiempo.
+# Con la bandeja durable (Open Question 5, RESOLVED) el cuerpo se guarda en disco y el reintento, incluso tras un reinicio, firma de nuevo con el secreto vigente.
 ```
 
 ### Contrato de ingest propuesto (v1)
@@ -530,7 +531,7 @@ def sign(secret: str, timestamp: str, body: bytes) -> str:
 | Respuestas | `202 {status:"accepted", action}`; `200 {status:"duplicate"}` (mismo `source:eventId` y mismo hash: sin efectos); `409` (mismo id, otro contenido); `400` esquema/JSON; `401` firma/ventana/cabeceras (**un único código**); `413` cuerpo; `422` clave o fuente no permitida; `503` secreto no configurado o base no disponible |
 | Formato del aviso | lo compone el hub. `backup-failed`: título y detalle como el colector (`Copia fallida en <host>`); `issue:seerr:`: título/detalle desde `data` en texto plano, sin HTML y con longitudes acotadas |
 
-La respuesta a un duplicado es 2xx a propósito: el reintento de la copia (D-12) tras perder la respuesta del primer intento debe contar como confirmación, o caería al fallback y duplicaría el aviso. «Se rechaza sin crear incidencia» (criterio 1) se cumple: no hay fila nueva ni outbox nuevo. Ver Open Question 1.
+La respuesta a un duplicado es 2xx a propósito: el reintento de la copia (D-12) tras perder la respuesta del primer intento debe contar como confirmación, o caería al fallback y duplicaría el aviso. «Se rechaza sin crear incidencia» (criterio 1) se cumple: no hay fila nueva ni outbox nuevo. Decidido por el usuario (Open Question 1, RESOLVED): la repetición exacta responde 200 y cuenta como confirmación; el mismo `eventId` con otro cuerpo responde 409.
 
 ## State of the Art
 
@@ -560,35 +561,44 @@ La respuesta a un duplicado es 2xx a propósito: el reintento de la copia (D-12)
 | A9 | Las cifras de rendimiento (4,65 s / 1,5 s / 162 ms / 1,9 ms / 19,6 s / 33,9 s) de esta máquina son representativas en orden de magnitud del servidor `webs` | Summary, Validation | El servidor de producción puede ser más lento; el presupuesto de 150 ms tiene ~75× de margen en 30d desde rollup, no en 24h crudo |
 | A10 | La imagen de `backup` basada en `alpine:3.24` mantiene `jq` y `openssl` disponibles en `apk` mientras Renovate sube la base | Standard Stack | Un cambio de Alpine que renombre paquetes rompería el build; `backup-image.test.sh` lo detecta |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **¿Qué significa «evento repetido se rechaza» para el reintento de la copia?**
+Las siete preguntas están resueltas en la revisión 1 de los planes. Q1, Q3 y Q5 las decidió el usuario de forma explícita; Q2, Q4, Q6 y Q7 las cierra la decisión de planificación que ya las recogía, citada en cada una. Cada pregunta conserva su texto original y añade su resolución.
+
+1. **¿Qué significa «evento repetido se rechaza» para el reintento de la copia?** (RESOLVED)
    - What we know: el criterio 1 pide que un evento repetido «se rechace sin crear incidencia»; D-12 exige 2xx para dar por confirmado.
    - What's unclear: si «rechazar» incluye un 4xx.
    - Recommendation: duplicado → `200 {status:"duplicate"}` (sin efectos), conflicto de contenido → `409`. Confirmar con el usuario si prefiere 409 también para el duplicado exacto; entonces el script debe tratar 409-duplicado como confirmación, lo que complica el contrato.
+   - **Resolución (decisión del usuario, revisión 1):** una repetición exacta (mismo `source:eventId` y mismo cuerpo) responde 200 `duplicate` sin efectos y cuenta como confirmación para el productor; el mismo `eventId` con otro cuerpo responde 409. Plan 08-01, P-05 (cerrada, ya no es un punto abierto).
 
-2. **¿Cómo se prueba la copia sin dejar `backup-failed` abierta?**
+2. **¿Cómo se prueba la copia sin dejar `backup-failed` abierta?** (RESOLVED)
    - What we know: D-09 pide un evento firmado de prueba de la copia y ver incidencia y mensaje. Con la guarda del Pitfall 1, un `ok` anterior al evento no lo cierra; solo el siguiente backup real (04:00) lo haría.
    - Recommendation: permitir `state:"resolved"` de la fuente `backup` y un subcomando `media-backup notify-test` que publique abrir y resolver con `eventId` de prueba. Alternativa: aceptar que quede abierta hasta la copia de esa noche.
+   - **Resolución (se adoptó la recomendación):** el ingest admite `resolved` de `backup` con la clave `backup-failed` (plan 08-01, alcance) y `media-backup notify-test ingest` publica abrir y cerrar con `eventId` de prueba (plan 08-06, P-20).
 
-3. **¿Qué cierra una incidencia de Seerr si se pierde el evento de resolución?**
+3. **¿Qué cierra una incidencia de Seerr si se pierde el evento de resolución?** (RESOLVED)
    - What we know: ningún snapshot reconcilia las claves `issue:seerr:*`; D-05 solo define el cierre por evento.
    - Recommendation: lo mínimo que cumple D-05 es nada más; si se quiere red de seguridad, un cierre por antigüedad (p. ej. 14 días, `closedBy: "ingest-expired"`) en el ciclo de limpieza, sin mensaje. Decisión del usuario.
+   - **Resolución (decisión del usuario, revisión 1):** la red de seguridad es que el evento no se pierda: `issue-automator` guarda cada evento (apertura y cierre) en una bandeja durable en disco y lo reintenta hasta recibir un 2xx del ingest, con la identidad estable por issue de D-05 (un reintento es un 200 duplicado en el hub). No se añade cierre por antigüedad en el hub ni sondeo de estado. Plan 08-15.
 
-4. **¿Se sirve 24h desde el rollup?**
+4. **¿Se sirve 24h desde el rollup?** (RESOLVED)
    - What we know: 24h crudo mide ≈162 ms con 5 s de muestreo; D-18 lo deja en crudo.
    - Recommendation: no tocar D-18; medir y publicar la cifra; si el operador quiere el overview completo bajo 150 ms en todos los rangos, sería otra decisión.
+   - **Resolución (se adoptó la recomendación):** 24h sigue leyendo muestras crudas (D-18) y su cifra es informativa; D-21 solo obliga al overview de 30d, con un p95 menor de 150 ms. La prueba mide y registra 24h sin umbral y la cifra de la research es una estimación de otra máquina, no un dato de producción. Plan 08-05.
 
-5. **¿Reintentos de `issue-automator` si el hub está caído?**
+5. **¿Reintentos de `issue-automator` si el hub está caído?** (RESOLVED)
    - Recommendation: 2–3 intentos en proceso con el mismo `eventId`; si fallan, se registra en log y se pierde el aviso (no hay reconciliación posible, a diferencia de la copia). Aceptar la pérdida; una cola durable es otra fase.
+   - **Resolución (decisión del usuario, revisión 1; sustituye la recomendación):** `issue-automator` persiste cada evento saliente (apertura y cierre) y lo reintenta hasta recibir un 2xx. Mecanismo elegido, coherente con las convenciones de `../media-stack`: un fichero JSON por evento en un directorio de datos de la app (`${APPDATA_ROOT}/issue-automator`, montado en `/outbox` y creado por `scripts/init.sh` con el perfil `extras`), escritura atómica con renombrado como `atomic_json` de security-monitor, solo biblioteca estándar, un hilo que vacía la bandeja con retroceso exponencial acotado y orden por issue (el cierre nunca antes que la apertura). Acotada por antigüedad (14 días, por debajo de los 30 días de `ingest_events` en el hub, de modo que una repetición cae siempre dentro de la ventana de idempotencia) y por número (200 eventos). Plan 08-15.
 
-6. **¿Mantener o retirar el alcance `apps-server` de `TELEGRAM_BOT_TOKEN` en el catálogo?**
+6. **¿Mantener o retirar el alcance `apps-server` de `TELEGRAM_BOT_TOKEN` en el catálogo?** (RESOLVED)
    - What we know: tras el cutover el apps-server no tiene lector del token (WUD, security-monitor, upgrade y merged-updates pierden Telegram; `backup` no está en su `compose.yaml`).
    - Recommendation: retirarlo del catálogo y de `apps-server/.env.example` y dejarlo anotado en el runbook; un `.env` que aún lo tenga solo genera un aviso «unknown setting» no bloqueante.
+   - **Resolución (se adoptó la recomendación):** el alcance `apps-server` pierde `TELEGRAM_*` en el catálogo, la plantilla y el `.env.example` generado; un `.env` desplegado que las conserve no se rompe. Plan 08-09, P-28.
 
-7. **¿Quién y cuándo ejecuta la reversión del hub si el ingest falla en producción?**
+7. **¿Quién y cuándo ejecuta la reversión del hub si el ingest falla en producción?** (RESOLVED)
    - What we know: la migración `0009`/`0010` deben ser reversibles con script en `scripts/rollback/` (precedente 0004) y la retención de 48 h es unidireccional.
    - Recommendation: desplegar primero el ingest (migración `0009`) sin tocar la retención; desplegar rollups y la retención de 48 h en un despliegue posterior, tras el pg_dump.
+   - **Resolución (se adoptó la recomendación):** la migración 0009 y su reversa `scripts/rollback/0009_ingest_events.sql` salen en el despliegue 1 (planes 08-14 y 08-10), sin retención; los rollups, la migración 0010 con su reversa y la retención de 48 h salen en el despliegue 2 tras una copia comprobada (planes 08-04, 08-05 y 08-11). La reversión la ejecuta el usuario (D-11).
 
 ## Environment Availability
 

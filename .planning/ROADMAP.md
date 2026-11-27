@@ -233,10 +233,10 @@ Plans:
   3. 30 días de histórico se sirven desde rollups y el overview cumple un presupuesto medido con 500k muestras.
   4. La rotación conjunta del token del bot (hub y `media-stack`) está documentada y probada.
   5. Ningún emisor del hub puede saltarse la política: el camino de `notify()` ya no existe.
-**Plans**: 13 plans
+**Plans**: 15 plans
 
 Plans:
-- [ ] 08-01-PLAN.md — Ingest firmado e idempotente en el hub (HMAC, ventana de 300 s, `ingest_events`, alcance por fuente)
+- [ ] 08-01-PLAN.md — Ingest firmado e idempotente en el hub (HMAC, ventana de 300 s, alcance por fuente; repetición exacta 200, colisión 409)
 - [ ] 08-02-PLAN.md — Ciclo de vida de las incidencias de Seerr y guardia de evidencia obsoleta en el hub
 - [ ] 08-03-PLAN.md — Guarda de emisores (D-22), script de eventos de prueba firmados, checklist del cutover y runbook de rotación
 - [ ] 08-04-PLAN.md — Rollups del histórico (7d y 30d, contenedores), backfill por días y carril del worker
@@ -249,6 +249,8 @@ Plans:
 - [ ] 08-11-PLAN.md — Puerta 2: despliegue de rollups y retención con copia previa y comprobación en producción
 - [ ] 08-12-PLAN.md — Guarda de emisores de `media-stack` y documentación del cutover
 - [ ] 08-13-PLAN.md — Puerta de rotación: token del bot y secreto HMAC rotados de verdad y runbook corregido
+- [ ] 08-14-PLAN.md — Tabla `ingest_events`: migración 0009 aditiva con reversa guardada y ensayada
+- [ ] 08-15-PLAN.md — Bandeja durable de issue-automator: los eventos del ingest se guardan en disco y se reintentan hasta un 2xx
 
 **Repo:** `media-stack` (commits y CI propios) + hub; `.env` de `media-stack` en la rotación operativa
 **Research flag:** Sí — contrato de ingest versionado con `media-stack` y orden de apagado por familia.

@@ -286,7 +286,7 @@ def process_webhook_payload(payload):
     issue_data = payload.get("issue", {})
     issue_id = issue_data.get("id") or issue_data.get("issue_id") or payload.get("issue_id")
 ```
-`ISSUE_CREATED` conserva el flujo (blocklist, búsqueda, comentario) y publica `open`; `ISSUE_RESOLVED` solo publica `resolved` sin tocar Radarr/Sonarr; otro tipo, 200 sin efecto. Firma solo stdlib: `hmac.new(secret.encode(), timestamp.encode() + b"." + body, hashlib.sha256).hexdigest()`. `eventId = issue:<id>:<estado>:<updatedAt>`; reintento en proceso (2-3) con mismo cuerpo. `load_config(env)` valida y agrega errores (tests `LoadConfig`): añadir `NOTIFY_INGEST_*` ahí y quitar el bloque `telegram`.
+`ISSUE_CREATED` conserva el flujo (blocklist, búsqueda, comentario) y publica `open`; `ISSUE_RESOLVED` solo publica `resolved` sin tocar Radarr/Sonarr; otro tipo, 200 sin efecto. Firma solo stdlib: `hmac.new(secret.encode(), timestamp.encode() + b"." + body, hashlib.sha256).hexdigest()`. `eventId = issue:<id>:<estado>:<updatedAt>`; los reintentos los hace una bandeja durable en disco hasta el 2xx, con el mismo cuerpo y `eventId` y marca de tiempo nueva por intento (Open Questions 3 y 5, RESOLVED por el usuario; plan 08-15), que sustituye al reintento en proceso. `load_config(env)` valida y agrega errores (tests `LoadConfig`): añadir `NOTIFY_INGEST_*` ahí y quitar el bloque `telegram`.
 
 **Test analog:** `tests/issue-automator.test.sh`: Bash que lanza `PYTHONPATH=... python3 -B - <<'EOF'` con `unittest`, `main.load_config(env(...))` y `env(**overrides)`. Quitar el assert de `telegram` en `load_config`; añadir clases `Ingest` que parchean el transporte y comprueban que `ISSUE_RESOLVED` no llama a las funciones de Radarr/Sonarr.
 
