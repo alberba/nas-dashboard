@@ -3,7 +3,7 @@ status: testing
 phase: 07-acciones-verificadas-desde-telegram
 source: [07-VERIFICATION.md]
 started: 2026-11-27T19:41:02Z
-updated: 2026-11-27T19:41:02Z
+updated: 2026-11-27T19:53:08Z
 ---
 
 ## Current Test
@@ -27,6 +27,14 @@ result: [pending]
 ### 3. En el despliegue real (Nginx Proxy Manager y Tailscale Serve), con sesión iniciada por contraseña, POST a /api/verification/password en el dominio principal con Origin del origen alternativo y aparte con cabecera de host reenviada alternativa; después, por la entrada alternativa, verificar con contraseña y completar una acción
 expected: En el dominio principal ambos dan 403 password_not_allowed; la entrada alternativa sigue ofreciendo contraseña y la acción se ejecuta
 result: [pending]
+evidence: |
+  2026-11-27T19:5xZ, tras desplegar la fase 7 en webs (migración 0008 aplicada), con sesión de contraseña real:
+  - GET hub.alberba.es/api/verification → method=passkey
+  - GET oracle-web.tailf3703f.ts.net/api/verification → method=password (Tailscale Serve reenvía el Host)
+  - POST principal con Origin alternativo → 403 password_not_allowed
+  - POST principal con Origin + X-Forwarded-Host alternativos → 403 password_not_allowed
+  - POST alternativo con contraseña errónea → 403 invalid_password (se ofrece contraseña)
+  Falta: verificar con la contraseña real en la entrada alternativa y completar una acción.
 
 ## Summary
 
