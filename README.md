@@ -145,6 +145,23 @@ sudo tailscale serve --bg --https=443 http://127.0.0.1:4324
 
 Si el NAS está caído, la entrada privada permite consultar el historial en el servidor remoto. Los datos muestran su antigüedad y los controles se desactivan. El NAS puede tardar hasta 75 segundos en aparecer desconectado.
 
+## Cabeceras de seguridad
+
+HSTS lo emite la propia aplicación, no el proxy. Toda respuesta lleva `Strict-Transport-Security: max-age=15552000` (180 días), sin `includeSubDomains` ni `preload`: el dominio principal comparte nombre con otros servicios del NAS, incluir subdominios los afectaría a todos y `preload` es prácticamente irreversible. Al emitirse en la aplicación, la cabecera cubre por igual el dominio principal (Nginx Proxy Manager) y la entrada alternativa de Tailscale Serve, sin configurar dos veces el mismo valor.
+
+Deja apagado el interruptor «HSTS Enabled» de Nginx Proxy Manager. Si el proxy también emite la cabecera, el navegador recibe dos y solo respeta la primera; la aplicación ya la envía y duplicarla no aporta nada.
+
+HSTS solo tiene efecto sobre HTTPS: los navegadores ignoran la cabecera servida por HTTP, así que verla en `http://localhost` durante el desarrollo es inocuo. Para comprobar la respuesta de cada dominio:
+
+```sh
+curl -sI https://hub.example.com | grep -i strict-transport-security
+curl -sI https://hub-alternativo.tailnet.example | grep -i strict-transport-security
+```
+
+Cada uno debe devolver una sola línea con `max-age=15552000` y sin `includeSubDomains` ni `preload`.
+
+La CSP se aplica en dos capas. Los documentos (login, panel y 404) reciben desde `src/proxy.ts` una política con un nonce nuevo por petición y `'strict-dynamic'`, sin `'unsafe-inline'` en `script-src`, con `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`, `connect-src 'self'` y `frame-ancestors 'none'`. Las respuestas de la API llevan su propia política mínima, `default-src 'none'; frame-ancestors 'none'`, declarada en `next.config.ts`; los documentos no la reciben. Para revertir la CSP de documentos basta con borrar `src/proxy.ts`; el HSTS y la CSP de la API seguirían declarados en `next.config.ts`. La política conserva `style-src 'unsafe-inline'` porque el panel serializa atributos `style` con anchos dependientes de datos.
+
 ## Móvil y notificaciones
 
 Añade hub. a la pantalla de inicio. En Ajustes, activa los avisos y envía una prueba. El permiso debe concederse en cada dispositivo. En iPhone se requiere una aplicación añadida a la pantalla de inicio; en Android depende del navegador y sus permisos.
