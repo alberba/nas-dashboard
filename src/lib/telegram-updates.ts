@@ -22,7 +22,7 @@ import {
   holdsCollectionLock,
 } from "./notification-dispatch";
 import { db } from "./db";
-import { telegramCooldown, telegramPollState } from "./schema";
+import { incidents, telegramCooldown, telegramPollState } from "./schema";
 import type { RuntimeConfig } from "./runtime-config";
 import {
   applyIncidentAction,
@@ -39,6 +39,12 @@ import {
   redactToken,
   type TelegramTransport,
 } from "./telegram";
+import {
+  createIntent,
+  hostActionsFor,
+  intentActionOfToken,
+  type IntentActionId,
+} from "./telegram-intents";
 import { parseCallbackData, type TelegramAction } from "./telegram-keyboard";
 import { WORKER_IDLE_MS } from "./worker-loop";
 
@@ -164,6 +170,42 @@ function translate(outcome: IncidentActionOutcome): TokenActionResult {
 }
 
 /**
+ * A host action only registers an intention (D-00a): the lane records a pending
+ * intent and the silent edit that carries the hub link, and never runs, calls
+ * the agent or writes an operation. A resolved notice or a key that does not
+ * offer the action creates nothing (D-06, D-01 to D-03).
+ */
+async function registerIntent(
+  tx: Transaction,
+  incidentId: number,
+  action: IntentActionId,
+  context: { now: number; secret: string },
+): Promise<TokenActionResult> {
+  const [incident] = await tx
+    .select({
+      id: incidents.id,
+      hostId: incidents.hostId,
+      key: incidents.key,
+      resolvedAt: incidents.resolvedAt,
+    })
+    .from(incidents)
+    .where(eq(incidents.id, incidentId))
+    .limit(1)
+    .for("update");
+  if (!incident || incident.resolvedAt) return "ignored";
+  if (!hostActionsFor(incident.key).includes(action)) return "ignored";
+  const created = await createIntent(tx, {
+    incident,
+    action,
+    secret: context.secret,
+    now: context.now,
+  });
+  if (created.state === "created") return "applied";
+  if (created.state === "live") return "unchanged";
+  return "ignored";
+}
+
+/**
  * Applies a consumed token inside the caller's transaction. Acknowledging,
  * silencing and the "why" explanation all share this seam, so Telegram and the
  * hub cannot drift apart.
@@ -171,7 +213,7 @@ function translate(outcome: IncidentActionOutcome): TokenActionResult {
 export async function applyTokenAction(
   tx: Transaction,
   consumed: { incidentId: number; action: TelegramAction },
-  context: { via: "telegram"; now: number },
+  context: { via: "telegram"; now: number; secret: string },
 ): Promise<TokenActionResult> {
   const target = {
     incidentId: consumed.incidentId,
@@ -203,6 +245,21 @@ export async function applyTokenAction(
       if (outcome === "duplicate") return "unchanged";
       return "ignored";
     }
+    case "act_start":
+    case "act_restart":
+    case "act_reboot":
+    case "act_backup_now":
+    case "act_deploy_now": {
+      const action = intentActionOfToken(consumed.action);
+      if (!action) return "ignored";
+      return registerIntent(tx, consumed.incidentId, action, context);
+    }
+    // The menu and the cancellation arrive with the keyboard views (07-03);
+    // until then no render emits their tokens and a stray one changes nothing.
+    case "menu_open":
+    case "menu_close":
+    case "intent_cancel":
+      return "ignored";
   }
 }
 
@@ -217,6 +274,11 @@ function answerText(outcome: {
   result: TokenActionResult;
 }): string {
   if (outcome.consumed.ok) {
+    if (intentActionOfToken(outcome.consumed.action)) {
+      if (outcome.result === "applied") return "Confirma en el hub";
+      if (outcome.result === "unchanged") return "Ya hay una acción pendiente";
+      return "No se pudo aplicar";
+    }
     if (outcome.result === "applied") return "Hecho";
     // A repeated "why" is D-09's "already answered"; the other actions were
     // already applied or had nothing to change.
@@ -438,7 +500,11 @@ export function createUpdatesLane(input: UpdatesLaneInput): UpdatesLane {
             now: clock(),
           });
           const result: TokenActionResult = consumed.ok
-            ? await applyTokenAction(tx, consumed, { via: "telegram", now: clock() })
+            ? await applyTokenAction(tx, consumed, {
+                via: "telegram",
+                now: clock(),
+                secret: input.config.betterAuthSecret,
+              })
             : "ignored";
           const at = new Date(clock());
           await tx

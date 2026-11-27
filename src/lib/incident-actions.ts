@@ -23,7 +23,11 @@ import {
   notificationOutbox,
   telegramActionTokens,
 } from "./schema";
-import { hashActionToken, type TelegramAction } from "./telegram-keyboard";
+import {
+  hashActionToken,
+  TELEGRAM_ACTIONS,
+  type TelegramAction,
+} from "./telegram-keyboard";
 
 /** `acknowledgedVia` accepts only the two write channels of this phase. */
 export type IncidentActionChannel = "telegram" | "hub";
@@ -217,13 +221,7 @@ export type ActionTokenConsumption =
   | { ok: true; incidentId: number; action: TelegramAction }
   | { ok: false; reason: ActionTokenFailure };
 
-const KNOWN_ACTIONS = new Set<TelegramAction>([
-  "ack",
-  "snooze_1h",
-  "snooze_24h",
-  "unsnooze",
-  "why",
-]);
+const KNOWN_ACTIONS = new Set<TelegramAction>(TELEGRAM_ACTIONS);
 
 /**
  * Consumes one callback token atomically. Every failed validation returns a

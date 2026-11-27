@@ -11,6 +11,7 @@ import { createHash, randomBytes } from "node:crypto";
 import type { Transaction } from "./incident-store";
 import { telegramActionTokens } from "./schema";
 import type { TelegramActionButton } from "./telegram";
+import { INTENT_VERBS } from "./telegram-intents";
 
 /** A rendered keyboard is usable for a week; later renders renew it. */
 export const TELEGRAM_TOKEN_TTL_MS = 7 * 86_400_000;
@@ -22,6 +23,14 @@ export const TELEGRAM_ACTIONS = [
   "snooze_24h",
   "unsnooze",
   "why",
+  "menu_open",
+  "menu_close",
+  "act_start",
+  "act_restart",
+  "act_reboot",
+  "act_backup_now",
+  "act_deploy_now",
+  "intent_cancel",
 ] as const;
 
 export type TelegramAction = (typeof TELEGRAM_ACTIONS)[number];
@@ -35,6 +44,14 @@ const ACTION_LABELS: Record<TelegramAction, string> = {
   snooze_24h: "Silenciar 24 h",
   unsnooze: "Quitar silencio",
   why: "Por qué me llegó esto",
+  menu_open: "Acciones…",
+  menu_close: "Volver",
+  intent_cancel: "Cancelar",
+  act_start: INTENT_VERBS.start,
+  act_restart: INTENT_VERBS.restart,
+  act_reboot: INTENT_VERBS.reboot,
+  act_backup_now: INTENT_VERBS["backup-now"],
+  act_deploy_now: INTENT_VERBS["deploy-now"],
 };
 
 /** 128 random bits, base64url: 22 characters, 25 bytes with the prefix. */

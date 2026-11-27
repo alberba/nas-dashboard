@@ -57,6 +57,13 @@
       "when": 1795699659076,
       "tag": "0007_bot_reconocimiento",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1795802822545,
+      "tag": "0008_acciones_telegram",
+      "breakpoints": true
     }
   ]
 }

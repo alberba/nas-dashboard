@@ -255,6 +255,11 @@ export const notificationOutbox = pgTable(
     /** Chat and message confirmed by Telegram, kept for later edits. */
     chatId: text(),
     messageId: text(),
+    /**
+     * Which keyboard the `:open` message currently shows: `normal` or `menu`.
+     * Keyboard-only edits read it so a view change never needs a new `seq`.
+     */
+    keyboardView: text().notNull().default("normal"),
     result: jsonb().$type<NotificationOutcome>(),
     fallbackResult: jsonb().$type<NotificationOutcome>(),
     editResult: jsonb().$type<NotificationOutcome>(),
@@ -394,6 +399,48 @@ export const telegramPollState = pgTable("telegram_poll_state", {
   lastUpdateAt: timestamp({ withTimezone: true }),
   updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * One operator intention registered from a Telegram notice. The callback only
+ * writes this row; the hub confirms it with a session and a passkey before
+ * anything runs (D-00a). The handoff token is never stored: `handoffHash` is the
+ * SHA-256 of an HMAC the worker recomputes at render time. At most one `pending`
+ * row exists per notice, enforced by a partial unique index (D-10).
+ */
+export const telegramActionIntents = pgTable(
+  "telegram_action_intents",
+  {
+    /** Application-generated uuid; it becomes the operation id on execution. */
+    id: text().primaryKey(),
+    incidentId: integer()
+      .notNull()
+      .references(() => incidents.id, { onDelete: "cascade" }),
+    hostId: text().notNull(),
+    /** Closed set: `start`, `restart`, `reboot`, `backup-now`, `deploy-now`. */
+    action: text().notNull(),
+    /** Container name for container actions, the host id otherwise. */
+    target: text().notNull(),
+    userId: text()
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    /** SHA-256 hex of the handoff token; the token itself never persists. */
+    handoffHash: text().notNull(),
+    /** `pending`, `executing`, `executed`, `failed`, `uncertain`, `expired` or `cancelled`. */
+    status: text().notNull().default("pending"),
+    createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp({ withTimezone: true }).notNull(),
+    usedAt: timestamp({ withTimezone: true }),
+    finishedAt: timestamp({ withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("telegram_action_intents_hash_idx").on(t.handoffHash),
+    uniqueIndex("telegram_action_intents_live_idx")
+      .on(t.incidentId)
+      .where(sql`${t.status} = 'pending'`),
+    index("telegram_action_intents_expires_idx").on(t.expiresAt),
+  ],
+);
+
 export const operations = pgTable(
   "operations",
   {
@@ -406,6 +453,10 @@ export const operations = pgTable(
     detail: text(),
     at: timestamp().notNull().defaultNow(),
     bootAt: timestamp(),
+    /** Where the action was confirmed: `hub` for every row before 0008. */
+    channel: text().notNull().default("hub"),
+    /** Internal name of the requester; null for rows that predate 0008. */
+    requestedBy: text(),
   },
   (t) => [index("operations_host_at_idx").on(t.hostId, t.at)],
 );
