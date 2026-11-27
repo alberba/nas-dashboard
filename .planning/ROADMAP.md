@@ -233,12 +233,22 @@ Plans:
   3. 30 días de histórico se sirven desde rollups y el overview cumple un presupuesto medido con 500k muestras.
   4. La rotación conjunta del token del bot (hub y `media-stack`) está documentada y probada.
   5. Ningún emisor del hub puede saltarse la política: el camino de `notify()` ya no existe.
-**Plans**: 3 plans
+**Plans**: 13 plans
 
 Plans:
-- [ ] 08-01: Ingest firmado e idempotente en el hub y cutover por familias en `media-stack`, con el fallback de copia estrechado
-- [ ] 08-02: Rollups del histórico, caché y presupuesto del overview con 500k muestras
-- [ ] 08-03: Retirar `notify()`, fijar retención y probar la rotación conjunta del token
+- [ ] 08-01-PLAN.md — Ingest firmado e idempotente en el hub (HMAC, ventana de 300 s, `ingest_events`, alcance por fuente)
+- [ ] 08-02-PLAN.md — Ciclo de vida de las incidencias de Seerr y guardia de evidencia obsoleta en el hub
+- [ ] 08-03-PLAN.md — Guarda de emisores (D-22), script de eventos de prueba firmados, checklist del cutover y runbook de rotación
+- [ ] 08-04-PLAN.md — Rollups del histórico (7d y 30d, contenedores), backfill por días y carril del worker
+- [ ] 08-05-PLAN.md — Retención de 48 h guardada por el cubo agregado y presupuesto p95 del overview con 500k muestras
+- [ ] 08-06-PLAN.md — Productor de la copia en `media-stack`: publicación firmada con reintentos y aviso directo acotado
+- [ ] 08-07-PLAN.md — Productor de issue-automator en `media-stack`: apertura y cierre de incidencias de Seerr por el ingest
+- [ ] 08-08-PLAN.md — Apagado de los emisores de Telegram de `upgrade.sh`, `merged_updates`, `updater` y `security-monitor`
+- [ ] 08-09-PLAN.md — Configuración de `media-stack` sin credenciales de Telegram en WUD y security-monitor
+- [ ] 08-10-PLAN.md — Puerta 1: despliegue del ingest, eventos de prueba y release del apagado de `media-stack`
+- [ ] 08-11-PLAN.md — Puerta 2: despliegue de rollups y retención con copia previa y comprobación en producción
+- [ ] 08-12-PLAN.md — Guarda de emisores de `media-stack` y documentación del cutover
+- [ ] 08-13-PLAN.md — Puerta de rotación: token del bot y secreto HMAC rotados de verdad y runbook corregido
 
 **Repo:** `media-stack` (commits y CI propios) + hub; `.env` de `media-stack` en la rotación operativa
 **Research flag:** Sí — contrato de ingest versionado con `media-stack` y orden de apagado por familia.
@@ -257,7 +267,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 5. Bot de lectura y reconocimiento | 6/6 | Complete    | 2026-11-27 |
 | 6. Puerta de seguridad | 6/6 | Complete    | 2026-11-27 |
 | 7. Acciones verificadas desde Telegram | 6/6 | Complete    | 2026-11-27 |
-| 8. Cutover de media-stack y consolidación | 0/3 | Not started | - |
+| 8. Cutover de media-stack y consolidación | 0/13 | Not started | - |
 
 ## Backlog
 
