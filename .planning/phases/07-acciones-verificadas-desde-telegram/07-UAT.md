@@ -3,26 +3,34 @@ status: testing
 phase: 07-acciones-verificadas-desde-telegram
 source: [07-VERIFICATION.md]
 started: 2026-11-27T19:41:02Z
-updated: 2026-11-27T19:53:08Z
+updated: 2026-11-27T20:15:00Z
 ---
 
 ## Current Test
 
-number: 1
-name: Provocar un backup-failed o deploy-failed reales, pulsar «Acciones…» y la acción en Telegram, abrir el botón url en el móvil, completar la passkey y comprobar la fila en operations y la edición del aviso
+number: 3
+name: En el despliegue real (Nginx Proxy Manager y Tailscale Serve), con sesión iniciada por contraseña, POST a /api/verification/password en el dominio principal con Origin del origen alternativo y aparte con cabecera de host reenviada alternativa; después, por la entrada alternativa, verificar con contraseña y completar una acción
 expected: |
-  El hub abre Avisos con el diálogo «Copia ahora» / «Desplegar ahora», la acción se ejecuta una vez, operations tiene channel=telegram y requestedBy del usuario del hub, y el aviso se edita en silencio con el resultado
+  En el dominio principal ambos dan 403 password_not_allowed; la entrada alternativa sigue ofreciendo contraseña y la acción se ejecuta
 awaiting: user response
 
 ## Tests
 
 ### 1. Provocar un backup-failed o deploy-failed reales, pulsar «Acciones…» y la acción en Telegram, abrir el botón url en el móvil, completar la passkey y comprobar la fila en operations y la edición del aviso
 expected: El hub abre Avisos con el diálogo «Copia ahora» / «Desplegar ahora», la acción se ejecuta una vez, operations tiene channel=telegram y requestedBy del usuario del hub, y el aviso se edita en silencio con el resultado
-result: [pending]
+result: pass
+evidence: |
+  backup-failed provocado escribiendo `failed` en appdata/backup/last-status del NAS (incidencia 153).
+  Intención 9cb72e80 executed a las 19:54:57Z; una sola fila en operations: backup-now, channel=telegram,
+  requestedBy=usuario del hub, «Copia iniciada». Edición :done enviada. El usuario confirmó el diálogo y la edición silenciosa.
 
 ### 2. Pulsar una acción en un aviso real, no abrir el enlace y esperar 5 min con el worker en marcha
 expected: El teclado se restaura en silencio con «Acciones…» y no queda un enlace muerto a la vista
-result: [pending]
+result: pass
+evidence: |
+  Incidencia 155 (backup-failed provocado de nuevo). Intención 9c27ca7f creada 20:08:09Z, expired 20:13:09Z,
+  edición :expire enviada 20:13:11Z. El usuario confirmó «Acciones…» restaurado, sin enlace y sin sonido.
+  last-status restaurado a su valor real después.
 
 ### 3. En el despliegue real (Nginx Proxy Manager y Tailscale Serve), con sesión iniciada por contraseña, POST a /api/verification/password en el dominio principal con Origin del origen alternativo y aparte con cabecera de host reenviada alternativa; después, por la entrada alternativa, verificar con contraseña y completar una acción
 expected: En el dominio principal ambos dan 403 password_not_allowed; la entrada alternativa sigue ofreciendo contraseña y la acción se ejecuta
@@ -36,13 +44,31 @@ evidence: |
   - POST alternativo con contraseña errónea → 403 invalid_password (se ofrece contraseña)
   Falta: verificar con la contraseña real en la entrada alternativa y completar una acción.
 
+### 4. Al recuperarse un aviso con una intención viva, el enlace de confirmación desaparece
+expected: Cuando la incidencia se cierra (p. ej. «Copia recuperada») mientras hay una intención pendiente, la edición de recuperación no muestra «Confirmar en el hub»; la intención deja de estar viva
+result: issue
+reported: "si — vi el enlace «Confirmar en el hub» en el aviso de «Copia recuperada» hasta que caducó"
+severity: minor
+evidence: |
+  Incidencia 153 resuelta 20:02:47Z con la intención 18a7eac0 aún pending; la edición de recuperación (edit:2, 20:02:49Z)
+  se renderizó con la intención viva y el enlace siguió visible hasta el :expire de las 20:04:02Z.
+
 ## Summary
 
-total: 3
-passed: 0
-issues: 0
-pending: 3
+total: 4
+passed: 2
+issues: 1
+pending: 1
 skipped: 0
 blocked: 0
 
 ## Gaps
+
+- gap_id: G-07-4
+  truth: "Al cerrarse una incidencia con una intención pendiente, el aviso recuperado no muestra el enlace «Confirmar en el hub» y la intención deja de estar viva"
+  status: failed
+  reason: "User reported: vio el enlace «Confirmar en el hub» en el aviso de «Copia recuperada» hasta que caducó"
+  severity: minor
+  test: 4
+  artifacts: []
+  missing: []
