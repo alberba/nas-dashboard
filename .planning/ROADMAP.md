@@ -240,3 +240,13 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 6. Puerta de seguridad | 0/3 | Not started | - |
 | 7. Acciones verificadas desde Telegram | 0/3 | Not started | - |
 | 8. Cutover de media-stack y consolidación | 0/3 | Not started | - |
+
+## Backlog
+
+### Phase 999.1: Follow-up — Phase 05 deferred UAT follow-up: Test 1 (BACKLOG)
+
+**Goal:** Resolve the UAT checkpoint deferred during Phase 05 verification
+**Source phase:** 05
+**Deferred at:** 2026-11-27 during /gsd-verify-work 5 session completion
+**Follow-ups:**
+- [ ] Test 1: Por cierto, molaría un emoticono en los mensajes para diferenciarlos y que no sea solo texto plano (deferred 2026-11-27)
