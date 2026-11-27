@@ -26,7 +26,9 @@ import {
   TEST_USER_ID,
   testSession,
 } from "./verified-session";
+import { requiresVerificationForIntent } from "@/lib/sensitive-actions";
 import type { RuntimeConfig } from "@/lib/runtime-config";
+import type { IntentActionId } from "@/lib/telegram-intents";
 
 const session = vi.hoisted(() => ({
   value: null as unknown,
@@ -143,6 +145,7 @@ describe.skipIf(!baseUrl)("telegram intent API", () => {
   let lane: typeof import("@/lib/telegram-updates");
   let keyboard: typeof import("@/lib/telegram-keyboard");
   let routes: typeof import("../src/app/api/[...path]/route");
+  let intentsModule: typeof import("@/lib/telegram-intents");
   let config: RuntimeConfig;
   const openClients = new Set<Client>();
 
@@ -199,6 +202,7 @@ describe.skipIf(!baseUrl)("telegram intent API", () => {
     dispatch = await import("@/lib/notification-dispatch");
     lane = await import("@/lib/telegram-updates");
     keyboard = await import("@/lib/telegram-keyboard");
+    intentsModule = await import("@/lib/telegram-intents");
     routes = await import("../src/app/api/[...path]/route");
     config = {
       databaseUrl: context.url,
@@ -264,7 +268,7 @@ describe.skipIf(!baseUrl)("telegram intent API", () => {
    */
   async function handoffFor(
     key: string,
-    action: "act_backup_now" | "act_start" | "act_restart" | "act_deploy_now" | "act_reboot",
+    action: ReturnType<typeof intentsModule.tokenActionOf>,
   ) {
     const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
     const client = await lockOwner();
@@ -327,6 +331,10 @@ describe.skipIf(!baseUrl)("telegram intent API", () => {
       .select()
       .from(tables.telegramActionIntents)
       .where(eq(tables.telegramActionIntents.incidentId, incidentId));
+    // The lock is per connection: releasing it lets one test build several
+    // handoffs in a row.
+    await client.end();
+    openClients.delete(client);
     return { token: handoff, intent, incidentId };
   }
 
@@ -753,5 +761,112 @@ describe.skipIf(!baseUrl)("telegram intent API", () => {
         expect((await intentRow(intent.id)).status).toBe("pending");
       },
     );
+  });
+
+  describe("manifest authority", () => {
+    /** One notice key per action; the type keeps it exhaustive. */
+    const keyFor: Record<IntentActionId, string> = {
+      start: "container:svc-start",
+      restart: "container:svc-restart",
+      reboot: "reboot-pending",
+      "backup-now": "backup-failed",
+      "deploy-now": "deploy-failed",
+    };
+
+    it("answers 403 to every protected stored action without verification, and not to start", async () => {
+      for (const action of intentsModule.intentActionIds) {
+        const { token, intent } = await handoffFor(
+          keyFor[action],
+          intentsModule.tokenActionOf(action),
+        );
+        await clearVerification(db, tables);
+
+        const response = await execute(token);
+
+        if (requiresVerificationForIntent(action)) {
+          expect(response.status, action).toBe(403);
+          expect(await response.json(), action).toMatchObject({
+            code: "recent_verification_required",
+          });
+          expect((await intentRow(intent.id)).status, action).toBe("pending");
+        } else {
+          expect(response.status, action).not.toBe(403);
+        }
+        expect(nas.requests, action).toEqual([]);
+        expect(await operations(), action).toEqual([]);
+        await seedVerifiedSession(db, tables);
+      }
+    });
+
+    it("lets a body with an extra action neither lower nor raise the protection", async () => {
+      const { token, intent } = await handoffFor(
+        "backup-failed",
+        "act_backup_now",
+      );
+      await clearVerification(db, tables);
+
+      const response = await api("/api/telegram/intents/execute", {
+        token,
+        action: "start",
+      });
+
+      expect(response.status).toBe(400);
+      expect(nas.requests).toEqual([]);
+      expect(await operations()).toEqual([]);
+      expect((await intentRow(intent.id)).status).toBe("pending");
+    });
+  });
+
+  describe("verification factor by entry (D-13)", () => {
+    const alternate = {
+      Host: "private.example",
+      Origin: "https://private.example",
+    };
+    const forged = { Host: "hub.example", Origin: "https://private.example" };
+    let previousPrimary: string | undefined;
+
+    beforeEach(() => {
+      previousPrimary = process.env.BETTER_AUTH_URL;
+      process.env.BETTER_AUTH_URL = "https://hub.example";
+    });
+
+    afterEach(() => {
+      if (previousPrimary === undefined) delete process.env.BETTER_AUTH_URL;
+      else process.env.BETTER_AUTH_URL = previousPrimary;
+    });
+
+    it("does not run a protected intent on the primary host with a forged Origin and a password verification", async () => {
+      const { token, intent } = await handoffFor(
+        "backup-failed",
+        "act_backup_now",
+      );
+      await seedVerifiedSession(db, tables, { method: "password" });
+
+      const response = await execute(token, forged);
+
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({
+        code: "recent_verification_required",
+        method: "passkey",
+      });
+      expect((await intentRow(intent.id)).status).toBe("pending");
+      expect(nas.requests).toEqual([]);
+      expect(await operations()).toEqual([]);
+    });
+
+    it("lets the genuine alternate entry run it with a password verification", async () => {
+      const { token, intent } = await handoffFor(
+        "backup-failed",
+        "act_backup_now",
+      );
+      await seedVerifiedSession(db, tables, { method: "password" });
+
+      const response = await execute(token, alternate);
+
+      expect(response.status).not.toBe(403);
+      expect(response.status).toBe(200);
+      expect(nas.requests).toHaveLength(1);
+      expect((await intentRow(intent.id)).status).toBe("executed");
+    });
   });
 });

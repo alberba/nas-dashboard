@@ -19,6 +19,7 @@ import {
   hostCommandPolicies,
   requiresVerificationForAction,
   requiresVerificationForCommand,
+  requiresVerificationForIntent,
   patternRoutes,
   routeFiles,
   routeManifest,
@@ -368,6 +369,50 @@ describe("route declarations", () => {
   });
 });
 
+/** The module an import specifier names, without folders or extension. */
+function importedModules(text: string) {
+  const code = withoutComments(text);
+  const specifiers = [
+    ...code.matchAll(/\bfrom\s+["']([^"']+)["']/g),
+    ...code.matchAll(/\bimport\s*\(\s*["']([^"']+)["']\s*\)/g),
+  ].map((match) => match[1]);
+  return specifiers.map((specifier) =>
+    (specifier.split("/").at(-1) ?? "").replace(/\.(ts|tsx|js|mjs)$/, ""),
+  );
+}
+
+const executorModules = ["operation-runner", "host-commands", "lifecycle", "nas"];
+
+function executorImports(text: string) {
+  return importedModules(text).filter((name) => executorModules.includes(name));
+}
+
+describe("lane", () => {
+  const laneFiles = [
+    "src/lib/telegram-updates.ts",
+    "src/lib/telegram-intents.ts",
+    "src/lib/telegram-keyboard.ts",
+  ];
+
+  it.each(laneFiles)("%s imports no executor", (file) => {
+    expect(executorImports(source(file))).toEqual([]);
+  });
+
+  it("flags an import of each executor, static or dynamic", () => {
+    for (const name of executorModules) {
+      expect(executorImports(`import { x } from "./${name}";`), name).toEqual([name]);
+      expect(executorImports(`const m = await import("@/lib/${name}");`), name).toEqual([name]);
+    }
+    expect(executorImports(`import { y } from "./incident-store";`)).toEqual([]);
+  });
+
+  it("lets the hub handoff import the host-command executor", () => {
+    expect(executorImports(source("src/lib/telegram-intent-api.ts"))).toContain(
+      "host-commands",
+    );
+  });
+});
+
 describe.skipIf(!baseUrl)("sensitive actions", () => {
   let context: TestDatabase;
   let agent: FakeAgent;
@@ -452,6 +497,20 @@ describe.skipIf(!baseUrl)("sensitive actions", () => {
     await sample("nas-home");
     await sample("apps");
     agent.reset();
+  });
+
+  it("keeps the intent decision on the phase 6 manifest for every intent action", async () => {
+    const { intentActionIds } = await import("@/lib/telegram-intents");
+
+    for (const id of intentActionIds)
+      expect(requiresVerificationForIntent(id), id).toBe(
+        requiresVerificationForAction(id) || requiresVerificationForCommand(id),
+      );
+    const execute = routeManifest["telegram/intents/execute"].POST;
+    expect(execute.kind).toBe("per-item");
+    for (const id of intentActionIds)
+      expect(Object.keys(execute.policies)).toContain(id);
+    expect(routeManifest["telegram/intents/inspect"].POST.kind).toBe("exempt");
   });
 
   it("declares every action of the schema exactly once, with a reason", () => {
