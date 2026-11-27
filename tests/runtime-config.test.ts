@@ -34,6 +34,7 @@ const CONFIG_KEYS = [
   "AGENT_TOKEN",
   "TELEGRAM_BOT_TOKEN",
   "TELEGRAM_CHAT_ID",
+  "TELEGRAM_DIRECT_ACTIONS",
   "VAPID_PUBLIC_KEY",
   "VAPID_PRIVATE_KEY",
   "PUSH_WARNINGS",
@@ -278,6 +279,30 @@ describe("readRuntimeConfig", () => {
       });
       expect(error.message).toContain("DIGEST_TIME (invalid)");
       if (value) expect(error.message).not.toContain(value);
+    },
+  );
+
+  it.each([undefined, "", "0"])(
+    "accepts TELEGRAM_DIRECT_ACTIONS %j and leaves the configuration as it was",
+    (value) => {
+      const config = readRuntimeConfig(env({ TELEGRAM_DIRECT_ACTIONS: value }));
+
+      expect(config).toEqual(readRuntimeConfig(env()));
+      expect(Object.keys(config)).not.toContain("telegramDirectActions");
+    },
+  );
+
+  it.each(["1", "true", "yes", "00"])(
+    "rejects TELEGRAM_DIRECT_ACTIONS=%s at startup without echoing it",
+    (value) => {
+      const error = errorFor({ TELEGRAM_DIRECT_ACTIONS: value });
+
+      expect(error.issues).toContainEqual({
+        variable: "TELEGRAM_DIRECT_ACTIONS",
+        reason: "invalid",
+      });
+      expect(error.message).toContain("TELEGRAM_DIRECT_ACTIONS (invalid)");
+      expect(error.message).not.toContain(`=${value}`);
     },
   );
 
