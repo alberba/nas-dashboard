@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { BodyTooLarge, readJsonBody } from "./request-body";
 import {
+  requiresVerificationForIntent,
+} from "./sensitive-actions";
+import type { IntentActionId } from "./telegram-intents";
+import {
   recordRecentVerification,
   requireRecentVerification,
   verificationMethodForRequest,
@@ -110,4 +114,33 @@ export async function guardSensitiveAction({
     now,
   );
   return failure ? json(failure, 403) : null;
+}
+
+/**
+ * Guard of the Telegram handoff. The decision comes from the action stored in
+ * the intent and from the phase 6 manifest, never from the request body, and a
+ * protected action is then judged by the same recent-verification rule as any
+ * other (`guardSensitiveAction`). A session that is not the intent's owner gets
+ * the same 404 as an unknown token, so intents cannot be enumerated.
+ */
+export async function guardIntentAction({
+  request,
+  session,
+  store,
+  intent,
+  now = new Date(),
+}: {
+  request: Request;
+  session: VerificationSession;
+  store: VerificationStore;
+  intent: { userId: string; action: IntentActionId };
+  now?: Date;
+}) {
+  if (session.user.id !== intent.userId)
+    return json(
+      { error: "El aviso no existe o ya no está disponible", code: "intent_unknown" },
+      404,
+    );
+  if (!requiresVerificationForIntent(intent.action)) return null;
+  return guardSensitiveAction({ request, session, store, now });
 }

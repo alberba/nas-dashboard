@@ -1,6 +1,7 @@
 import type { z } from "zod";
 import type { actionSchema } from "./validation";
 import type { HostCommand } from "./host-command-contract";
+import type { IntentActionId } from "./telegram-intents";
 
 /**
  * Single manifest of what needs a recent verification.
@@ -72,6 +73,19 @@ export function requiresVerificationForCommand(id: unknown): boolean {
   return requiresVerification(hostCommandPolicies[id as HostCommand]);
 }
 
+/**
+ * Whether the hub needs a recent verification before it runs the action a
+ * Telegram intent stored (D-00c). It reads the two tables above, so the intent
+ * lane never keeps a second list. An id found in neither fails closed.
+ */
+export function requiresVerificationForIntent(action: IntentActionId): boolean {
+  if (Object.hasOwn(actionPolicies, action))
+    return requiresVerificationForAction(action);
+  if (Object.hasOwn(hostCommandPolicies, action))
+    return requiresVerificationForCommand(action);
+  return true;
+}
+
 /** The verbs the catch-all route exports; anything else never reaches it. */
 export type RouteMethod = "GET" | "POST" | "DELETE";
 
@@ -117,6 +131,9 @@ export const routeManifest = {
   hosts: { GET: "read" },
   maintenance: { GET: "read" },
   "host-command": { POST: perItem(hostCommandPolicies) },
+  "telegram/intents/execute": {
+    POST: perItem({ ...actionPolicies, ...hostCommandPolicies }),
+  },
   deployments: { GET: "read" },
   events: { GET: "read" },
   "deployments/settings": {

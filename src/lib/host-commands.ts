@@ -83,6 +83,9 @@ function response(
   });
 }
 
+/** The surface that asked for an operation (BOT-09). */
+export type OperationChannel = "hub" | "telegram";
+
 export type HostCommandOutcome = {
   status: "success" | "failed" | "pending" | "unavailable" | "conflict";
   operation: typeof operations.$inferSelect | null;
@@ -106,11 +109,17 @@ export async function executeHostCommand({
   userId,
   command,
   operationId,
+  channel = "hub",
+  requestedBy = userId,
 }: {
   host: HostConfig;
   userId: string;
   command: HostCommand;
   operationId: string;
+  /** Where the request came from; the hub unless a Telegram intent asked. */
+  channel?: OperationChannel;
+  /** The hub user accountable for the operation, never a Telegram id. */
+  requestedBy?: string;
 }): Promise<HostCommandOutcome> {
   const [existing] = await db
     .select()
@@ -153,6 +162,8 @@ export async function executeHostCommand({
       action: command,
       target: host.name,
       status: "pending",
+      channel,
+      requestedBy,
     })
     .onConflictDoNothing()
     .returning();
@@ -216,6 +227,37 @@ export async function executeHostCommand({
 }
 
 /**
+ * Maps an outcome to the HTTP answer the host-command route and the Telegram
+ * handoff share: 200 for success and replay, 400 for a rejected command, 502
+ * for a lost response, 409 for a reused key and 503 when nothing was sent.
+ */
+export function hostCommandResponse(outcome: HostCommandOutcome) {
+  if (outcome.replayed && outcome.operation) return response(outcome.operation);
+  switch (outcome.status) {
+    case "success":
+      return response(outcome.operation!, outcome.result);
+    case "failed":
+      return json(
+        { error: outcome.error, status: "failed", operation: outcome.operation },
+        400,
+      );
+    case "pending":
+      return json(
+        {
+          error: outcome.error,
+          status: "pending",
+          operation: outcome.operation,
+        },
+        502,
+      );
+    case "conflict":
+      return json({ error: outcome.error }, 409);
+    default:
+      return json({ error: outcome.error }, 503);
+  }
+}
+
+/**
  * Runs one named host command from the HTTP route. The body only carries the
  * command name; the agent owns the unit names and the fixed argv. Idempotency
  * is per host and a lost response stays pending, never retried automatically.
@@ -251,27 +293,5 @@ export async function runHostCommand({
     command: input.command,
     operationId,
   });
-  if (outcome.replayed && outcome.operation) return response(outcome.operation);
-  switch (outcome.status) {
-    case "success":
-      return response(outcome.operation!, outcome.result);
-    case "failed":
-      return json(
-        { error: outcome.error, status: "failed", operation: outcome.operation },
-        400,
-      );
-    case "pending":
-      return json(
-        {
-          error: outcome.error,
-          status: "pending",
-          operation: outcome.operation,
-        },
-        502,
-      );
-    case "conflict":
-      return json({ error: outcome.error }, 409);
-    default:
-      return json({ error: outcome.error }, 503);
-  }
+  return hostCommandResponse(outcome);
 }

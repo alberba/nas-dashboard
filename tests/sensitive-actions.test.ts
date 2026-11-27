@@ -231,6 +231,7 @@ const bodyLimitCases: BodyLimitCase[] = [
   { name: "verification/password", path: "/api/verification/password", method: "POST", passwordDomain: true, readsBody: true },
   { name: "containers/remove", path: "/api/containers/remove?host=nas-home", method: "POST", readsBody: true },
   { name: "host-command", path: "/api/host-command?host=nas-home", method: "POST", readsBody: true },
+  { name: "telegram/intents/execute", path: "/api/telegram/intents/execute", method: "POST", readsBody: true },
   { name: "incidents acknowledge", path: "/api/incidents/1/acknowledge", method: "POST", readsBody: true },
   { name: "incidents snooze", path: "/api/incidents/1/snooze", method: "POST", readsBody: true },
   { name: "incidents unsnooze", path: "/api/incidents/1/unsnooze", method: "POST", readsBody: true },
