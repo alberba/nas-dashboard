@@ -19,6 +19,7 @@ import {
 } from "@/lib/sensitive-actions";
 import { hostCommandIds } from "@/lib/host-command-contract";
 import { actionSchema } from "@/lib/validation";
+import { DEFAULT_BODY_LIMIT } from "@/lib/request-body";
 import {
   clearVerification,
   seedVerifiedSession,
@@ -489,4 +490,55 @@ describe.skipIf(!baseUrl)("sensitive actions", () => {
       expect(agent.requests, command).toHaveLength(1);
     },
   );
+  describe("request body limit on /api/action", () => {
+    const oversized = {
+      ...bodies.stop,
+      padding: "x".repeat(DEFAULT_BODY_LIMIT + 1024),
+    };
+
+    it.each([true, false])(
+      "answers 413 for a body over the limit with verification seeded=%s",
+      async (seeded) => {
+        if (seeded) await seedVerifiedSession(db, tables);
+        else await clearVerification(db, tables);
+        const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+        try {
+          const response = await api("/api/action?host=nas-home", oversized, {
+            "Idempotency-Key": crypto.randomUUID(),
+          });
+
+          expect(response.status).toBe(413);
+          expect(await db.select().from(tables.operations)).toEqual([]);
+          expect(logged).not.toHaveBeenCalled();
+          expect(agent.requests).toEqual([]);
+        } finally {
+          logged.mockRestore();
+        }
+      },
+    );
+
+    it.each([true, false])(
+      "answers 413 for a declared length over the limit with a small body, seeded=%s",
+      async (seeded) => {
+        if (seeded) await seedVerifiedSession(db, tables);
+        else await clearVerification(db, tables);
+        const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+        try {
+          const response = await api("/api/action?host=nas-home", bodies.stop, {
+            "Idempotency-Key": crypto.randomUUID(),
+            "Content-Length": String(DEFAULT_BODY_LIMIT * 4),
+          });
+
+          expect(response.status).toBe(413);
+          expect(await db.select().from(tables.operations)).toEqual([]);
+          expect(logged).not.toHaveBeenCalled();
+          expect(agent.requests).toEqual([]);
+        } finally {
+          logged.mockRestore();
+        }
+      },
+    );
+  });
 });

@@ -49,6 +49,7 @@ import { saveDeploymentSettings } from "@/lib/deployment-settings";
 import { hostStatuses } from "@/lib/host-status";
 import { maintenanceForHost } from "@/lib/maintenance";
 import { runHostCommand } from "@/lib/host-commands";
+import { BodyTooLarge, readJsonBody } from "@/lib/request-body";
 import { projectIncidents } from "@/lib/incident-store";
 import {
   applyIncidentAction,
@@ -574,7 +575,7 @@ async function handle(
       return json({ ok: true });
     }
     if (route === "action" && mutation) {
-      const raw = await request.json();
+      const raw = await readJsonBody(request);
       const body = actionSchema.parse(raw);
       const host = resolveHost(
         getHosts(),
@@ -866,6 +867,10 @@ async function handle(
     }
     return json({ error: "No encontrado" }, 404);
   } catch (error) {
+    // First on purpose: an oversized body leaves no operation, incident or log
+    // line (D-09), and no later branch may turn it into a 400 or a 503.
+    if (error instanceof BodyTooLarge)
+      return json({ error: "La solicitud es demasiado grande." }, 413);
     if (error instanceof HostNotFound)
       return json({ error: "Host no configurado" }, 404);
     if (error instanceof HostConfigError)
