@@ -236,21 +236,40 @@ Plans:
 **Plans**: 15 plans
 
 Plans:
+**Wave 1**
+- [ ] 08-06-PLAN.md — Productor de la copia en `media-stack`: publicación firmada con reintentos y aviso directo acotado
+- [ ] 08-14-PLAN.md — Tabla `ingest_events`: migración 0009 aditiva con reversa guardada y ensayada
+
+**Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 08-01-PLAN.md — Ingest firmado e idempotente en el hub (HMAC, ventana de 300 s, alcance por fuente; repetición exacta 200, colisión 409)
+- [ ] 08-07-PLAN.md — Productor de issue-automator en `media-stack`: apertura y cierre de incidencias de Seerr por el ingest
+
+**Wave 3** *(blocked on Wave 2 completion)*
 - [ ] 08-02-PLAN.md — Ciclo de vida de las incidencias de Seerr y guardia de evidencia obsoleta en el hub
 - [ ] 08-03-PLAN.md — Guarda de emisores (D-22), script de eventos de prueba firmados, checklist del cutover y runbook de rotación
-- [ ] 08-04-PLAN.md — Rollups del histórico (7d y 30d, contenedores), backfill por días y carril del worker
-- [ ] 08-05-PLAN.md — Retención de 48 h guardada por el cubo agregado y presupuesto p95 del overview con 500k muestras
-- [ ] 08-06-PLAN.md — Productor de la copia en `media-stack`: publicación firmada con reintentos y aviso directo acotado
-- [ ] 08-07-PLAN.md — Productor de issue-automator en `media-stack`: apertura y cierre de incidencias de Seerr por el ingest
 - [ ] 08-08-PLAN.md — Apagado de los emisores de Telegram de `upgrade.sh`, `merged_updates`, `updater` y `security-monitor`
+
+**Wave 4** *(blocked on Wave 3 completion)*
 - [ ] 08-09-PLAN.md — Configuración de `media-stack` sin credenciales de Telegram en WUD y security-monitor
-- [ ] 08-10-PLAN.md — Puerta 1: despliegue del ingest, eventos de prueba y release del apagado de `media-stack`
-- [ ] 08-11-PLAN.md — Puerta 2: despliegue de rollups y retención con copia previa y comprobación en producción
+
+**Wave 5** *(blocked on Wave 4 completion)*
 - [ ] 08-12-PLAN.md — Guarda de emisores de `media-stack` y documentación del cutover
-- [ ] 08-13-PLAN.md — Puerta de rotación: token del bot y secreto HMAC rotados de verdad y runbook corregido
-- [ ] 08-14-PLAN.md — Tabla `ingest_events`: migración 0009 aditiva con reversa guardada y ensayada
+
+**Wave 6** *(blocked on Wave 5 completion)*
 - [ ] 08-15-PLAN.md — Bandeja durable de issue-automator: los eventos del ingest se guardan en disco y se reintentan hasta un 2xx
+
+**Wave 7** *(blocked on Wave 6 completion)*
+- [ ] 08-10-PLAN.md — Puerta 1: despliegue del ingest, eventos de prueba y release del apagado de `media-stack`
+
+**Wave 8** *(blocked on Wave 7 completion)*
+- [ ] 08-04-PLAN.md — Rollups del histórico (7d y 30d, contenedores), backfill por días y carril del worker
+- [ ] 08-13-PLAN.md — Puerta de rotación: token del bot y secreto HMAC rotados de verdad y runbook corregido
+
+**Wave 9** *(blocked on Wave 8 completion)*
+- [ ] 08-05-PLAN.md — Retención de 48 h guardada por el cubo agregado y presupuesto p95 del overview con 500k muestras
+
+**Wave 10** *(blocked on Wave 9 completion)*
+- [ ] 08-11-PLAN.md — Puerta 2: despliegue de rollups y retención con copia previa y comprobación en producción
 
 **Repo:** `media-stack` (commits y CI propios) + hub; `.env` de `media-stack` en la rotación operativa
 **Research flag:** Sí — contrato de ingest versionado con `media-stack` y orden de apagado por familia.
