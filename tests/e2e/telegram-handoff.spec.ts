@@ -190,6 +190,8 @@ test("HANDOFF-01 opens the dialog from the link, confirms with one tap and reach
   await signIn(page);
   const inspected = await countInspect(page);
   const sent = await answerExecute(page, success(seeded.intentId));
+  const logged: string[] = [];
+  page.on("console", (message) => logged.push(message.text()));
 
   await page.goto(link(seeded));
 
@@ -220,6 +222,7 @@ test("HANDOFF-01 opens the dialog from the link, confirms with one tap and reach
   expect(sent[0].postDataJSON()).toEqual({ token: seeded.token });
   expect(sent[0].url()).not.toContain(seeded.token);
   expect(await stored(page)).toBeNull();
+  expect(logged.join("\n")).not.toContain(seeded.token);
 });
 
 test("HANDOFF-02 stays idle and calls nothing when the URL has no fragment", async ({
@@ -437,4 +440,50 @@ test("HANDOFF-10 keeps the intent alive when the dialog is closed and lets the o
   await expect(panel(page)).toHaveCount(0);
   expect(await stored(page)).toBeNull();
   expect(sent).toHaveLength(0);
+});
+
+test("HANDOFF-11 ignores a malformed fragment and leaves Avisos working", async ({
+  page,
+}) => {
+  await signIn(page);
+  const inspected = await countInspect(page);
+  const sent = await answerExecute(page, { status: 200, json: { ok: true } });
+
+  await page.goto(`/?view=alerts&host=${host}#intent=${"A".repeat(40)}`);
+
+  await expect(page.locator('[data-view="alerts"]')).toBeVisible();
+  await expect(page.locator("[data-digest-panel]")).toBeVisible();
+  await expect(panel(page)).toHaveCount(0);
+  expect(await stored(page)).toBeNull();
+  expect(inspected).toHaveLength(0);
+  expect(sent).toHaveLength(0);
+});
+
+test("HANDOFF-12 keeps the token when inspect answers 401 and resumes after the reload", async ({
+  page,
+}) => {
+  const seeded = await seedIntent({
+    name: "expiry",
+    action: "start",
+    target: "plex",
+  });
+  await signIn(page);
+  let refused = false;
+  await page.route(inspectPath, async (route) => {
+    if (!refused) {
+      refused = true;
+      await route.fulfill({ status: 401, json: { error: "No autorizado" } });
+      return;
+    }
+    await route.continue();
+  });
+
+  await page.goto(link(seeded));
+
+  // The 401 reloads the page; the token survives in the tab and the second
+  // inspect, now answered by the hub, opens the dialog.
+  await expect(panel(page)).toHaveAttribute("data-handoff-state", "ready");
+  await expect(dialog(page)).toBeVisible();
+  expect(refused).toBe(true);
+  expect(await stored(page)).toBe(seeded.token);
 });

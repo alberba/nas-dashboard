@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
   captureHandoff,
@@ -27,6 +27,16 @@ export type HandoffState =
   | "invalid"
   | "dismissed";
 
+/** States in which the intent is over and the token has been forgotten. */
+const ENDED: readonly HandoffState[] = [
+  "succeeded",
+  "pending",
+  "expired",
+  "cancelled",
+  "consumed",
+  "invalid",
+];
+
 /** The answer of `POST /api/telegram/intents/inspect`. */
 type Inspected = {
   state: "ready" | "expired" | "cancelled" | "consumed";
@@ -43,6 +53,22 @@ type Inspected = {
 const EXECUTE_ENDPOINT = "/api/telegram/intents/execute";
 const INSPECT_ENDPOINT = "/api/telegram/intents/inspect";
 
+const messages: Partial<Record<HandoffState, string>> = {
+  loading: "Comprobando el enlace…",
+  ready: "Confirma la acción en el cuadro de diálogo.",
+  executing: "Enviando la acción…",
+  succeeded: "La acción se ha completado.",
+  pending:
+    "No se ha podido confirmar el resultado. Queda pendiente de verificar y no se repetirá sola.",
+  expired:
+    "Este enlace ha caducado. Vuelve al aviso de Telegram y pulsa el botón de nuevo.",
+  cancelled: "Esta acción se canceló desde Telegram.",
+  consumed: "Esta acción ya se había ejecutado y no se repetirá.",
+  invalid: "El enlace no es válido o ya no está disponible.",
+  dismissed:
+    "La acción no se ha confirmado. El enlace sigue vivo hasta que caduque.",
+};
+
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null
     ? (value as Record<string, unknown>)
@@ -54,6 +80,14 @@ function operationIn(value: unknown): Operation | null {
   return typeof operation === "object" && operation !== null
     ? (operation as Operation)
     : null;
+}
+
+/** The server's refusal codes that mean the link itself is over. */
+function endedBy(code: unknown): HandoffState | null {
+  if (code === "intent_expired") return "expired";
+  if (code === "intent_cancelled") return "cancelled";
+  if (code === "intent_unknown") return "invalid";
+  return null;
 }
 
 /** The notice only names a container for the actions that act on one. */
@@ -75,28 +109,42 @@ export function TelegramHandoff() {
   const [intent, setIntent] = useState<Inspected | null>(null);
   const [operation, setOperation] = useState<Operation | null>(null);
   const [failure, setFailure] = useState("");
+  /** The token of the intent on screen, kept for reopening the dialog. */
+  const token = useRef<string | null>(null);
 
-  const settled = useCallback((outcome: SensitiveActionOutcome) => {
-    const found = operationIn(outcome.data);
-    if (outcome.status === "succeeded") {
-      clearHandoff(handoffStorage());
-      setOperation(found);
-      setState("succeeded");
-      return;
-    }
-    if (outcome.status === "pending") {
-      // The hub may have run it: the link is not offered again.
-      clearHandoff(handoffStorage());
-      setOperation(found);
-      setState("pending");
-      return;
-    }
-    setFailure(outcome.error);
-    setState("failed");
+  const end = useCallback((next: HandoffState) => {
+    clearHandoff(handoffStorage());
+    token.current = null;
+    setState(next);
   }, []);
 
+  const settled = useCallback(
+    (outcome: SensitiveActionOutcome) => {
+      const found = operationIn(outcome.data);
+      if (outcome.status === "succeeded") {
+        setOperation(found);
+        end("succeeded");
+        return;
+      }
+      if (outcome.status === "pending") {
+        // The hub may have run it: the link is not offered again.
+        setOperation(found);
+        end("pending");
+        return;
+      }
+      const over = endedBy(asRecord(outcome.data).code);
+      if (over) {
+        end(over);
+        return;
+      }
+      setFailure(outcome.error);
+      setState("failed");
+    },
+    [end],
+  );
+
   const open = useCallback(
-    (inspected: Inspected, token: string) => {
+    (inspected: Inspected, value: string) => {
       const consequences: { tone: "ok" | "warn"; text: ReactNode }[] = [
         { tone: "warn", text: "Se ejecutará una sola vez." },
       ];
@@ -122,7 +170,7 @@ export function TelegramHandoff() {
         consequences,
         confirmLabel: "Confirmar",
         endpoint: EXECUTE_ENDPOINT,
-        body: { token },
+        body: { token: value },
         requiresVerification: inspected.requiresVerification,
         onSettled: settled,
       });
@@ -131,7 +179,8 @@ export function TelegramHandoff() {
   );
 
   const inspect = useCallback(
-    async (token: string, signal?: AbortSignal) => {
+    async (value: string, signal?: AbortSignal) => {
+      token.current = value;
       setState("loading");
       setFailure("");
       let response: Response;
@@ -139,7 +188,7 @@ export function TelegramHandoff() {
         response = await fetch(INSPECT_ENDPOINT, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ token }),
+          body: JSON.stringify({ token: value }),
           signal,
         });
       } catch (error) {
@@ -158,6 +207,10 @@ export function TelegramHandoff() {
         | Inspected
         | { error?: string }
         | null;
+      if (response.status === 400 || response.status === 404) {
+        end("invalid");
+        return;
+      }
       if (!response.ok || !body || !("state" in body)) {
         setFailure(
           (body && "error" in body && body.error) ||
@@ -169,33 +222,41 @@ export function TelegramHandoff() {
       setIntent(body);
       if (body.state === "ready") {
         setState("ready");
-        open(body, token);
+        open(body, value);
         return;
       }
-      setFailure("");
-      setState("failed");
+      setOperation(body.operation ?? null);
+      end(body.state);
     },
-    [open],
+    [open, end],
   );
 
   useEffect(() => {
-    const token = captureHandoff(
+    const captured = captureHandoff(
       window.location,
       window.history,
       handoffStorage(),
     );
-    if (!token) return;
+    if (!captured) return;
     const controller = new AbortController();
     // The first state change waits a microtask: an effect must not set state
     // synchronously.
-    queueMicrotask(() => void inspect(token, controller.signal));
+    queueMicrotask(() => void inspect(captured, controller.signal));
     return () => controller.abort();
   }, [inspect]);
 
   if (state === "idle") return null;
 
-  const busy = phase === "verifying" || phase === "executing";
-  const shown: HandoffState = state === "ready" && busy ? "executing" : state;
+  // The dialog closed without a confirmation: the intent is still alive.
+  const shown: HandoffState =
+    state === "ready"
+      ? phase === "closed"
+        ? "dismissed"
+        : phase === "verifying" || phase === "executing"
+          ? "executing"
+          : "ready"
+      : state;
+  const over = ENDED.includes(shown);
 
   return (
     <>
@@ -215,6 +276,11 @@ export function TelegramHandoff() {
             {titleOf(intent)} · {intent.host.name}
           </p>
         )}
+        {messages[shown] && (
+          <p className="subtle" role="status">
+            {messages[shown]}
+          </p>
+        )}
         {failure && (
           <p className="error" role="alert">
             {failure}
@@ -224,6 +290,51 @@ export function TelegramHandoff() {
           <p className="subtle" data-handoff-operation={operation.id}>
             {operation.detail}
           </p>
+        )}
+        {shown === "dismissed" && intent && (
+          <div className="toolbar">
+            <button
+              type="button"
+              className="primary"
+              data-handoff-reopen
+              onClick={() => {
+                if (!token.current) return;
+                setState("ready");
+                open(intent, token.current);
+              }}
+            >
+              Revisar y confirmar
+            </button>
+            <button
+              type="button"
+              className="text-button"
+              data-handoff-discard
+              onClick={() => {
+                clearHandoff(handoffStorage());
+                token.current = null;
+                setIntent(null);
+                setState("idle");
+              }}
+            >
+              Descartar
+            </button>
+          </div>
+        )}
+        {over && (
+          <div className="toolbar">
+            <button
+              type="button"
+              className="text-button"
+              data-handoff-close
+              onClick={() => {
+                setIntent(null);
+                setOperation(null);
+                setState("idle");
+              }}
+            >
+              Cerrar
+            </button>
+          </div>
         )}
       </section>
       {dialog}

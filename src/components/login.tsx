@@ -4,6 +4,7 @@ import { Fingerprint, HardDrive, ArrowRight } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
+import { captureHandoff, handoffStorage } from "@/lib/telegram-handoff-client";
 
 export function Login({
   setup,
@@ -22,6 +23,12 @@ export function Login({
     );
     if (tokenRef.current && token) tokenRef.current.value = token;
     if (token) window.history.replaceState(null, "", window.location.pathname);
+  }, []);
+  // A Telegram link arrives as #intent=<token>. The server never sees the
+  // fragment and router.replace(next) rebuilds the URL without it, so the token
+  // is captured now and waits in the tab's storage until Avisos picks it up.
+  useEffect(() => {
+    captureHandoff(window.location, window.history, handoffStorage());
   }, []);
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
