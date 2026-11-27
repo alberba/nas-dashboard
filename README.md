@@ -102,7 +102,7 @@ Para el alta inicial, abre el dominio con `/#setup=VALOR_DE_SETUP_TOKEN`. El nav
 
 Variables obligatorias: `DATABASE_URL` (PostgreSQL, con usuario, contraseña y base), `BETTER_AUTH_SECRET` y `SETUP_TOKEN` (mínimo 32 caracteres y distintos de los valores de ejemplo), `BETTER_AUTH_URL` (HTTPS, o HTTP solo en loopback para desarrollo, sin usuario, contraseña, ruta, consulta ni fragmento) y `NAS_HOSTS` o la pareja `NAS_AGENT_URL`/`AGENT_TOKEN`. `TRUSTED_ORIGINS` es opcional; si se define, cada origen se valida con las mismas reglas.
 
-Telegram es opcional: define `TELEGRAM_BOT_TOKEN` y `TELEGRAM_CHAT_ID` juntos o deja ambos sin definir. El chat debe ser numérico (admite signo negativo para supergrupos). `PUSH_WARNINGS` solo acepta `true` o `false` y vale `false` por omisión; si se activa, `VAPID_PUBLIC_KEY` y `VAPID_PRIVATE_KEY` son obligatorias y deben formar un par coherente. Los diagnósticos nombran la variable y un motivo finito, nunca su valor.
+Telegram es opcional: define `TELEGRAM_BOT_TOKEN` y `TELEGRAM_CHAT_ID` juntos o deja ambos sin definir. El chat debe ser numérico (admite signo negativo para supergrupos). El botón de acción del aviso nunca ejecuta: solo abre el handoff en el hub, donde la acción se confirma con la sesión y, si el manifiesto lo exige, con una verificación reciente. La ejecución directa desde el chat no está disponible, y `TELEGRAM_DIRECT_ACTIONS` solo admite `0` o estar sin definir: cualquier otro valor impide arrancar. `PUSH_WARNINGS` solo acepta `true` o `false` y vale `false` por omisión; si se activa, `VAPID_PUBLIC_KEY` y `VAPID_PRIVATE_KEY` son obligatorias y deben formar un par coherente. Los diagnósticos nombran la variable y un motivo finito, nunca su valor.
 
 ### Despliegue conjunto de la fase 2
 

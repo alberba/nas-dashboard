@@ -321,6 +321,20 @@ function telegram(
   return { botToken, chatId };
 }
 
+/**
+ * Direct execution from the chat is not available: the callback only opens the
+ * handoff in the hub. The variable exists so that nobody turns it on by mistake,
+ * and so it is never read anywhere else: absent, empty or `0` is valid and any
+ * other value stops the startup (D-00a).
+ */
+function telegramDirectActions(
+  env: Record<string, string | undefined>,
+  issues: IssueList,
+): void {
+  const raw = env.TELEGRAM_DIRECT_ACTIONS?.trim();
+  if (raw && raw !== "0") issues.add("TELEGRAM_DIRECT_ACTIONS", "invalid");
+}
+
 function pushWarningsEnabled(
   env: Record<string, string | undefined>,
   issues: IssueList,
@@ -438,6 +452,7 @@ export function readRuntimeConfig(
   const pushWarnings = pushWarningsEnabled(env, issues);
   const digestAt = digestTime(env, issues);
   const telegramConfig = telegram(env, issues);
+  telegramDirectActions(env, issues);
   const vapidConfig = vapid(env, pushWarnings, issues);
   if (issues.length > 0) throw new RuntimeConfigError(issues.list());
 
