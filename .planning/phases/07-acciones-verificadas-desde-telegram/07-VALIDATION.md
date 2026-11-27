@@ -41,10 +41,25 @@ Vitest corre en Node sin DOM, así que la lógica del cliente del handoff se aí
 
 ## Matriz de verificación por tarea
 
-Se completa al cerrar la planificación, con una fila por tarea de los PLAN.md de la fase.
+Completada al cerrar la planificación: una fila por tarea de los cinco PLAN.md de la fase (07-01 a 07-05). Las tareas `tracer` abren cada plan; los ficheros de prueba nuevos los crea la tarea que se indica, no una ola previa.
 
 | Task ID | Plan | Ola | Requisito | Amenaza | Comportamiento seguro | Tipo | Comando automático | Fichero existe | Estado |
 |---------|------|-----|-----------|---------|-----------------------|------|--------------------|----------------|--------|
+| 07-01-T1 | 07-01 | 1 | BOT-07, BOT-08, BOT-09 | T-07-01, T-07-02 | Pulsar `act_backup_now` crea un intent `pending` con solo el hash del token y no ejecuta nada (cero peticiones al agente, cero operaciones) | tracer (integración BD + `telegram-fake`) | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/telegram-intents.test.ts && pnpm typecheck` | ❌ lo crea la tarea | ⬜ pendiente |
+| 07-01-T2 | 07-01 | 1 | BOT-07 | T-07-02 | El aviso se edita en silencio con un botón url cuyo token en el fragmento coincide con el hash guardado y no se envía un mensaje nuevo | integración | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/telegram-intents.test.ts tests/telegram-updates.test.ts tests/telegram.test.ts && pnpm typecheck && pnpm lint` | ✅ (ampliar) | ⬜ pendiente |
+| 07-01-T3 | 07-01 | 1 | BOT-07, BOT-09 | T-07-03, T-07-04 | Un intent vivo por aviso, reclamo atómico de un solo uso y migración 0008 aditiva y repetible | integración + migración | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/telegram-intents.test.ts tests/migrations.test.ts && pnpm typecheck && pnpm lint` | ✅ (ampliar) | ⬜ pendiente |
+| 07-02-T1 | 07-02 | 2 | BOT-07, BOT-08, BOT-09 | T-07-05, T-07-09 | `execute` ejecuta `backup-now` una vez con verificación reciente y registra canal y solicitante; sin ella 403 sin consumir el intent | tracer (integración API + agente falso) | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/api-telegram-intents.test.ts tests/sensitive-actions.test.ts && pnpm typecheck` | ❌ lo crea la tarea | ⬜ pendiente |
+| 07-02-T2 | 07-02 | 2 | BOT-07, BOT-08 | T-07-07, T-07-08 | `inspect` y estados (410, replay, 503 sin consumir, 404 uniforme) y una sola petición al agente en concurrencia | integración | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/api-telegram-intents.test.ts tests/sensitive-actions.test.ts && pnpm typecheck && pnpm lint` | ✅ (tarea 1) | ⬜ pendiente |
+| 07-02-T3 | 07-02 | 2 | BOT-08 | T-07-01, T-07-05 | Lo protegido sale del manifiesto y de la acción almacenada, no del cuerpo; el carril no importa ejecutores | escaneo estático + integración | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/api-telegram-intents.test.ts tests/sensitive-actions.test.ts tests/api-host-commands.test.ts && pnpm typecheck && pnpm lint` | ✅ (ampliar) | ⬜ pendiente |
+| 07-03-T1 | 07-03 | 2 | BOT-07 | T-07-11 | «Acciones…» y «Volver» editan el aviso en silencio y solo aparecen con acciones ofrecidas | tracer (integración BD + `telegram-fake`) | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/telegram-intents.test.ts tests/telegram-updates.test.ts tests/incident-actions.test.ts tests/incident-why.test.ts tests/incident-snooze.test.ts && pnpm typecheck` | ✅ (ampliar) | ⬜ pendiente |
+| 07-03-T2 | 07-03 | 2 | BOT-07 | T-07-10, T-07-11 | «Cancelar» y la fila `:expire` restauran el teclado sin enlaces muertos y con un solo intent vivo | integración con reloj inyectado | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/telegram-intents.test.ts tests/telegram-updates.test.ts && pnpm typecheck && pnpm lint` | ✅ (ampliar) | ⬜ pendiente |
+| 07-03-T3 | 07-03 | 2 | BOT-07 | T-07-10, T-07-12 | Reglas de resolución D-05 y D-06, línea de resultado, `callback_data` de 25 bytes y limpieza de intents viejos | puro + integración | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/telegram-keyboard.test.ts tests/telegram-intents.test.ts tests/telegram-lane-hardening.test.ts tests/incident-why.test.ts tests/incident-snooze.test.ts tests/telegram-updates.test.ts && pnpm typecheck && pnpm lint` | ❌ `telegram-keyboard.test.ts` lo crea la tarea | ⬜ pendiente |
+| 07-04-T1 | 07-04 | 3 | BOT-07, BOT-08, BOT-09 | T-07-14, T-07-09 | El runner extraído no cambia `/api/action`; `restart` desde un intent ejecuta una vez; canal `hub` y `telegram` con solicitante | tracer (integración API + agente falso) | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/api-lifecycle.test.ts tests/api-telegram-intents.test.ts tests/api-host-commands.test.ts tests/sensitive-actions.test.ts && pnpm typecheck` | ✅ (ampliar) | ⬜ pendiente |
+| 07-04-T2 | 07-04 | 3 | BOT-07, BOT-08 | T-07-13, T-07-16 | `start` solo con sesión, `reboot` con passkey y sin frase tecleada, contenedor recreado por nombre y prechequeos que no consumen el intent | integración | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/api-telegram-intents.test.ts tests/api-lifecycle.test.ts && pnpm typecheck && pnpm lint` | ✅ (ampliar) | ⬜ pendiente |
+| 07-04-T3 | 07-04 | 3 | BOT-08 | T-07-15 | `TELEGRAM_DIRECT_ACTIONS` solo admite `0` o ausente; con otro valor el arranque falla | unitario + documentación | `pnpm test tests/runtime-config.test.ts && pnpm typecheck && pnpm lint && grep -q 'TELEGRAM_DIRECT_ACTIONS=0' .env.example && grep -q 'TELEGRAM_DIRECT_ACTIONS' README.md` | ✅ (ampliar) | ⬜ pendiente |
+| 07-05-T1 | 07-05 | 3 | BOT-07, BOT-08 | T-07-17, T-07-18 | El fragmento se captura y se borra de la URL, el diálogo abre con verbo y objetivo y una acción exenta se confirma sin passkey | tracer (e2e) | `pnpm typecheck && pnpm lint && pnpm build && pnpm test:e2e tests/e2e/telegram-handoff.spec.ts tests/e2e/sensitive-action.spec.ts` | ❌ lo crea la tarea | ⬜ pendiente |
+| 07-05-T2 | 07-05 | 3 | BOT-07, BOT-08 | T-07-17, T-07-18, T-07-20 | El token sobrevive al login y a la recarga; los estados terminales no llaman a `execute`; lo protegido marca `data-verification-required` | puro + e2e | `pnpm test tests/telegram-handoff-client.test.ts && pnpm typecheck && pnpm lint && pnpm build && pnpm test:e2e tests/e2e/telegram-handoff.spec.ts` | ❌ `telegram-handoff-client.test.ts` lo crea la tarea | ⬜ pendiente |
+| 07-05-T3 | 07-05 | 3 | BOT-07, BOT-09 | T-07-20 | El canal de cada operación es visible, el reintento tras un fallo no reenvía sin confirmación y la ayuda de passkey cubre el navegador de Telegram | e2e | `pnpm typecheck && pnpm lint && pnpm build && pnpm test:e2e tests/e2e/telegram-handoff.spec.ts tests/e2e/incidents.spec.ts tests/e2e/overview.spec.ts` | ✅ (tarea 1) | ⬜ pendiente |
 
 *Estado: ⬜ pendiente · ✅ verde · ❌ rojo · ⚠️ inestable*
 
@@ -52,7 +67,7 @@ Se completa al cerrar la planificación, con una fila por tarea de los PLAN.md d
 
 | Req | Comportamiento | Tipo | Comando | ¿Existe? |
 |-----|----------------|------|---------|----------|
-| BOT-07 | Pulsar una acción crea un intent `pending` con el hash (no el token) y TTL de 5 min, y edita el aviso con un botón url. El agente no recibe nada | integración (BD + `telegram-fake`) | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/telegram-updates.test.ts -t intent` | ❌ Ola 0 (ampliar fichero) |
+| BOT-07 | Pulsar una acción crea un intent `pending` con el hash (no el token) y TTL de 5 min, y edita el aviso con un botón url. El agente no recibe nada | integración (BD + `telegram-fake`) | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/telegram-intents.test.ts -t intent` | ❌ lo crea 07-01-T1 |
 | BOT-07 | `execute` con sesión, y passkey sembrada cuando toca, ejecuta una vez y devuelve la operación | integración (API + agente falso) | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/api-telegram-intents.test.ts` | ❌ Ola 0 |
 | BOT-07 | El fragmento se captura, se quita de la URL y el diálogo se abre. Sin sesión pasa por el login y vuelve | e2e | `pnpm test:e2e tests/e2e/telegram-handoff.spec.ts` | ❌ Ola 0 |
 | BOT-08 | `execute` de una acción protegida sin verificación reciente devuelve 403 `recent_verification_required`, con 0 peticiones al agente, 0 filas en `operations` y el intent aún `pending` | integración | `HUB_REQUIRE_TEST_DB=1 pnpm test tests/api-telegram-intents.test.ts -t verification` | ❌ Ola 0 |
@@ -74,14 +89,18 @@ Los tests aseveran estado, resultado o estructura, nunca copy (`CODING_STANDARD.
 
 ## Ola 0
 
-- [ ] `tests/telegram-intents.test.ts`: ciclo de vida, unicidad, caducidad y reclamo atómico (BOT-07, BOT-08, SC4, D-09, D-10).
-- [ ] `tests/api-telegram-intents.test.ts`: `inspect` y `execute`, 403 sin consumir el intent y `operations.channel` (BOT-07, BOT-08, BOT-09).
-- [ ] `tests/telegram-keyboard.test.ts`: `hostActionsFor`, render por estado y tamaño de `callback_data` (D-01 a D-07).
-- [ ] `tests/telegram-handoff-client.test.ts`: `parseHandoffFragment` y `captureHandoff` idempotente (puro).
-- [ ] `tests/e2e/telegram-handoff.spec.ts`: fragmento, login y estados, con `page.route` para `execute` (precedente: `tests/e2e/sensitive-action.spec.ts`).
-- [ ] Filas nuevas en `bodyLimitCases` y entradas del manifiesto en `tests/sensitive-actions.test.ts`.
-- [ ] Ampliar `tests/telegram-fake.ts` si hace falta registrar `editMessageText` con botones url (ya registra `callback_data`).
+Cada fichero de prueba nuevo lo crea la tarea `tracer` o la primera tarea de su plan; ninguna tarea depende de una ola previa de andamiaje.
+
+- [ ] `tests/telegram-intents.test.ts`: ciclo de vida, unicidad, caducidad, reclamo atómico, menú, cancelación y `:expire` (BOT-07, BOT-08, SC4, D-09, D-10). Lo crea 07-01-T1 y lo amplían 07-01-T2, 07-01-T3, 07-03-T1, 07-03-T2 y 07-03-T3.
+- [ ] `tests/api-telegram-intents.test.ts`: `inspect` y `execute`, 403 sin consumir el intent, `operations.channel` y la matriz por acción (BOT-07, BOT-08, BOT-09). Lo crea 07-02-T1 y lo amplían 07-02-T2, 07-02-T3, 07-04-T1 y 07-04-T2.
+- [ ] `tests/telegram-keyboard.test.ts`: `keyboardActions` y `renderActionRows` por estado y tamaño de `callback_data` (D-01 a D-07). Lo crea 07-03-T3.
+- [ ] `tests/telegram-handoff-client.test.ts`: `parseHandoffFragment` y `captureHandoff` idempotente (puro). Lo crea 07-05-T2.
+- [ ] `tests/e2e/telegram-handoff.spec.ts`: fragmento, login y estados, con `page.route` para `execute` (precedente: `tests/e2e/sensitive-action.spec.ts`). Lo crea 07-05-T1 y lo amplían 07-05-T2 y 07-05-T3.
+- [ ] Filas nuevas en `bodyLimitCases`, entradas del manifiesto y escaneo «lane» en `tests/sensitive-actions.test.ts` (07-02-T1 y 07-02-T3), bloque de 0008 en `tests/migrations.test.ts` (07-01-T3) y casos de `TELEGRAM_DIRECT_ACTIONS` en `tests/runtime-config.test.ts` (07-04-T3).
+- `tests/telegram-fake.ts` no necesita ampliarse: ya registra el `reply_markup` completo de `editMessageText` (botones url incluidos) en `calls`.
 - Framework ya instalado; sin dependencias nuevas.
+
+Estructura de ejecución: ola 1 = 07-01; ola 2 = 07-02 y 07-03 en paralelo (sin ficheros compartidos); ola 3 = 07-04 y 07-05 en paralelo (sin ficheros compartidos).
 
 ---
 

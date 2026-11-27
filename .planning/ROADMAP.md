@@ -204,12 +204,19 @@ Plans:
   2. Sin verificación reciente en el servidor, la acción destructiva se rechaza aunque el callback sea válido.
   3. Cada acción iniciada queda en `operations` con canal y solicitante.
   4. Un intent caducado o ya consumido no ejecuta la acción dos veces.
-**Plans**: 3 plans
+**Plans**: 5 plans
 
 Plans:
-- [ ] 07-01: Intents de acción con token de un solo uso, TTL de cinco minutos y `guardIntentAction`
-- [ ] 07-02: Handoff por fragmento con sesión y passkey en el hub, y confirmación con verbo y objetivo
-- [ ] 07-03: `operations` con canal y solicitante, ejecución única y `TELEGRAM_DIRECT_ACTIONS=0`
+**Wave 1**
+- [ ] 07-01-PLAN.md — Esquema del intent (migración 0008), ciclo de vida de un solo uso con TTL de cinco minutos y creación desde el callback con botón url en el aviso
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 07-02-PLAN.md — Hub: `inspect` y `execute` con `guardIntentAction`, ejecución única y operación con canal y solicitante
+- [ ] 07-03-PLAN.md — Teclado del aviso: «Acciones…», «Volver», «Cancelar», caducidad por outbox, resultado y limpieza
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 07-04-PLAN.md — `operation-runner.ts` extraído, `start`, `restart` y `reboot` desde el intent, canal y solicitante en todas las operaciones y `TELEGRAM_DIRECT_ACTIONS=0`
+- [ ] 07-05-PLAN.md — Handoff en el hub: fragmento, login sin perder el intent y diálogo con verbo y objetivo
 
 **Repo:** hub
 **Research flag:** Sí — el handoff por fragmento no tiene precedente en el repo; spike de UI y `guardIntentAction` antes de planificar.
