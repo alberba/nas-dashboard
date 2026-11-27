@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 06
 current_phase_name: Puerta de seguridad
 status: executing
-stopped_at: Completed 06-04-PLAN.md
-last_updated: "2026-11-27T12:03:29.181Z"
+stopped_at: Completed 06-05-PLAN.md
+last_updated: "2026-11-27T12:14:48.921Z"
 last_activity: 2026-11-27
 last_activity_desc: Phase 06 execution started
-state_head: 86cfa10ee89364ebd242aa98dc0fc67b8fba3a74
+state_head: 59f9ae7641124a33cb436224ab89263e28fde747
 progress:
   total_phases: 8
   completed_phases: 5
   total_plans: 26
-  completed_plans: 24
+  completed_plans: 25
   percent: 63
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-27)
 ## Current Position
 
 Phase: 06 (Puerta de seguridad) — EXECUTING
-Plan: 5 of 6
+Plan: 6 of 6
 Status: Ready to execute
 Last activity: 2026-11-27 — Phase 06 execution started
 
@@ -76,6 +76,7 @@ Progress: [██████░░░░] 63%
 | Phase 06 P02 | 13 min | 3 tasks | 8 files |
 | Phase 06 P03 | 7 min | 2 tasks | 7 files |
 | Phase 06 P04 | 12 min | 3 tasks | 10 files |
+| Phase 06 P05 | 6 min | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -133,6 +134,9 @@ Recent decisions affecting current work:
 - [Phase 06]: 06-04: readBodyText cuenta bytes en streaming y decodifica una sola vez; Content-Length solo es un atajo de rechazo
 - [Phase 06]: 06-04: deployments/settings declara su propio tope de 64 KiB alineado con MAX_REQUEST_BYTES del agente
 - [Phase 06]: 06-04: return await de handlePasswordVerification para que BodyTooLarge llegue al 413 del catch-all
+- [Phase 06]: 06-05: routeVerdict compara el nombre exacto con Object.hasOwn y el catch-all lo consulta tras la sesión (401 antes de 404 y 405); setup comprueba el método antes de la sesión
+- [Phase 06]: 06-05: las expresiones regulares de incidencias viven en el manifiesto y el despachador las importa; ProtectedPostRoute se deriva del tipo y exige un fixture por ruta protegida
+- [Phase 06]: 06-05: el envoltorio de Better Auth acota el POST a 32 KiB, reconstruye la petición sin content-length y deja pendiente confirmar las exenciones presence, verification/password y DELETE push (A10)
 
 ### Pending Todos
 
@@ -156,6 +160,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-27T12:03:28.861Z
-Stopped at: Completed 06-04-PLAN.md
+Last session: 2026-11-27T12:14:48.557Z
+Stopped at: Completed 06-05-PLAN.md
 Resume file: None

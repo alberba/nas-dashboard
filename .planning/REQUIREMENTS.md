@@ -53,7 +53,7 @@ Alcance de este milestone: auditar el ruido, sustituir los emisores por una entr
 ### Seguridad
 
 - [x] **SEC-01**: Toda ruta destructiva exige verificación reciente en el servidor (stop, restart, update, purge, empty-trash, clean-images, reconnect-apps, host-command, merge de Renovate)
-- [ ] **SEC-02**: La lista de acciones protegidas vive en un único módulo y una ruta nueva no puede olvidarla sin que falle un test
+- [x] **SEC-02**: La lista de acciones protegidas vive en un único módulo y una ruta nueva no puede olvidarla sin que falle un test
 - [x] **SEC-03**: El arranque rechaza credenciales de ejemplo y la falta de configuración obligatoria, y el contenedor no se declara sano
 - [ ] **SEC-04**: Las respuestas incluyen CSP conservadora y HSTS, y las mutaciones tienen límite de cuerpo
 - [ ] **SEC-05**: La rotación conjunta del token del bot (hub y `media-stack`) está documentada y probada
@@ -136,7 +136,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | BOT-06 | Phase 5 | Complete |
 | BOT-10 | Phase 5 | Complete |
 | SEC-01 | Phase 6 | Complete |
-| SEC-02 | Phase 6 | Pending |
+| SEC-02 | Phase 6 | Complete |
 | SEC-04 | Phase 6 | Pending |
 | BOT-07 | Phase 7 | Pending |
 | BOT-08 | Phase 7 | Pending |
