@@ -204,11 +204,12 @@ Plans:
   2. Sin verificación reciente en el servidor, la acción destructiva se rechaza aunque el callback sea válido.
   3. Cada acción iniciada queda en `operations` con canal y solicitante.
   4. Un intent caducado o ya consumido no ejecuta la acción dos veces.
-**Plans**: 5 plans
+**Plans**: 6 plans
 
 Plans:
 **Wave 1**
 - [ ] 07-01-PLAN.md — Esquema del intent (migración 0008), ciclo de vida de un solo uso con TTL de cinco minutos y creación desde el callback con botón url en el aviso
+- [ ] 07-06-PLAN.md — CR-01 de la fase 6 (D-13): el factor passkey o contraseña se decide por el `Host` del proxy y no por `Origin`, con la prueba del ataque, el contrato del proxy en el README y la disposición resuelta
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 07-02-PLAN.md — Hub: `inspect` y `execute` con `guardIntentAction`, ejecución única y operación con canal y solicitante

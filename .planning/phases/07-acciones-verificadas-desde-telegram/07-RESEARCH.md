@@ -359,7 +359,7 @@ El usuario eligió `--skip-ui`; esta sección es el único contrato de diseño. 
 
 Notas de implementación de la tabla:
 - `start` (exento): el hook se abre con `requiresVerification: false`; solo sesión + confirmación (D-04).
-- `reboot`: usar `typedConfirmation: { label: "Escribe REINICIAR NAS", value: "REINICIAR NAS" }` igual que el flujo de Mantenimiento; así el hub no es más permisivo desde el chat que desde la pantalla. [ASSUMED: paridad con el reinicio del hub; decisión del planner, ver Open Question 4]
+- `reboot`: usar `typedConfirmation: { label: "Escribe REINICIAR NAS", value: "REINICIAR NAS" }` igual que el flujo de Mantenimiento; así el hub no es más permisivo desde el chat que desde la pantalla. [ASSUMED: paridad con el reinicio del hub; anulado por D-12, ver Open Question 4 (RESOLVED): el handoff pide un toque y la passkey, sin la frase]
 - `endpoint: "/api/telegram/intents/execute"`, `body: { token }`, `idempotencyKey` opcional (el servidor lo ignora).
 - `onSettled` mapea a `data-handoff-state` como hace `06-03` con `applyResult`.
 - Foco y teclado: lo gestiona el hook (`[data-initial-focus]`, devuelve el foco al abrir). Roles ya definidos en 06-UI-SPEC I-5 y I-7.
@@ -444,8 +444,8 @@ Ver Anti-Patterns. El reclamo atómico vive en la tabla de intents, no en `opera
 **What goes wrong:** alguien activa la variable creyendo que habilita la ejecución directa; no hace nada o, peor, un futuro cambio la lee.
 **How to avoid:** `runtime-config.ts` acepta solo ausente o `0`; cualquier otro valor es un `RuntimeConfigIssue` (`reason: "invalid"`, ya existente) y el arranque falla (SEC-03). Documentar en `.env.example` (comentada: `# TELEGRAM_DIRECT_ACTIONS=0`) y en README. Test: `readRuntimeConfig({… TELEGRAM_DIRECT_ACTIONS: "1" })` lanza `RuntimeConfigError`. [VERIFIED forma: src/lib/runtime-config.ts:9-17, 296-322, 440-451]
 
-### Pitfall 11: Dependencia de CR-01 de la fase 6
-`06-REVIEW-DISPOSITION.md` mantiene CR-01 (el factor passkey/contraseña se elige por la cabecera `Origin`) y WR-01…WR-04 en `open`, aunque `06-UAT.md` marca la decisión de CR-01 como `pass`. La fase 7 confía en `guardSensitiveAction` tal cual. Esta fase no lo resuelve; el planner debe registrar la decisión o enlazarla (STATE.md lo marca como pendiente antes de planificar). [VERIFIED: .planning/phases/06-puerta-de-seguridad/06-REVIEW-DISPOSITION.md:6-12; STATE.md]
+### Pitfall 11: Dependencia de CR-01 de la fase 6 (RESOLVED)
+`06-REVIEW-DISPOSITION.md` mantenía CR-01 (el factor passkey/contraseña se elige por la cabecera `Origin`, que fija el cliente) en `open`, aunque `06-UAT.md` marca la decisión de CR-01 como `pass`. Con un origen alternativo en `TRUSTED_ORIGINS`, quien conoce la contraseña podía pedir el método `password` contra el dominio principal y ejecutar acciones protegidas sin passkey, lo que habría dejado el handoff por debajo del criterio de éxito 1. **RESOLVED (D-13):** se corrige dentro de esta fase, en 07-06: el método se decide por el `Host` que fija el proxy y un `Origin` que no coincide con él cae a passkey. WR-01…WR-04 siguen `open` y quedan fuera de esta fase. [VERIFIED: .planning/phases/06-puerta-de-seguridad/06-REVIEW.md §CR-01; src/lib/verification.ts:85-142]
 
 ### Pitfall 12: Parámetros con `reboot` y contenedores recreados
 `reboot` exige `confirmation: "REINICIAR NAS"` en `actionSchema` y el agente puede estar con `ALLOW_REBOOT=false`; `start|restart` necesitan el id de 64 hex que cambia si el contenedor se recrea entre el aviso y el clic. Resolver el id **al ejecutar**, no al crear el intent, y fallar con 409 sin consumir si el nombre no aparece. [VERIFIED: src/lib/validation.ts:14-23]
@@ -562,31 +562,38 @@ export function captureHandoff(loc: Pick<Location, "hash" | "pathname" | "search
 | A1 | La passkey puede fallar en el navegador interno de Telegram en el dispositivo del operador; mitigación por reabrir en el navegador del sistema | Pitfall 9 | UAT bloqueado en acciones protegidas; hay que documentar o cambiar el ajuste de Telegram |
 | A2 | Derivar el token del handoff por HMAC de `BETTER_AUTH_SECRET` es aceptable frente a "token aleatorio + hash" de la fase 5 | Pattern 4 | Si el usuario exige token puramente aleatorio, usar el fallback (sobrescribir hash tardío) |
 | A3 | El solicitante de `operations` es el id del usuario del hub (mismo valor para ambos canales) y nunca el id numérico de Telegram | Pattern 3 / Open Question 3 | Si se quiere el id de Telegram para auditoría, cambia la política de la fase 5 |
-| A4 | `reboot` desde el chat conserva la frase tecleada `REINICIAR NAS` en el diálogo | Pantalla del handoff | Si se prefiere un toque, el hub sería más permisivo desde el chat que desde Mantenimiento |
+| A4 | `reboot` desde el chat conserva la frase tecleada `REINICIAR NAS` en el diálogo (anulada por D-12: un toque y passkey) | Pantalla del handoff | Si se prefiere un toque, el hub sería más permisivo desde el chat que desde Mantenimiento; el usuario lo aceptó en D-12 |
 | A5 | Un solo usuario en la instancia: el intent se liga al único `user` | Código de creación | Con varios usuarios no hay mapeo Telegram→usuario y `soleOperatorId` falla cerrado |
 | A6 | Reutilizar `kind: "incident-edit"` para ediciones solo de teclado (en vez de un `kind` nuevo) es aceptable aunque `lastUpdate` las refleje | Pattern 2 | Si se quiere un `lastUpdate` solo de cambios de estado, hace falta un `kind` nuevo y tocar claim, recover y dispatcher |
 | A7 | Con `container:*` silenciosos y `reboot-pending` en el resumen, esas filas de D-01/D-02 no tienen superficie real en Telegram hoy | Pitfall 1 | Si el usuario espera verlas en el chat, hay que cambiar la política (fuera de esta fase) |
 | A8 | Una operación `reboot` iniciada por intent no actualiza el aviso cuando el host vuelve; solo se edita con "reinicio solicitado" | Resultado en Telegram | Si se quiere confirmación final en el chat, el collector debería encolar una edición |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **¿Se acepta que D-01 y la fila `reboot-pending` de D-02 no tengan superficie real en Telegram con la política actual?**
+Las cinco preguntas quedaron resueltas al planificar; cada una indica la decisión de `07-CONTEXT.md` o de los planes que la cierra.
+
+1. **¿Se acepta que D-01 y la fila `reboot-pending` de D-02 no tengan superficie real en Telegram con la política actual? (RESOLVED)**
    - What we know: `container:*` es `silent` y `reboot-pending` va al resumen (`notification-policy.ts`); no hay mensaje por incidencia ni teclado.
    - What's unclear: si el usuario quiere cambiar la política (p. ej. contenedores críticos a Telegram) o lo asume.
    - Recommendation: implementar y probar la tabla completa con fixtures; no tocar la política; UAT real solo con `backup-failed` y `deploy-failed`. Confirmar con el usuario antes de planificar los tests de aceptación.
+   - **RESOLVED (D-11):** el usuario lo acepta. La tabla de D-01..D-03 se implementa completa y se prueba con fixtures (`hostActionsFor` en 07-01 y los teclados de 07-03); el UAT real usa `backup-failed` y `deploy-failed`; la política de avisos no se toca en esta fase.
 
-2. **¿Quién renderiza el resultado final de un `reboot`?**
+2. **¿Quién renderiza el resultado final de un `reboot`? (RESOLVED)**
    - What we know: la operación queda `pending` hasta que el collector confirma el arranque por `bootAt` (`collector.ts:542-556`).
    - What's unclear: si el chat debe enterarse de la confirmación.
    - Recommendation: editar el aviso con "reinicio solicitado" al ejecutar; la confirmación posterior se ve en el hub (A8).
+   - **RESOLVED (P-18 de 07-04 y P-14 de 07-03):** un `reboot` aceptado deja la operación `pending` con el detalle de reinicio solicitado y el intent `executed`; el aviso se edita con «reinicio solicitado» y la confirmación final se ve en el hub (A8).
 
-3. **Solicitante en `operations` y mapeo Telegram→usuario.**
+3. **Solicitante en `operations` y mapeo Telegram→usuario. (RESOLVED)**
    - What we know: no hay concepto de propietario; `userId` en `operations` es el usuario de la sesión que ejecuta; la fase 5 evitó persistir el id numérico de Telegram.
    - Recommendation: `channel` (`hub`|`telegram`) y `requestedBy` = id del usuario del hub en ambos casos; `intent.userId` = único usuario. Confirmar si el usuario quiere algo más.
+   - **RESOLVED (P-02 y P-04 de 07-01, y el apartado de discreción de `07-CONTEXT.md`):** `operations.channel` (`hub` por defecto) y `operations.requestedBy` (id del usuario del hub, nunca el id numérico de Telegram); el intent se liga al único usuario de la instancia y falla cerrado si no hay exactamente uno (A3 y A5).
 
-4. **¿`reboot` con frase tecleada o con un toque?** Recomendación: frase tecleada (paridad con el hub).
+4. **¿`reboot` con frase tecleada o con un toque? (RESOLVED)** Recomendación original: frase tecleada (paridad con el hub).
+   - **RESOLVED (D-12):** un toque y la passkey, sin la frase `REINICIAR NAS`. El usuario acepta que el handoff sea más permisivo que Mantenimiento en este punto; la recomendación de la frase queda anulada y con ella la suposición A4.
 
-5. **¿Actuar reconoce la incidencia?** CONTEXT: por defecto no. Recomendación: no; si falla/éxito solo cambia la línea de resultado del aviso.
+5. **¿Actuar reconoce la incidencia? (RESOLVED)** CONTEXT: por defecto no. Recomendación: no; si falla/éxito solo cambia la línea de resultado del aviso.
+   - **RESOLVED (P-10 de 07-02 y P-14 de 07-03):** actuar no reconoce la incidencia; el resultado solo cambia la línea de resultado del aviso.
 
 ## Environment Availability
 
@@ -678,7 +685,7 @@ Las aserciones siguen `CODING_STANDARD.md`: filas guardadas, códigos HTTP, peti
 | Doble ejecución por carrera | Tampering | `UPDATE … WHERE status='pending' AND expiresAt > now RETURNING` |
 | Enlace muerto o engañoso en el chat | Spoofing / UX | Fila `:expire` restaura el teclado (D-09); `inspect` muestra `caducado` |
 | Fuerza bruta del token | Spoofing | 256 bits de HMAC, 5 min de vida, sesión obligatoria; sin enumeración (404 uniforme) |
-| Downgrade del factor por `Origin` | Elevation of Privilege | Hallazgo CR-01 de la fase 6 **abierto**: el handoff hereda ese comportamiento; registrar decisión |
+| Downgrade del factor por `Origin` | Elevation of Privilege | CR-01 de la fase 6, corregido en esta fase por D-13 (plan 07-06): el factor sale del `Host` del proxy y un `Origin` que no coincide cae a passkey; el handoff lo hereda ya corregido |
 
 ## Sources
 
