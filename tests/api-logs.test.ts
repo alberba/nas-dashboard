@@ -261,7 +261,7 @@ describe.skipIf(!baseUrl)("container logs API", () => {
 
   it("never exposes a log write or console route", async () => {
     const response = await api("POST", `/api/logs?host=apps&id=${ID}`);
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(405);
     expect(agent.requests).toEqual([]);
   });
 });

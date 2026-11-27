@@ -16,7 +16,13 @@ import {
 import { getSettings, mutateSettings } from "@/lib/settings";
 import { pendingWatch } from "@/lib/container-watch";
 import { actionSchema, settingsSchema } from "@/lib/validation";
-import { requiresVerificationForAction } from "@/lib/sensitive-actions";
+import {
+  incidentActionPattern,
+  incidentDetailPattern,
+  requiresVerificationForAction,
+  routeVerdict,
+  type RouteVerdict,
+} from "@/lib/sensitive-actions";
 import {
   logsResponseSchema,
   parseLogsQuery,
@@ -73,6 +79,16 @@ const json = (value: unknown, status = 200) =>
     status,
     headers: { "Cache-Control": "no-store" },
   });
+const methodNotAllowed = (
+  verdict: Extract<RouteVerdict, { verdict: "method_not_allowed" }>,
+) =>
+  NextResponse.json(
+    { error: "Método no permitido" },
+    {
+      status: 405,
+      headers: { "Cache-Control": "no-store", Allow: verdict.allow.join(", ") },
+    },
+  );
 const ranges = {
   "1h": [3600, 30],
   "6h": [21600, 60],
@@ -133,7 +149,14 @@ async function handle(
   if (mutation && !origins.includes(request.headers.get("origin") ?? ""))
     return json({ error: "Origen no autorizado" }, 403);
   try {
+    // Fail closed: a route or verb the manifest does not declare never reaches a
+    // handler (SEC-02). Setup is public by design, so it answers before the
+    // session; every other route answers 404 or 405 only after it (below), so an
+    // anonymous caller cannot learn which routes exist.
+    const verdict = routeVerdict(route, request.method);
     if (route === "setup") {
+      if (verdict.verdict === "method_not_allowed")
+        return methodNotAllowed(verdict);
       const [{ value }] = await db.select({ value: count() }).from(user);
       if (!mutation) return json({ required: value === 0 });
       if (value !== 0)
@@ -175,6 +198,10 @@ async function handle(
     }
     const current = await auth.api.getSession({ headers: request.headers });
     if (!current) return json({ error: "Inicia sesión para continuar" }, 401);
+    if (verdict.verdict === "not_found")
+      return json({ error: "No encontrado" }, 404);
+    if (verdict.verdict === "method_not_allowed")
+      return methodNotAllowed(verdict);
 
     if (route === "verification" && !mutation)
       return handleVerificationStatus({
@@ -240,7 +267,7 @@ async function handle(
       );
       return json(await eventsForHost(host));
     }
-    const incidentRoute = /^incidents\/([^/]+)$/.exec(route);
+    const incidentRoute = incidentDetailPattern.exec(route);
     if (incidentRoute && !mutation) {
       // A point lookup needs both an explicit configured host and a safe id;
       // a missing pair is not enough to fall back to another host's episode.
@@ -283,8 +310,7 @@ async function handle(
     // Operator actions from the hub. The common guards already required a
     // session and an allowed Origin, so this branch only adds the strict body,
     // the exact host/id pair and the shared action itself (T-05-13, T-05-14).
-    const incidentActionRoute =
-      /^incidents\/([^/]+)\/(acknowledge|snooze|unsnooze)$/.exec(route);
+    const incidentActionRoute = incidentActionPattern.exec(route);
     if (incidentActionRoute && request.method === "POST") {
       const action = incidentActionRoute[2];
       // Same id contract as the point lookup: a malformed or out-of-range id

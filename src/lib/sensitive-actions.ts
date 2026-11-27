@@ -22,8 +22,10 @@ export type Policy = { kind: "protected" | "exempt"; reason: string };
 
 export type ActionId = z.infer<typeof actionSchema>["action"];
 
-const protectedBy = (reason: string): Policy => ({ kind: "protected", reason });
-const exempt = (reason: string): Policy => ({ kind: "exempt", reason });
+// The literal `kind` survives so `routeManifest` can derive which routes are
+// protected from its own type (a new protected route then needs a fixture).
+const protectedBy = (reason: string) => ({ kind: "protected" as const, reason });
+const exempt = (reason: string) => ({ kind: "exempt" as const, reason });
 
 /** D-01, D-02 and D-04: stop, restart, update, reboot, purge and empty-trash. */
 export const actionPolicies = {
@@ -68,4 +70,134 @@ export function requiresVerificationForCommand(id: unknown): boolean {
   if (typeof id !== "string" || !Object.hasOwn(hostCommandPolicies, id))
     return false;
   return requiresVerification(hostCommandPolicies[id as HostCommand]);
+}
+
+/** The verbs the catch-all route exports; anything else never reaches it. */
+export type RouteMethod = "GET" | "POST" | "DELETE";
+
+/** A verb whose policy depends on the body: it points at a per-item table. */
+export type PerItemPolicy = {
+  kind: "per-item";
+  policies: Record<string, Policy>;
+};
+
+const perItem = (policies: Record<string, Policy>): PerItemPolicy => ({
+  kind: "per-item",
+  policies,
+});
+
+/** `GET` only ever reads; every mutation verb carries a policy. */
+type RouteEntry = {
+  GET?: "read";
+  POST?: Policy | PerItemPolicy;
+  DELETE?: Policy | PerItemPolicy;
+};
+
+/**
+ * Every route the catch-all serves by exact name, with the verbs it accepts and
+ * a policy for each mutation (SEC-02, D-06). `routeVerdict` consults it before
+ * any handler runs, so a route or verb missing here answers 404 or 405 instead
+ * of reaching code nobody declared a policy for.
+ *
+ * Phase 7: a new route or verb goes here first, and a protected `POST` needs a
+ * fixture in `tests/sensitive-actions.test.ts`.
+ */
+export const routeManifest = {
+  setup: {
+    GET: "read",
+    POST: exempt(
+      "Alta inicial protegida por SETUP_TOKEN, cuenta cero y bloqueo advisory",
+    ),
+  },
+  verification: { GET: "read" },
+  "verification/password": {
+    POST: exempt("Es la propia verificación y exige sesión"),
+  },
+  "containers/remove": { POST: protectedBy("Elimina el contenedor") },
+  hosts: { GET: "read" },
+  maintenance: { GET: "read" },
+  "host-command": { POST: perItem(hostCommandPolicies) },
+  deployments: { GET: "read" },
+  events: { GET: "read" },
+  "deployments/settings": {
+    POST: protectedBy("Cambia el despliegue automático del host"),
+  },
+  renovate: { GET: "read" },
+  "renovate/merge": {
+    POST: protectedBy("Fusiona un cambio que luego se despliega"),
+  },
+  "renovate/progress": { GET: "read" },
+  overview: { GET: "read" },
+  "container-history": { GET: "read" },
+  presence: { POST: exempt("Latido de la pestaña visible, no actúa sobre nada") },
+  action: { POST: perItem(actionPolicies) },
+  files: { GET: "read" },
+  trash: { GET: "read" },
+  logs: { GET: "read" },
+  settings: {
+    GET: "read",
+    POST: exempt("Umbrales de aviso, no actúan sobre los servicios"),
+  },
+  push: {
+    GET: "read",
+    POST: exempt("Suscripción del propio navegador"),
+    DELETE: exempt("Baja de la propia suscripción"),
+  },
+  "push/test": {
+    POST: exempt("Encola una prueba de aviso al propietario"),
+  },
+} satisfies Record<string, RouteEntry>;
+
+export type RouteName = keyof typeof routeManifest;
+
+/** Routes whose `POST` is protected as a whole; each needs a typed fixture. */
+export type ProtectedPostRoute = {
+  [K in RouteName]: (typeof routeManifest)[K] extends {
+    POST: { kind: "protected" };
+  }
+    ? K
+    : never;
+}[RouteName];
+
+/** Detail of one incident: a read. */
+export const incidentDetailPattern = /^incidents\/([^/]+)$/;
+/** Acknowledge, snooze and unsnooze of one incident. */
+export const incidentActionPattern =
+  /^incidents\/([^/]+)\/(acknowledge|snooze|unsnooze)$/;
+
+/** The routes the catch-all matches by regular expression instead of by name. */
+export const patternRoutes = [
+  { pattern: incidentDetailPattern, entry: { GET: "read" } },
+  {
+    pattern: incidentActionPattern,
+    entry: {
+      POST: exempt("Reconocer o silenciar no cambia el host (D-05)"),
+    },
+  },
+] satisfies { pattern: RegExp; entry: RouteEntry }[];
+
+export type RouteVerdict =
+  | { verdict: "ok" }
+  | { verdict: "not_found" }
+  | { verdict: "method_not_allowed"; allow: RouteMethod[] };
+
+const routeMethods: RouteMethod[] = ["GET", "POST", "DELETE"];
+
+function declaredMethods(entry: RouteEntry): RouteMethod[] {
+  return routeMethods.filter((method) => Object.hasOwn(entry, method));
+}
+
+/**
+ * Pure decision on a route and verb pair. It compares the exact route name:
+ * no case folding and no segment trimming, so `ACTION` and `action/extra`
+ * match nothing. Inherited object keys (`constructor`) are not routes.
+ */
+export function routeVerdict(route: string, method: string): RouteVerdict {
+  const entry: RouteEntry | undefined = Object.hasOwn(routeManifest, route)
+    ? routeManifest[route as RouteName]
+    : patternRoutes.find((candidate) => candidate.pattern.test(route))?.entry;
+  if (!entry) return { verdict: "not_found" };
+  const allow = declaredMethods(entry);
+  if ((allow as string[]).includes(method)) return { verdict: "ok" };
+  return { verdict: "method_not_allowed", allow };
 }
