@@ -1,9 +1,9 @@
 ---
-status: partial
+status: complete
 phase: 06-puerta-de-seguridad
 source: [06-VERIFICATION.md]
 started: 2026-11-27T14:01:06Z
-updated: 2026-11-27T15:25:45.860Z
+updated: 2026-11-27T15:58:54.130Z
 ---
 
 ## Current Test
@@ -18,9 +18,8 @@ result: pass
 
 ### 2. Comprobar las cabeceras reales por dominio: curl -sI https://<dominio-principal> y https://<entrada-alternativa-tailscale> | grep -i -E 'strict-transport-security|content-security-policy'
 expected: Una sola Strict-Transport-Security: max-age=15552000 (sin includeSubDomains ni preload) y una CSP con nonce y 'strict-dynamic' en el documento; con el interruptor HSTS de Nginx Proxy Manager apagado.
-result: blocked
-blocked_by: third-party
-reason: "Repetido por Claude el 2026-11-27 tras el despliegue (main = origin/main): https://hub.alberba.es ya sirve la CSP con nonce y 'strict-dynamic' y la HSTS de la app (max-age=15552000), pero sigue llegando una segunda strict-transport-security: max-age=63072000; preload que añade Nginx Proxy Manager. Causa: el DNS. Los servidores autoritativos de Dondominio siguen resolviendo hub.alberba.es (CNAME a alberba.es) a 84.120.123.199, la IP de casa con el NPM del NAS. El servidor de Oracle (51.170.63.250), consultado con --resolve, ya devuelve una sola HSTS max-age=15552000 y la CSP correcta. Falta apuntar el registro en Dondominio a Oracle. La entrada de Tailscale (ugreen-nas.tailf3703f.ts.net) no sirve el panel por HTTPS: :443 responde 400 o nada, y no parece haber un Tailscale Serve hacia 127.0.0.1:4324. Repetir el curl cuando estén las dos cosas."
+result: pass
+note: "Comprobado por Claude el 2026-11-27 tras mover el DNS a Oracle (51.170.63.250). https://hub.alberba.es (pedido desde Oracle y con --resolve) y https://oracle-web.tailf3703f.ts.net (la entrada alternativa de TRUSTED_ORIGINS) devuelven una sola strict-transport-security: max-age=15552000 y la CSP con nonce y 'strict-dynamic'. El DNS de esta red (Vodafone) intercepta el puerto 53 y servía la zona antigua."
 
 ### 3. Abrir el panel en Safari y Firefox, verificar con passkey y activar push; mirar la consola
 expected: Ninguna violación de CSP. Playwright solo cubre Chromium.
@@ -35,10 +34,10 @@ note: "Probado en local con un agente de prueba (Docker local, ALLOW_REBOOT=fals
 ## Summary
 
 total: 4
-passed: 3
+passed: 4
 issues: 0
 pending: 0
 skipped: 0
-blocked: 1
+blocked: 0
 
 ## Gaps
