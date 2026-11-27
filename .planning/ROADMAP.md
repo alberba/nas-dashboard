@@ -174,7 +174,7 @@ Plans:
   1. Toda ruta destructiva (stop, restart, update, purge, empty-trash, clean-images, reconnect-apps, host-command, merge de Renovate) rechaza la acción sin verificación reciente en el servidor.
   2. La lista de acciones protegidas vive en un único módulo y un test falla si una ruta nueva no la declara.
   3. Las respuestas incluyen CSP conservadora y HSTS, y una mutación con cuerpo excesivo se rechaza antes de parsear.
-**Plans**: 3/6 plans executed
+**Plans**: 4/6 plans executed
 
 Plans:
 **Wave 1**
@@ -183,7 +183,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [x] 06-03-PLAN.md — UI: comandos protegidos con diálogo de passkey y e2e adaptados
-- [ ] 06-04-PLAN.md — Límite de cuerpo de las mutaciones con 413 antes de parsear
+- [x] 06-04-PLAN.md — Límite de cuerpo de las mutaciones con 413 antes de parsear
 
 **Wave 3** *(blocked on Wave 2 completion)*
 - [ ] 06-05-PLAN.md — Manifiesto de rutas fail-closed, escaneos que fallan ante una ruta sin declarar y cuerpo acotado de Better Auth
@@ -247,7 +247,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 3. Agrupación, inventario y ayudantes | 3/3 | Complete    | 2026-11-25 |
 | 4. Resumen diario | 3/3 | Complete    | 2026-11-26 |
 | 5. Bot de lectura y reconocimiento | 6/6 | Complete    | 2026-11-27 |
-| 6. Puerta de seguridad | 3/6 | In Progress | - |
+| 6. Puerta de seguridad | 4/6 | In Progress | - |
 | 7. Acciones verificadas desde Telegram | 0/3 | Not started | - |
 | 8. Cutover de media-stack y consolidación | 0/3 | Not started | - |
 

@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 06
 current_phase_name: Puerta de seguridad
 status: executing
-stopped_at: Completed 06-03-PLAN.md
-last_updated: "2026-11-27T11:53:16.722Z"
+stopped_at: Completed 06-04-PLAN.md
+last_updated: "2026-11-27T12:03:29.181Z"
 last_activity: 2026-11-27
 last_activity_desc: Phase 06 execution started
-state_head: 538a63517620cca085d47a00107c673e3e80c7f8
+state_head: 86cfa10ee89364ebd242aa98dc0fc67b8fba3a74
 progress:
   total_phases: 8
   completed_phases: 5
   total_plans: 26
-  completed_plans: 23
+  completed_plans: 24
   percent: 63
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-27)
 ## Current Position
 
 Phase: 06 (Puerta de seguridad) — EXECUTING
-Plan: 4 of 6
+Plan: 5 of 6
 Status: Ready to execute
 Last activity: 2026-11-27 — Phase 06 execution started
 
@@ -75,6 +75,7 @@ Progress: [██████░░░░] 63%
 | Phase 06 P01 | 10 min | 3 tasks | 10 files |
 | Phase 06 P02 | 13 min | 3 tasks | 8 files |
 | Phase 06 P03 | 7 min | 2 tasks | 7 files |
+| Phase 06 P04 | 12 min | 3 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -129,6 +130,9 @@ Recent decisions affecting current work:
 - [Phase 06]: zod se ejecuta jitless en el cliente para que su sonda de eval no cuente como violacion de CSP; la validacion sigue siendo del servidor
 - [Phase 06]: 06-03: la UI decide con requiresVerificationForCommand; check-health se envía directo con sendHostCommand y el resto pasa por useSensitiveAction
 - [Phase 06]: 06-03: onSettled del diálogo reconstruye el estado HTTP (502 pendiente, 400 fallo, 200 éxito) para reutilizar un único applyResult en la tarjeta
+- [Phase 06]: 06-04: readBodyText cuenta bytes en streaming y decodifica una sola vez; Content-Length solo es un atajo de rechazo
+- [Phase 06]: 06-04: deployments/settings declara su propio tope de 64 KiB alineado con MAX_REQUEST_BYTES del agente
+- [Phase 06]: 06-04: return await de handlePasswordVerification para que BodyTooLarge llegue al 413 del catch-all
 
 ### Pending Todos
 
@@ -152,6 +156,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-27T11:53:15.989Z
-Stopped at: Completed 06-03-PLAN.md
+Last session: 2026-11-27T12:03:28.861Z
+Stopped at: Completed 06-04-PLAN.md
 Resume file: None
