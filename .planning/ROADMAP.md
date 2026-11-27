@@ -204,7 +204,7 @@ Plans:
   2. Sin verificación reciente en el servidor, la acción destructiva se rechaza aunque el callback sea válido.
   3. Cada acción iniciada queda en `operations` con canal y solicitante.
   4. Un intent caducado o ya consumido no ejecuta la acción dos veces.
-**Plans**: 3/6 plans executed
+**Plans**: 4/6 plans executed
 
 Plans:
 **Wave 1**
@@ -213,7 +213,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [x] 07-02-PLAN.md — Hub: `inspect` y `execute` con `guardIntentAction`, ejecución única y operación con canal y solicitante
-- [ ] 07-03-PLAN.md — Teclado del aviso: «Acciones…», «Volver», «Cancelar», caducidad por outbox, resultado y limpieza
+- [x] 07-03-PLAN.md — Teclado del aviso: «Acciones…», «Volver», «Cancelar», caducidad por outbox, resultado y limpieza
 
 **Wave 3** *(blocked on Wave 2 completion)*
 - [ ] 07-04-PLAN.md — `operation-runner.ts` extraído, `start`, `restart` y `reboot` desde el intent, canal y solicitante en todas las operaciones y `TELEGRAM_DIRECT_ACTIONS=0`
@@ -256,7 +256,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 4. Resumen diario | 3/3 | Complete    | 2026-11-26 |
 | 5. Bot de lectura y reconocimiento | 6/6 | Complete    | 2026-11-27 |
 | 6. Puerta de seguridad | 6/6 | Complete    | 2026-11-27 |
-| 7. Acciones verificadas desde Telegram | 3/6 | In Progress | - |
+| 7. Acciones verificadas desde Telegram | 4/6 | In Progress | - |
 | 8. Cutover de media-stack y consolidación | 0/3 | Not started | - |
 
 ## Backlog
