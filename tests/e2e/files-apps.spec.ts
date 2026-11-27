@@ -150,6 +150,21 @@ async function signIn(page: Page) {
 const entry = (page: Page, path: string) =>
   page.locator(`[data-entry="${path}"]`);
 
+/** A recent verification, so the sensitive-action dialog confirms without asking again. */
+const recentVerification = (page: Page) =>
+  page.route("**/api/verification", (route) =>
+    route.fulfill({
+      json: {
+        method: "passkey",
+        recent: true,
+        reason: null,
+        verifiedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+        ttlSeconds: 300,
+      },
+    }),
+  );
+
 test("the file browser switches between its two roots and navigates folders", async ({
   page,
 }) => {
@@ -206,6 +221,8 @@ test("rename, move and trash are confirmed actions on the selected root", async 
   await notes.getByRole("button", { name: "Renombrar notas.txt", exact: true }).click();
   const dialog = page.locator("dialog[open]");
   await expect(dialog).toBeVisible();
+  // Move is exempt from verification: the simple dialog, not the passkey one.
+  await expect(dialog).not.toHaveAttribute("data-sensitive-action", /.*/);
   await dialog.getByRole("textbox").fill("leeme.txt");
   await dialog.locator('button[type="submit"]').click();
   await expect(dialog).toBeHidden();
@@ -245,6 +262,7 @@ test("the trash panel sits beside the folder and shows when each item expires", 
   page,
 }) => {
   const { actions } = await signIn(page);
+  await recentVerification(page);
   await page.goto("/?view=files");
   const items = page.locator("[data-trash-item]");
   await expect(items).toHaveCount(2);
@@ -255,28 +273,39 @@ test("the trash panel sits beside the folder and shows when each item expires", 
   ).not.toHaveAttribute("data-expiring", "true");
   await expect(page.locator("[data-entry]")).toHaveCount(4);
 
+  // Restore is exempt: the simple dialog.
   await page
     .getByRole("button", { name: "Restaurar viejo.mkv", exact: true })
     .click();
+  await expect(page.locator("dialog[open]")).not.toHaveAttribute(
+    "data-sensitive-action",
+    /.*/,
+  );
   await page.locator('dialog[open] button[type="submit"]').click();
   await expect(page.locator("dialog[open]")).toBeHidden();
+
+  // Purge and empty-trash are protected: the sensitive-action dialog.
+  const sensitive = page.locator("dialog[data-sensitive-action]");
   await page
     .getByRole("button", {
       name: "Eliminar definitivamente basura",
       exact: true,
     })
     .click();
-  await page.locator('dialog[open] button[type="submit"]').click();
-  await expect(page.locator("dialog[open]")).toBeHidden();
+  await expect(sensitive).toBeVisible();
+  await sensitive.locator("[data-confirm]").click();
+  await expect(sensitive).toHaveCount(0);
 
   await page
     .getByRole("button", { name: "Vaciar la papelera", exact: true })
     .click();
-  const confirm = page.locator('dialog[open] button[type="submit"]');
+  await expect(sensitive).toBeVisible();
+  const confirm = sensitive.locator("[data-confirm]");
   await expect(confirm).toBeDisabled();
-  await page.locator("dialog[open] input").fill("VACIAR PAPELERA");
+  await sensitive.locator("[data-typed-confirmation]").fill("VACIAR PAPELERA");
+  await expect(confirm).toBeEnabled();
   await confirm.click();
-  await expect(page.locator("dialog[open]")).toBeHidden();
+  await expect(sensitive).toHaveCount(0);
 
   expect(actions).toEqual([
     { action: "restore", root: "media", id: expiringId },

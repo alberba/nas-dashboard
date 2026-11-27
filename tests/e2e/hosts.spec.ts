@@ -232,8 +232,24 @@ test("actions are sent to the selected host", async ({ page }) => {
     sent.push(route.request().url());
     return route.fulfill({ json: { status: "success" } });
   });
+  await page.route("**/api/verification", (route) =>
+    route.fulfill({
+      json: {
+        method: "passkey",
+        recent: true,
+        reason: null,
+        verifiedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+        ttlSeconds: 300,
+      },
+    }),
+  );
   await container(page, "seerr").locator('[data-action="restart"]').click();
-  await page.locator("dialog[open] button[type=submit]").click();
+  // Restart is protected: the endpoint, host included, is fixed when the dialog opens.
+  const dialog = page.locator("dialog[data-sensitive-action]");
+  await expect(dialog).toBeVisible();
+  expect(sent).toHaveLength(0);
+  await dialog.locator("[data-confirm]").click();
   await expect(page.locator("dialog[open]")).toHaveCount(0);
   expect(sent).toHaveLength(1);
   expect(new URL(sent[0]).searchParams.get("host")).toBe("apps");
