@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 07
 current_phase_name: Acciones verificadas desde Telegram
 status: executing
-stopped_at: Completed 07-06-PLAN.md
-last_updated: "2026-11-27T18:18:49.306Z"
+stopped_at: Completed 07-02-PLAN.md
+last_updated: "2026-11-27T18:27:43.486Z"
 last_activity: 2026-11-27
 last_activity_desc: Phase 07 execution started
-state_head: 5949767fa349b14c951a7f028ec540a7704f4fb8
+state_head: d833ca2d731b44301c28b1f0d0b9f709bff70ac9
 progress:
   total_phases: 8
   completed_phases: 6
   total_plans: 32
-  completed_plans: 28
+  completed_plans: 29
   percent: 75
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-27)
 ## Current Position
 
 Phase: 07 (Acciones verificadas desde Telegram) — EXECUTING
-Plan: 3 of 6
+Plan: 4 of 6
 Status: Ready to execute
 Last activity: 2026-11-27 — Phase 07 execution started
 
@@ -81,6 +81,7 @@ Progress: [████████░░] 75%
 | Phase 06 P06 | 9 min | 3 tasks | 14 files |
 | Phase 07 P01 | 8 min | 3 tasks | 13 files |
 | Phase 07 P06 | 10 min | 3 tasks | 5 files |
+| Phase 07 P02 | 10 min | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -151,6 +152,8 @@ Recent decisions affecting current work:
 - [Phase 07]: P-27: Origin and Host compared by hostname without the port
 - [Phase 07]: P-28: no Host header falls back to the request.url hostname; a Host list, empty or unreadable value falls to passkey
 - [Phase 07]: P-30: login host not stored in the session; the method is decided per request
+- [Phase 07]: 07-02: el guard de intent va antes del 501, así restart y reboot sin verificación responden 403 y start responde 501 sin pedir passkey
+- [Phase 07]: 07-02: execute decide lo protegido por la acción almacenada y el manifiesto de la fase 6; 403, 503 y 501 responden antes del reclamo y no consumen el intent
 
 ### Pending Todos
 
@@ -175,6 +178,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-27T18:18:49.009Z
-Stopped at: Completed 07-06-PLAN.md
+Last session: 2026-11-27T18:27:43.121Z
+Stopped at: Completed 07-02-PLAN.md
 Resume file: None
