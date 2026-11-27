@@ -487,3 +487,118 @@ test("HANDOFF-12 keeps the token when inspect answers 401 and resumes after the 
   expect(refused).toBe(true);
   expect(await stored(page)).toBe(seeded.token);
 });
+
+test("HANDOFF-13 shows the channel of every recent operation and a label for backup-now and deploy-now", async ({
+  page,
+}) => {
+  const rows = [
+    ["e2e-handoff-op-hub", "restart", "hub"],
+    ["e2e-handoff-op-telegram", "start", "telegram"],
+    ["e2e-handoff-op-backup", "backup-now", "telegram"],
+    ["e2e-handoff-op-deploy", "deploy-now", "telegram"],
+  ] as const;
+  for (const [id, action, channel] of rows)
+    await database.query(
+      `INSERT INTO operations
+         (id, "hostId", "userId", action, target, status, detail, channel,
+          "requestedBy")
+       VALUES ($1, $2, $3, $4, $2, 'success', 'Hecho', $5, $3)
+       ON CONFLICT (id) DO NOTHING`,
+      [id, host, userId, action, channel],
+    );
+  await signIn(page);
+
+  await page.goto(`/?view=alerts&host=${host}`);
+
+  for (const [id, action, channel] of rows) {
+    const row = page.locator(`[data-operation="${id}"]`);
+    await expect(row).toHaveAttribute("data-operation-channel", channel);
+    await expect(row).toHaveAttribute("data-operation-action", action);
+  }
+  for (const id of ["backup", "deploy"]) {
+    const row = page.locator(`[data-operation="e2e-handoff-op-${id}"]`);
+    const label = (await row.locator("strong").textContent())?.trim();
+    expect(label).toBeTruthy();
+    expect(label).not.toBe(await row.getAttribute("data-operation-action"));
+  }
+});
+
+test("HANDOFF-14 offers a retry after a 503 that re-inspects and reopens the dialog without sending", async ({
+  page,
+}) => {
+  const seeded = await seedIntent({
+    name: "retry",
+    action: "start",
+    target: "plex",
+  });
+  await signIn(page);
+  const inspected = await countInspect(page);
+  const sent = await answerExecute(page, {
+    status: 503,
+    json: { error: "El host no está conectado. No se ha enviado el comando." },
+  });
+
+  await page.goto(link(seeded));
+  await dialog(page).locator("[data-confirm]").click();
+
+  await expect(panel(page)).toHaveAttribute("data-handoff-state", "failed");
+  expect(sent).toHaveLength(1);
+  expect(inspected).toHaveLength(1);
+  // The token waits for the retry: nothing was consumed.
+  expect(await stored(page)).toBe(seeded.token);
+
+  await dialog(page).locator("button", { hasText: /^Cerrar$/ }).first().click();
+  await page.locator("[data-handoff-retry]").click();
+
+  await expect(panel(page)).toHaveAttribute("data-handoff-state", "ready");
+  await expect(dialog(page)).toBeVisible();
+  expect(inspected).toHaveLength(2);
+  expect(sent).toHaveLength(1);
+});
+
+test("HANDOFF-15 leaves an uncertain 502 pending with no retry", async ({
+  page,
+}) => {
+  const seeded = await seedIntent({
+    name: "uncertain",
+    action: "start",
+    target: "plex",
+  });
+  await signIn(page);
+  const sent = await answerExecute(page, {
+    status: 502,
+    json: { error: "Resultado pendiente de verificar.", status: "pending" },
+  });
+
+  await page.goto(link(seeded));
+  await dialog(page).locator("[data-confirm]").click();
+
+  await expect(panel(page)).toHaveAttribute("data-handoff-state", "pending");
+  await expect(page.locator("[data-handoff-retry]")).toHaveCount(0);
+  expect(sent).toHaveLength(1);
+  expect(await stored(page)).toBeNull();
+});
+
+test("HANDOFF-16 explains the system browser in the passkey dialog and not in the exempt one", async ({
+  page,
+}) => {
+  const protectedIntent = await seedIntent({
+    name: "help-backup",
+    action: "backup-now",
+    target: host,
+  });
+  const exempt = await seedIntent({
+    name: "help-start",
+    action: "start",
+    target: "plex",
+  });
+  await signIn(page);
+
+  await page.goto(link(protectedIntent));
+  await expect(dialog(page)).toHaveAttribute("data-verification-required", "true");
+  await expect(dialog(page).locator("[data-handoff-passkey-help]")).toBeVisible();
+
+  await page.goto(link(exempt));
+  await expect(dialog(page)).toHaveAttribute("data-verification-required", "false");
+  await expect(dialog(page).locator("[data-handoff-passkey-help]")).toHaveCount(0);
+});
