@@ -3,11 +3,11 @@ gsd_state_version: "1.0"
 current_phase: 6
 current_phase_name: Puerta de seguridad
 status: planning
-stopped_at: Phase 05 complete, ready to plan Phase 6
-last_updated: "2026-11-27T08:30:53.632Z"
+stopped_at: Phase 6 context gathered
+last_updated: "2026-11-27T08:52:05.334Z"
 last_activity: 2026-11-27
 last_activity_desc: Phase 05 complete, transitioned to Phase 6
-state_head: fcb87a8e2910d4d67de0f4a7883f2d8fab3b584f
+state_head: 7c41c6d6ddf16666a8e1dc20785d91778f74164d
 progress:
   total_phases: 8
   completed_phases: 5
@@ -139,6 +139,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-27T08:35:00Z
-Stopped at: Phase 05 complete, ready to plan Phase 6
-Resume file: None
+Last session: 2026-11-27T08:52:05.075Z
+Stopped at: Phase 6 context gathered
+Resume file: .planning/phases/06-puerta-de-seguridad/06-CONTEXT.md
