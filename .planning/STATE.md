@@ -1,19 +1,19 @@
 ---
 gsd_state_version: "1.0"
-current_phase: 07
-current_phase_name: Acciones verificadas desde Telegram
-status: verifying
-stopped_at: Completed 07-05-PLAN.md
-last_updated: "2026-11-27T19:05:41.471Z"
+current_phase: 8
+current_phase_name: Cutover de media-stack y consolidación
+status: planning
+stopped_at: Phase 07 complete, ready to plan Phase 8
+last_updated: "2026-11-27T20:26:16.611Z"
 last_activity: 2026-11-27
-last_activity_desc: Phase 07 execution started
-state_head: fa4729a8b3ae881384c33af54a3839ae5679bf71
+last_activity_desc: Phase 07 complete, transitioned to Phase 8
+state_head: 1981e775a1f6f3eb8b4ff2f2a20134f10fcfa9b0
 progress:
   total_phases: 8
-  completed_phases: 6
+  completed_phases: 7
   total_plans: 32
   completed_plans: 32
-  percent: 75
+  percent: 88
 ---
 
 # Project State
@@ -23,21 +23,21 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-27)
 
 **Core value:** Saber en segundos qué está pasando en los dos servidores y poder actuar sobre ellos sin abrir una consola.
-**Current focus:** Phase 07 — Acciones verificadas desde Telegram
+**Current focus:** Phase 08 — Cutover de media-stack y consolidación
 
 ## Current Position
 
-Phase: 07 (Acciones verificadas desde Telegram) — EXECUTING
-Plan: 6 of 6
-Status: Phase complete — ready for verification
-Last activity: 2026-11-27 — Phase 07 execution started
+Phase: 8 — Cutover de media-stack y consolidación
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-11-27 — Phase 07 complete, transitioned to Phase 8
 
-Progress: [████████░░] 75%
+Progress: [█████████░] 88%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 26
+- Total plans completed: 32
 - Average duration: —
 - Total execution time: 0 hours
 
@@ -51,6 +51,7 @@ Progress: [████████░░] 75%
 | 04 | 3 | - | - |
 | 05 | 6 | - | - |
 | 06 | 6 | - | - |
+| 07 | 6 | - | - |
 
 **Recent Trend:**
 - Last 5 plans: —
@@ -173,9 +174,10 @@ None yet.
 
 ### Blockers/Concerns
 
-Ningún bloqueo para planificar la fase 7.
-- [Fase 06] CR-01 de `06-REVIEW.md` sigue `open` en `06-REVIEW-DISPOSITION.md` (el factor passkey/contraseña se elige por la cabecera Origin). Decidido al planificar la fase 7: se corrige en esa fase (D-13 de `07-CONTEXT.md`). WR-01 a WR-04 siguen `open`.
-- [Fase 06] Producción ya tiene la fase 6 desplegada y `main` coincide con `origin/main`. La entrada pública pasó al NPM de Oracle el 2026-11-27; el NPM del NAS se retiró y el cron de DonDNS del NAS está desactivado.
+Ningún bloqueo para planificar la fase 8.
+- [Fase 07] Desplegada en producción el 2026-11-27 (migración 0008; copia previa en webs:~/hub-backups/pre-phase07-202611271945.dump). UAT real 4/4: handoff con passkey, caducidad a 5 min, Host de NPM y Tailscale Serve. `main` local va por delante de `origin/main` (sin push). Se mantiene D-05: una intención pendiente sigue valiendo si la incidencia se resuelve.
+- [Fase 06] CR-01 corregido en la fase 7 (D-13) y validado en producción por la UAT 07 test 3; actualizar su estado en `06-REVIEW-DISPOSITION.md`. WR-01 a WR-04 siguen `open`.
+- [Fase 06] La entrada pública pasó al NPM de Oracle el 2026-11-27; el NPM del NAS se retiró y el cron de DonDNS del NAS está desactivado.
 - [Fase 05] Pendiente de observar: la etiqueta del episodio reconocido en el resumen del 2026-11-28 y la escalada con Por qué (temperature es siempre crítica).
 - [Fase 05] `05-VALIDATION.md` sigue en draft: `/gsd-validate-phase 5` no se completó.
 - [Fase 04] Para probar el healthcheck del worker hay que congelar el proceso `node`, no el contenedor: `docker kill -s SIGSTOP` solo para `pnpm` (PID 1).
@@ -190,6 +192,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-27T19:05:41.067Z
-Stopped at: Completed 07-05-PLAN.md
+Last session: 2026-11-27T20:30:00Z
+Stopped at: Phase 07 complete, ready to plan Phase 8
 Resume file: None

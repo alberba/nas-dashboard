@@ -20,7 +20,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 4: Resumen diario** - Lo no urgente llega una vez al día, sin duplicarse ni perderse en los cambios de hora. (completed 2026-11-26)
 - [x] **Phase 5: Bot de lectura y reconocimiento** - Abrir, silenciar y reconocer desde el mensaje, con allowlist y tokens de un solo uso. (completed 2026-11-27)
 - [x] **Phase 6: Puerta de seguridad** - Verificación reciente en el servidor para todas las acciones destructivas, más CSP y HSTS. (completed 2026-11-27)
-- [ ] **Phase 7: Acciones verificadas desde Telegram** - Iniciar en el chat y completar en el hub con sesión y passkey.
+- [x] **Phase 7: Acciones verificadas desde Telegram** - Iniciar en el chat y completar en el hub con sesión y passkey. (completed 2026-11-27)
 - [ ] **Phase 8: Cutover de media-stack y consolidación** - Ingest firmado, apagado por familias, rollups y retirada del camino viejo.
 
 ## Phase Details
@@ -204,7 +204,7 @@ Plans:
   2. Sin verificación reciente en el servidor, la acción destructiva se rechaza aunque el callback sea válido.
   3. Cada acción iniciada queda en `operations` con canal y solicitante.
   4. Un intent caducado o ya consumido no ejecuta la acción dos veces.
-**Plans**: 6/6 plans executed
+**Plans**: 6/6 plans complete
 
 Plans:
 **Wave 1**
@@ -256,7 +256,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 4. Resumen diario | 3/3 | Complete    | 2026-11-26 |
 | 5. Bot de lectura y reconocimiento | 6/6 | Complete    | 2026-11-27 |
 | 6. Puerta de seguridad | 6/6 | Complete    | 2026-11-27 |
-| 7. Acciones verificadas desde Telegram | 6/6 | In Progress | - |
+| 7. Acciones verificadas desde Telegram | 6/6 | Complete    | 2026-11-27 |
 | 8. Cutover de media-stack y consolidación | 0/3 | Not started | - |
 
 ## Backlog

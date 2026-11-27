@@ -36,10 +36,10 @@ Saber en segundos qué está pasando en los dos servidores y poder actuar sobre 
 - ✓ Botones del bot en Telegram (Reconocer, Silenciar 1 h/24 h, Quitar silencio, Por qué me llegó esto) con allowlist, tokens de un solo uso, sin filtrar el token, y las mismas acciones desde Avisos — fase 05 (BOT-02, BOT-04, BOT-05, BOT-06, BOT-10), validado en producción el 2026-11-27
 - ✓ Verificación reciente en el servidor para toda acción destructiva, con manifiesto único de acciones y rutas que falla ante una ruta sin declarar — fase 06 (SEC-01, SEC-02)
 - ✓ CSP con nonce por petición y HSTS de 180 días, cuerpo de mutaciones acotado (413 antes de parsear) y tope de respuesta del agente (502) — fase 06 (SEC-04), cabeceras validadas en producción el 2026-11-27
+- ✓ Acciones de host desde Telegram con handoff al hub (sesión y verificación reciente en el servidor), registradas en `operations` con canal y solicitante, con caducidad a los 5 min que restaura el teclado — fase 07 (BOT-07, BOT-08, BOT-09), validado en producción el 2026-11-27
 
 ### Active
 
-- [ ] Acciones de host desde Telegram (handoff al hub con sesión y verificación reciente) — fase 7
 - [ ] Emoticono por tipo de mensaje del bot para distinguirlos de un vistazo — backlog 999.1
 - [ ] Documentar y probar la rotación conjunta del token de Telegram
 - [ ] Rollups y caché del histórico para que 30 días de muestras no dominen la carga de PostgreSQL
@@ -88,6 +88,7 @@ Saber en segundos qué está pasando en los dos servidores y poder actuar sobre 
 | Silencio por (host, clave) con plazo cerrado de 1 h o 24 h | Un silencio no puede ocultar una caída indefinidamente | Fase 05: la reapertura dentro del plazo se suprime y queda visible en Avisos; al vencer no se reenvía |
 | Auditar con datos reales del NAS y de media-stack | Sin una cifra de partida no hay criterio de éxito | Telegram medido. El push histórico queda sin medir en ausencia del CSV de `alerts`. |
 | HSTS lo pone la app, no el proxy | Dos cabeceras HSTS (NPM con `preload` y la app) son contradictorias; la app fija `max-age=15552000` sin `includeSubDomains` ni `preload` | Fase 06 validada en `hub.alberba.es` y en `oracle-web.tailf3703f.ts.net` con una sola cabecera |
+| Telegram solo registra la intención; la acción se confirma en el hub | El chat no puede probar una verificación reciente; el handoff reutiliza sesión, passkey o contraseña según el host | Fase 07 validada en producción: ejecución única, `operations.channel=telegram`, caducidad a 5 min, y una intención pendiente sigue valiendo si la incidencia se resuelve (D-05, confirmado en la UAT) |
 
 ## Evolution
 
@@ -107,4 +108,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-11-27 after Phase 6*
+*Last updated: 2026-11-27 after Phase 7*
