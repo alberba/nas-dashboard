@@ -257,3 +257,90 @@ export async function createIntent(
   await queueKeyboardEdit(tx, input.incident.id, `i${id}:open`);
   return { state: "created", id, expiresAt };
 }
+
+type IntentRow = typeof telegramActionIntents.$inferSelect;
+
+/**
+ * Resolves a handoff token to its intent. The lookup is by digest and the final
+ * comparison is constant-time, so neither the index nor a timing difference
+ * reveals how close a guess was. Any status is returned: the caller decides
+ * what a lapsed or finished intent means.
+ */
+export async function findIntentByToken(
+  executor: Pick<Transaction, "select">,
+  token: string,
+): Promise<IntentRow | null> {
+  if (!token) return null;
+  const hash = hashHandoffToken(token);
+  const [intent] = await executor
+    .select()
+    .from(telegramActionIntents)
+    .where(eq(telegramActionIntents.handoffHash, hash))
+    .limit(1);
+  return intent && sameHash(intent.handoffHash, hash) ? intent : null;
+}
+
+/**
+ * Takes the intent for execution. One `UPDATE ... RETURNING` is the whole
+ * claim: the row is pending and in time or nothing happens, so two racing
+ * claims leave exactly one winner and the other gets null (SC4).
+ */
+export async function claimIntent(
+  executor: IntentExecutor,
+  id: string,
+  now: number,
+): Promise<IntentRow | null> {
+  const [claimed] = await executor
+    .update(telegramActionIntents)
+    .set({ status: "executing", usedAt: new Date(now) })
+    .where(
+      and(
+        eq(telegramActionIntents.id, id),
+        eq(telegramActionIntents.status, "pending"),
+        gt(telegramActionIntents.expiresAt, new Date(now)),
+      ),
+    )
+    .returning();
+  return claimed ?? null;
+}
+
+/** Closes a claimed intent with its outcome; any other state is untouched. */
+export async function finishIntent(
+  executor: IntentExecutor,
+  id: string,
+  status: Extract<IntentStatus, "executed" | "failed" | "uncertain">,
+  now: number,
+): Promise<IntentRow | null> {
+  const [finished] = await executor
+    .update(telegramActionIntents)
+    .set({ status, finishedAt: new Date(now) })
+    .where(
+      and(
+        eq(telegramActionIntents.id, id),
+        eq(telegramActionIntents.status, "executing"),
+      ),
+    )
+    .returning();
+  return finished ?? null;
+}
+
+/**
+ * Gives a claimed intent back when nothing was sent, for example because the
+ * agent was unavailable, so the same link can be used again before it lapses.
+ */
+export async function releaseIntent(
+  executor: IntentExecutor,
+  id: string,
+): Promise<IntentRow | null> {
+  const [released] = await executor
+    .update(telegramActionIntents)
+    .set({ status: "pending", usedAt: null })
+    .where(
+      and(
+        eq(telegramActionIntents.id, id),
+        eq(telegramActionIntents.status, "executing"),
+      ),
+    )
+    .returning();
+  return released ?? null;
+}
