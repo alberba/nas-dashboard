@@ -173,7 +173,12 @@ describe.skipIf(!baseUrl)("telegram intents", () => {
 
   async function issueToken(
     incidentId: number,
-    action: "act_backup_now" | "act_start" | "act_restart" | "menu_open",
+    action:
+      | "act_backup_now"
+      | "act_start"
+      | "act_restart"
+      | "menu_open"
+      | "intent_cancel",
   ): Promise<string> {
     const issued = await keyboard.issueActionTokens(db, {
       incidentId,
@@ -855,6 +860,143 @@ describe.skipIf(!baseUrl)("telegram intents", () => {
         "act_start",
       ]);
       expect(await viewOf(incidentId)).toBe("actions");
+    });
+  });
+
+  describe("live intent", () => {
+    /** A notice with a live backup intent and its delivered `:open` edit. */
+    async function liveNotice() {
+      await seedVerifiedSession(db, tables);
+      const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
+      const client = await lockOwner();
+      const incidentId = await sendNotice(fake, client, "backup-failed");
+      await press(fake, client, await issueToken(incidentId, "act_backup_now"), 361);
+      const [intent] = await intents();
+      const call = await deliverEdit(fake, client, START + 120_000);
+      return { fake, client, incidentId, intent, call };
+    }
+
+    const expireRowOf = async (incidentId: number, intentId: string) =>
+      (await keyboardEdits(incidentId)).find(
+        (row) => row.key === `incident:${incidentId}:kb:i${intentId}:expire`,
+      );
+
+    it("shows the confirmation link and cancel while an intent is live", async () => {
+      const { call } = await liveNotice();
+      expect(handoffButtonOf(call)).toBeDefined();
+      const offered = await actionsOf(call);
+      expect(offered.has("intent_cancel")).toBe(true);
+      expect(offered.has("menu_open")).toBe(false);
+      expect(offered.has("act_backup_now")).toBe(false);
+    });
+
+    it("cancels the intent and restores the normal keyboard in silence", async () => {
+      const { fake, client, incidentId, intent, call } = await liveNotice();
+      const cancelToken = (await actionsOf(call)).get("intent_cancel")!;
+
+      await press(fake, client, cancelToken, 362, START + 130_000);
+
+      expect((await intents())[0]).toMatchObject({ id: intent.id, status: "cancelled" });
+      expect(await viewOf(incidentId)).toBe("normal");
+      const restored = await deliverEdit(fake, client, START + 140_000);
+      expect(handoffButtonOf(restored)).toBeUndefined();
+      const offered = await actionsOf(restored);
+      expect(offered.has("menu_open")).toBe(true);
+      expect(offered.has("intent_cancel")).toBe(false);
+      expect(sends(fake)).toHaveLength(1);
+    });
+
+    it("answers a second cancel of the same state without editing", async () => {
+      const { fake, client, incidentId, call } = await liveNotice();
+      const first = (await actionsOf(call)).get("intent_cancel")!;
+      const second = await issueToken(incidentId, "intent_cancel");
+      await press(fake, client, first, 363, START + 130_000);
+      const queued = (await keyboardEdits(incidentId)).length;
+
+      await press(fake, client, second, 364, START + 131_000);
+
+      expect(await keyboardEdits(incidentId)).toHaveLength(queued);
+      expect((await intents())[0].status).toBe("cancelled");
+    });
+
+    it("keeps a single link when an action is pressed while an intent is live", async () => {
+      const { fake, client, incidentId } = await liveNotice();
+      const queued = (await keyboardEdits(incidentId)).length;
+
+      await press(
+        fake,
+        client,
+        await issueToken(incidentId, "act_backup_now"),
+        365,
+        START + 130_000,
+      );
+
+      expect(await intents()).toHaveLength(1);
+      expect(await keyboardEdits(incidentId)).toHaveLength(queued);
+    });
+
+    it("queues the expiry row at expiresAt and delivers it only then", async () => {
+      const { fake, client, incidentId, intent } = await liveNotice();
+      const row = await expireRowOf(incidentId, intent.id);
+      expect(row?.nextAttemptAt.getTime()).toBe(intent.expiresAt.getTime());
+
+      const early = await dispatch.runDispatchOnce({
+        client,
+        config,
+        now: () => intent.expiresAt.getTime() - 1_000,
+        fetchImpl: fake.transport,
+      });
+      expect(early.action).toBe("idle");
+
+      const restored = await deliverEdit(
+        fake,
+        client,
+        intent.expiresAt.getTime() + 1_000,
+      );
+      expect(handoffButtonOf(restored)).toBeUndefined();
+      expect((await actionsOf(restored)).has("menu_open")).toBe(true);
+      expect((await intents())[0].status).toBe("expired");
+      expect(sends(fake)).toHaveLength(1);
+    });
+
+    it("only re-edits the current state when the intent was already cancelled", async () => {
+      const { fake, client, incidentId, intent, call } = await liveNotice();
+      await press(
+        fake,
+        client,
+        (await actionsOf(call)).get("intent_cancel")!,
+        366,
+        START + 130_000,
+      );
+      await deliverEdit(fake, client, START + 140_000);
+
+      const late = await deliverEdit(
+        fake,
+        client,
+        intent.expiresAt.getTime() + 1_000,
+      );
+
+      expect(handoffButtonOf(late)).toBeUndefined();
+      expect((await intents())[0].status).toBe("cancelled");
+      expect(await viewOf(incidentId)).toBe("normal");
+    });
+
+    it("lets a new action create another intent after the previous one expired", async () => {
+      const { fake, client, incidentId, intent } = await liveNotice();
+      const after = intent.expiresAt.getTime() + 1_000;
+      await deliverEdit(fake, client, after);
+
+      await press(
+        fake,
+        client,
+        await issueToken(incidentId, "act_backup_now"),
+        367,
+        after + 1_000,
+      );
+
+      const rows = await intents();
+      expect(rows).toHaveLength(2);
+      expect(rows.filter((row) => row.status === "pending")).toHaveLength(1);
     });
   });
 
