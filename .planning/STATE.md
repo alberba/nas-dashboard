@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 07
 current_phase_name: Acciones verificadas desde Telegram
 status: executing
-stopped_at: Completed 07-03-PLAN.md
-last_updated: "2026-11-27T18:37:48.442Z"
+stopped_at: Completed 07-04-PLAN.md
+last_updated: "2026-11-27T18:50:53.995Z"
 last_activity: 2026-11-27
 last_activity_desc: Phase 07 execution started
-state_head: 6f26f54f22caa6336d41a3967784df66eeae1846
+state_head: 663edf13e0b4882b29c54b1d4294c6db14267942
 progress:
   total_phases: 8
   completed_phases: 6
   total_plans: 32
-  completed_plans: 30
+  completed_plans: 31
   percent: 75
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-27)
 ## Current Position
 
 Phase: 07 (Acciones verificadas desde Telegram) — EXECUTING
-Plan: 5 of 6
+Plan: 6 of 6
 Status: Ready to execute
 Last activity: 2026-11-27 — Phase 07 execution started
 
@@ -83,6 +83,7 @@ Progress: [████████░░] 75%
 | Phase 07 P06 | 10 min | 3 tasks | 5 files |
 | Phase 07 P02 | 10 min | 3 tasks | 7 files |
 | Phase 07 P03 | 5 min | 3 tasks | 10 files |
+| Phase 07 P04 | 10 min | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -159,6 +160,9 @@ Recent decisions affecting current work:
 - [Phase 07]: P-13: la caducidad visible se descubre con una fila :expire con nextAttemptAt = expiresAt y caducidad perezosa en cada render, sin barrido nuevo
 - [Phase 07]: P-14: la línea de resultado usa un Record<IntentActionId,string> privado; reboot se redacta como reinicio solicitado; actuar no reconoce la incidencia
 - [Phase 07]: P-15: los intents se retienen 24 h tras expiresAt y la limpieza los cuenta como intents
+- [Phase 07]: 07-04: runAgentAction devuelve un resultado neutro y cada llamador lo traduce; el id del contenedor se resuelve por nombre al ejecutar (409 sin consumir si ya no existe)
+- [Phase 07]: 07-04: un reboot aceptado cierra el intent executed y deja la operación pending hasta que el colector confirma bootAt; la confirmación la aporta el servidor (D-12)
+- [Phase 07]: 07-04: TELEGRAM_DIRECT_ACTIONS solo se valida (0 o ausente) y no añade campo a RuntimeConfig
 
 ### Pending Todos
 
@@ -183,6 +187,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-27T18:37:48.063Z
-Stopped at: Completed 07-03-PLAN.md
+Last session: 2026-11-27T18:50:53.639Z
+Stopped at: Completed 07-04-PLAN.md
 Resume file: None
