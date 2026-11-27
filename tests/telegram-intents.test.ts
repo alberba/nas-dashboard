@@ -505,6 +505,168 @@ describe.skipIf(!baseUrl)("telegram intents", () => {
     expect(handoffButtonOf(editCall!)).toBeUndefined();
   });
 
+  /** Creates an intent straight through the module, as the lane does. */
+  async function create(
+    incidentId: number,
+    now: number,
+    key = "backup-failed",
+    action: "backup-now" | "restart" = "backup-now",
+  ) {
+    return db.transaction((tx) =>
+      intentsModule.createIntent(tx, {
+        incident: { id: incidentId, hostId: "nas-home", key },
+        action,
+        secret: SECRET,
+        now,
+      }),
+    );
+  }
+
+  async function createdIntent(incidentId: number, now = START + 60_000) {
+    const created = await create(incidentId, now);
+    expect(created.state).toBe("created");
+    if (created.state !== "created") throw new Error("intent not created");
+    return created;
+  }
+
+  async function seedNotice(): Promise<number> {
+    await seedVerifiedSession(db, tables);
+    const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
+    const client = await lockOwner();
+    return sendNotice(fake, client, "backup-failed");
+  }
+
+  it("keeps one live intent per notice and allows another once it lapsed", async () => {
+    const incidentId = await seedNotice();
+    const at = START + 60_000;
+    const first = await createdIntent(incidentId, at);
+
+    const second = await create(incidentId, at + 1_000);
+    expect(second.state).toBe("live");
+    expect(await intents()).toHaveLength(1);
+
+    const later = at + intentsModule.HANDOFF_TTL_MS + 1_000;
+    const third = await create(incidentId, later);
+    expect(third.state).toBe("created");
+    const rows = await intents();
+    expect(rows).toHaveLength(2);
+    expect(rows.find((row) => row.id === first.id)?.status).toBe("expired");
+    expect(rows.filter((row) => row.status === "pending")).toHaveLength(1);
+  });
+
+  it("lets a notice take a new intent after the previous one was claimed", async () => {
+    const incidentId = await seedNotice();
+    const first = await createdIntent(incidentId);
+    expect(
+      await intentsModule.claimIntent(db, first.id, START + 61_000),
+    ).not.toBeNull();
+
+    expect((await create(incidentId, START + 62_000)).state).toBe("created");
+  });
+
+  it("claims an intent once even when two claims race", async () => {
+    const incidentId = await seedNotice();
+    const intent = await createdIntent(incidentId);
+    const at = START + 61_000;
+
+    const results = await Promise.all([
+      intentsModule.claimIntent(db, intent.id, at),
+      intentsModule.claimIntent(db, intent.id, at),
+    ]);
+
+    expect(results.filter((row) => row !== null)).toHaveLength(1);
+    const claimed = results.find((row) => row !== null)!;
+    expect(claimed.status).toBe("executing");
+    expect(claimed.usedAt?.getTime()).toBe(at);
+    const [row] = await intents();
+    expect(row.status).toBe("executing");
+  });
+
+  it("does not claim an expired, cancelled or already claimed intent", async () => {
+    const incidentId = await seedNotice();
+    const intent = await createdIntent(incidentId);
+
+    // Past its time.
+    expect(
+      await intentsModule.claimIntent(
+        db,
+        intent.id,
+        intent.expiresAt.getTime() + 1,
+      ),
+    ).toBeNull();
+
+    // Cancelled.
+    await db
+      .update(tables.telegramActionIntents)
+      .set({ status: "cancelled" })
+      .where(eq(tables.telegramActionIntents.id, intent.id));
+    expect(
+      await intentsModule.claimIntent(db, intent.id, START + 61_000),
+    ).toBeNull();
+
+    // Already claimed.
+    await db
+      .update(tables.telegramActionIntents)
+      .set({ status: "pending" })
+      .where(eq(tables.telegramActionIntents.id, intent.id));
+    expect(
+      await intentsModule.claimIntent(db, intent.id, START + 61_000),
+    ).not.toBeNull();
+    expect(
+      await intentsModule.claimIntent(db, intent.id, START + 62_000),
+    ).toBeNull();
+  });
+
+  it("releases only a claimed intent back to pending", async () => {
+    const incidentId = await seedNotice();
+    const intent = await createdIntent(incidentId);
+
+    expect(await intentsModule.releaseIntent(db, intent.id)).toBeNull();
+    await intentsModule.claimIntent(db, intent.id, START + 61_000);
+
+    const released = await intentsModule.releaseIntent(db, intent.id);
+    expect(released).toMatchObject({ status: "pending", usedAt: null });
+    expect(
+      await intentsModule.claimIntent(db, intent.id, START + 62_000),
+    ).not.toBeNull();
+  });
+
+  it("finishes an intent only from the executing state", async () => {
+    const incidentId = await seedNotice();
+    const intent = await createdIntent(incidentId);
+    const at = START + 70_000;
+
+    expect(
+      await intentsModule.finishIntent(db, intent.id, "executed", at),
+    ).toBeNull();
+    await intentsModule.claimIntent(db, intent.id, START + 61_000);
+    const done = await intentsModule.finishIntent(
+      db,
+      intent.id,
+      "uncertain",
+      at,
+    );
+    expect(done).toMatchObject({ status: "uncertain" });
+    expect(done?.finishedAt?.getTime()).toBe(at);
+    expect(
+      await intentsModule.finishIntent(db, intent.id, "failed", at + 1_000),
+    ).toBeNull();
+    expect((await intents())[0].status).toBe("uncertain");
+  });
+
+  it("finds an intent by its token and not by an altered one", async () => {
+    const incidentId = await seedNotice();
+    const intent = await createdIntent(incidentId);
+    const token = intentsModule.handoffToken(SECRET, intent.id);
+
+    const found = await intentsModule.findIntentByToken(db, token);
+    expect(found?.id).toBe(intent.id);
+
+    const flipped = `${token.slice(0, 10)}${token[10] === "A" ? "B" : "A"}${token.slice(11)}`;
+    expect(await intentsModule.findIntentByToken(db, flipped)).toBeNull();
+    expect(await intentsModule.findIntentByToken(db, "")).toBeNull();
+  });
+
   it("fails closed without exactly one user", async () => {
     const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
     const client = await lockOwner();
