@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 07
 current_phase_name: Acciones verificadas desde Telegram
 status: executing
-stopped_at: Phase 7 context gathered
-last_updated: "2026-11-27T17:51:57.111Z"
+stopped_at: Completed 07-01-PLAN.md
+last_updated: "2026-11-27T18:14:44.078Z"
 last_activity: 2026-11-27
-last_activity_desc: Phase 06 complete, transitioned to Phase 7
-state_head: 3144b516887b9b79d92894d2b15fcbdce1b8d034
+last_activity_desc: Phase 07 execution started
+state_head: 3a790916ac823604ece1e79114df62c59cd39732
 progress:
   total_phases: 8
   completed_phases: 6
   total_plans: 32
-  completed_plans: 26
+  completed_plans: 27
   percent: 75
 ---
 
@@ -27,10 +27,10 @@ See: .planning/PROJECT.md (updated 2026-11-27)
 
 ## Current Position
 
-Phase: 07 (Acciones verificadas desde Telegram) — READY TO EXECUTE
-Plan: Not started
+Phase: 07 (Acciones verificadas desde Telegram) — EXECUTING
+Plan: 2 of 6
 Status: Ready to execute
-Last activity: 2026-11-27 — Phase 06 complete, transitioned to Phase 7
+Last activity: 2026-11-27 — Phase 07 execution started
 
 Progress: [████████░░] 75%
 
@@ -79,6 +79,7 @@ Progress: [████████░░] 75%
 | Phase 06 P04 | 12 min | 3 tasks | 10 files |
 | Phase 06 P05 | 6 min | 3 tasks | 7 files |
 | Phase 06 P06 | 9 min | 3 tasks | 14 files |
+| Phase 07 P01 | 8 min | 3 tasks | 13 files |
 
 ## Accumulated Context
 
@@ -141,6 +142,10 @@ Recent decisions affecting current work:
 - [Phase 06]: 06-05: el envoltorio de Better Auth acota el POST a 32 KiB, reconstruye la petición sin content-length y deja pendiente confirmar las exenciones presence, verification/password y DELETE push (A10)
 - [Phase 06]: 06-06: un exceso de respuesta del agente es NasInvalidResponse(ResponseTooLarge), o NasRejected con su estado si la respuesta ya era un error, para que colector y deploy-progress lo traten como contrato roto sin cambios
 - [Phase 06]: 06-06: el listado de archivos solo conserva las entradas cuando el fallo es de la misma raiz y carpeta que las cargadas
+- [Phase 07]: P-01: handoff token = HMAC-SHA256 of the intent id under a subkey of BETTER_AUTH_SECRET; only its SHA-256 is stored
+- [Phase 07]: P-03: keyboard-only edits use outbox key incident:<id>:kb:<discriminator> because queueEdit keys on seq
+- [Phase 07]: P-04: an intent binds to the sole user of the instance; zero or several users fail closed
+- [Phase 07]: P-06: TELEGRAM_ACTIONS gains eight values at once; menu_open, menu_close and intent_cancel stay ignored until 07-03
 
 ### Pending Todos
 
@@ -165,6 +170,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-27T16:34:28.961Z
-Stopped at: Phase 7 context gathered
-Resume file: .planning/phases/07-acciones-verificadas-desde-telegram/07-CONTEXT.md
+Last session: 2026-11-27T18:14:43.688Z
+Stopped at: Completed 07-01-PLAN.md
+Resume file: None
