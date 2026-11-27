@@ -203,16 +203,18 @@ describe.skipIf(!baseUrl)("sensitive actions", () => {
   let pool: typeof import("@/lib/db").pool;
   let tables: typeof import("@/lib/schema");
   let routes: typeof import("../src/app/api/[...path]/route");
+  let settingsBodyLimit: number;
 
   async function api(
     path: string,
     body?: unknown,
     headers: Record<string, string> = {},
+    method: "POST" | "DELETE" = "POST",
   ) {
     const url = new URL(`http://localhost${path}`);
     const route = url.pathname.replace(/^\/api\//, "").split("/");
     const request = new NextRequest(url, {
-      method: "POST",
+      method,
       headers: {
         "Content-Type": "application/json",
         Origin: "http://localhost:3000",
@@ -220,7 +222,7 @@ describe.skipIf(!baseUrl)("sensitive actions", () => {
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    return routes.POST(request, {
+    return routes[method](request, {
       params: Promise.resolve({ path: route }),
     });
   }
@@ -260,6 +262,9 @@ describe.skipIf(!baseUrl)("sensitive actions", () => {
     await migrate(db, { migrationsFolder: "./drizzle" });
     tables = await import("@/lib/schema");
     routes = await import("../src/app/api/[...path]/route");
+    ({ DEPLOYMENT_SETTINGS_BODY_LIMIT: settingsBodyLimit } = await import(
+      "@/lib/deployment-settings"
+    ));
   });
 
   afterAll(async () => {
@@ -538,6 +543,119 @@ describe.skipIf(!baseUrl)("sensitive actions", () => {
         } finally {
           logged.mockRestore();
         }
+      },
+    );
+  });
+  describe("request body limit on every mutation", () => {
+    type BodyLimitCase = {
+      name: string;
+      path: string;
+      method: "POST" | "DELETE";
+      /** Bytes the route admits; the default is the global limit. */
+      limit?: () => number;
+      /** The setup route answers 403 before reading once an account exists. */
+      withoutAccounts?: true;
+      /** The password route answers 403 before reading on the passkey domain. */
+      passwordDomain?: true;
+      /** The route never reads the body, so a large one is not a 413. */
+      readsBody: boolean;
+    };
+
+    const bodyLimitCases: BodyLimitCase[] = [
+      { name: "setup", path: "/api/setup", method: "POST", withoutAccounts: true, readsBody: true },
+      { name: "verification/password", path: "/api/verification/password", method: "POST", passwordDomain: true, readsBody: true },
+      { name: "containers/remove", path: "/api/containers/remove?host=nas-home", method: "POST", readsBody: true },
+      { name: "host-command", path: "/api/host-command?host=nas-home", method: "POST", readsBody: true },
+      { name: "incidents acknowledge", path: "/api/incidents/1/acknowledge", method: "POST", readsBody: true },
+      { name: "incidents snooze", path: "/api/incidents/1/snooze", method: "POST", readsBody: true },
+      { name: "incidents unsnooze", path: "/api/incidents/1/unsnooze", method: "POST", readsBody: true },
+      { name: "deployments/settings", path: "/api/deployments/settings?host=nas-home", method: "POST", limit: () => settingsBodyLimit, readsBody: true },
+      { name: "renovate/merge", path: "/api/renovate/merge", method: "POST", readsBody: true },
+      { name: "presence", path: "/api/presence", method: "POST", readsBody: true },
+      { name: "action", path: "/api/action?host=nas-home", method: "POST", readsBody: true },
+      { name: "settings", path: "/api/settings?host=nas-home", method: "POST", readsBody: true },
+      { name: "push POST", path: "/api/push", method: "POST", readsBody: true },
+      { name: "push DELETE", path: "/api/push", method: "DELETE", readsBody: true },
+      { name: "push/test", path: "/api/push/test", method: "POST", readsBody: false },
+    ];
+
+    /** Row counts of every table a rejected request must leave untouched. */
+    async function traces() {
+      return {
+        operations: (await db.select().from(tables.operations)).length,
+        incidents: (await db.select().from(tables.incidents)).length,
+        incidentEvents: (await db.select().from(tables.incidentEvents))
+          .length,
+        outbox: (await db.select().from(tables.notificationOutbox)).length,
+      };
+    }
+
+    async function sendLarge(entry: BodyLimitCase) {
+      const limit = entry.limit?.() ?? DEFAULT_BODY_LIMIT;
+      const previousPrimary = process.env.BETTER_AUTH_URL;
+      if (entry.passwordDomain)
+        process.env.BETTER_AUTH_URL = "https://hub.example";
+      if (entry.withoutAccounts) await db.delete(tables.user);
+      try {
+        return await api(
+          entry.path,
+          { padding: "x".repeat(limit + 1) },
+          { "Idempotency-Key": crypto.randomUUID() },
+          entry.method,
+        );
+      } finally {
+        if (previousPrimary === undefined) delete process.env.BETTER_AUTH_URL;
+        else process.env.BETTER_AUTH_URL = previousPrimary;
+        if (entry.withoutAccounts) await seedVerifiedSession(db, tables);
+      }
+    }
+
+    it.each(bodyLimitCases.filter((entry) => entry.readsBody))(
+      "answers 413 and leaves no trace for $method $name",
+      async (entry) => {
+        await clearVerification(db, tables);
+        const before = await traces();
+        const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+        try {
+          const response = await sendLarge(entry);
+
+          expect(response.status).toBe(413);
+          expect(await traces()).toEqual(before);
+          expect(logged).not.toHaveBeenCalled();
+          expect(agent.requests).toEqual([]);
+        } finally {
+          logged.mockRestore();
+        }
+      },
+    );
+
+    it("does not degrade the password route's 413 to a 400", async () => {
+      const response = await sendLarge(
+        bodyLimitCases.find((entry) => entry.name === "verification/password")!,
+      );
+
+      expect(response.status).not.toBe(400);
+      expect(response.status).toBe(413);
+    });
+
+    it("still answers 400 to a malformed password body", async () => {
+      process.env.BETTER_AUTH_URL = "https://hub.example";
+      try {
+        const response = await api("/api/verification/password", "{nope");
+
+        expect(response.status).toBe(400);
+      } finally {
+        delete process.env.BETTER_AUTH_URL;
+      }
+    });
+
+    it.each(bodyLimitCases.filter((entry) => !entry.readsBody))(
+      "does not read a body on $name, so a large one is not a 413",
+      async (entry) => {
+        const response = await sendLarge(entry);
+
+        expect(response.status).not.toBe(413);
       },
     );
   });
