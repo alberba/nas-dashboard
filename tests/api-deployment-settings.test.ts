@@ -1,5 +1,7 @@
+import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { fileURLToPath } from "node:url";
 import { NextRequest } from "next/server";
 import {
   afterAll,
@@ -612,6 +614,21 @@ describe.skipIf(!baseUrl)("deployment settings API", () => {
       expect(response.status).toBe(413);
       expect(nas.requests).toEqual([]);
       expect(await db.select().from(tables.operations)).toEqual([]);
+    });
+
+    it("stays aligned with the request cap the agent enforces", () => {
+      // The agent is deployed apart from the hub: if its cap drifts, a body the
+      // hub admits would be refused there, or one the agent admits refused here.
+      const agentSource = readFileSync(
+        fileURLToPath(new URL("../agent/env_settings.py", import.meta.url)),
+        "utf8",
+      );
+      const match = /^MAX_REQUEST_BYTES\s*=\s*(\d+)(?:\s*\*\s*(\d+))?\s*$/m.exec(
+        agentSource,
+      );
+      expect(match, "MAX_REQUEST_BYTES not found in the agent").not.toBeNull();
+
+      expect(bodyLimit).toBe(Number(match![1]) * Number(match![2] ?? 1));
     });
   });
 });

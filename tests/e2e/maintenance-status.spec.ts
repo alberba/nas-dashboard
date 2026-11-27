@@ -137,9 +137,12 @@ async function serve(page: Page, maintenance: Maintenance) {
     calls[id] = (calls[id] ?? 0) + 1;
     const h = hosts.find((x) => x.id === id) ?? hosts[0];
     const result = (await maintenance(id, calls[id])) as
-      { status: number } | Record<string, unknown>;
+      { status: number; body?: unknown } | Record<string, unknown>;
     if ("status" in result && typeof result.status === "number")
-      return route.fulfill({ status: result.status, json: {} });
+      return route.fulfill({
+        status: result.status,
+        json: "body" in result ? result.body : {},
+      });
     await route
       .fulfill({ json: { host: h, snapshot: result } })
       .catch(() => {});
@@ -276,6 +279,120 @@ test("a failed refresh keeps the last data marked as stale and recovers", async 
 
   await page.clock.fastForward(61_000);
   await expect(root).not.toHaveAttribute("data-stale", /.+/);
+});
+
+// What the hub answers when the agent's reply went over the cap of its path.
+const refused = {
+  status: 502,
+  body: { error: "refused", code: "agent_response_too_large" },
+};
+
+test("a refresh refused as too large keeps the last data and is flagged apart from other failures", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await open(page, (id, call) =>
+    call === 2
+      ? { status: 503 }
+      : call === 3
+        ? refused
+        : snapshot(nasRole(id) as Role),
+  );
+  await expect(cell(page, "release")).toContainText("v2.4.1");
+  const root = page.locator("[data-maintenance-snapshot]");
+  const note = page.locator("[data-snapshot-note]");
+  await expect(note).toHaveCount(0);
+
+  await page.clock.fastForward(61_000);
+  await expect(note).toHaveAttribute("data-snapshot-note", "stale");
+
+  await page.clock.fastForward(61_000);
+  await expect(note).toHaveAttribute("data-snapshot-note", "too-large");
+  await expect(root).toHaveAttribute("data-stale", "true");
+  await expect(cell(page, "release")).toContainText("v2.4.1");
+
+  await page.clock.fastForward(61_000);
+  await expect(note).toHaveCount(0);
+  await expect(root).not.toHaveAttribute("data-stale", /.+/);
+});
+
+test("a first read refused as too large ends in the error phase with the same note", async ({
+  page,
+}) => {
+  await open(page, () => refused);
+  await expect(page.locator("[data-maintenance-snapshot]")).toHaveAttribute(
+    "data-phase",
+    "error",
+  );
+  await expect(page.locator("[data-snapshot-note]")).toHaveAttribute(
+    "data-snapshot-note",
+    "too-large",
+  );
+});
+
+test("today's events keep their rows when a refresh fails and relay only the too-large refusal", async ({
+  page,
+}) => {
+  // The messages are the test's own: what matters is which of them reaches the page.
+  const refusal = "refusal-text-sent-by-the-hub";
+  const other = "other-failure-text-sent-by-the-hub";
+  let answer: "ok" | "too-large" | "other" = "ok";
+  await page.route(/\/api\/events(?:\?.*)?$/, (route) =>
+    answer === "ok"
+      ? route.fulfill({
+          json: {
+            host: status(hosts[0]),
+            day: "2026-11-27",
+            timeZone: "Europe/Madrid",
+            events: [
+              {
+                id: "deploy-1",
+                kind: "deploy",
+                at: new Date().toISOString(),
+                status: "ok",
+                release: "v2.4.1",
+                action: null,
+                unit: null,
+                reason: null,
+              },
+            ],
+            degraded: [],
+          },
+        })
+      : route.fulfill({
+          status: 502,
+          json:
+            answer === "too-large"
+              ? { error: refusal, code: "agent_response_too_large" }
+              : { error: other },
+        }),
+  );
+  await open(page, (id) => snapshot(nasRole(id) as Role));
+  const panel = page.locator("[data-events]");
+  const rows = panel.locator("[data-event]");
+  const failure = panel.getByRole("status");
+  const refresh = () =>
+    page.evaluate(() => window.dispatchEvent(new Event("maintenance-refresh")));
+  await expect(rows).toHaveCount(1);
+  await expect(failure).toHaveCount(0);
+
+  answer = "too-large";
+  await refresh();
+  await expect(failure).toHaveText(refusal);
+  await expect(rows).toHaveCount(1);
+
+  // Any other failure shows a generic notice, never the server's own text.
+  answer = "other";
+  await refresh();
+  await expect(failure).not.toHaveText(refusal);
+  await expect(failure).toBeVisible();
+  await expect(failure).not.toContainText(other);
+  await expect(rows).toHaveCount(1);
+
+  answer = "ok";
+  await refresh();
+  await expect(failure).toHaveCount(0);
+  await expect(rows).toHaveCount(1);
 });
 
 test("the cleaning cell distinguishes a persistent failure from a confirmed host", async ({

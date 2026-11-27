@@ -16,7 +16,12 @@ import {
   testDatabaseUrl,
   type TestDatabase,
 } from "./database";
-import { seedVerifiedSession, testSession } from "./verified-session";
+import { AGENT_RESPONSE_LIMITS } from "@/lib/nas";
+import {
+  clearVerification,
+  seedVerifiedSession,
+  testSession,
+} from "./verified-session";
 
 const session = vi.hoisted(() => ({
   value: null as unknown,
@@ -33,7 +38,7 @@ type RecordedRequest = {
   path: string;
   body: unknown;
 };
-type Behaviour = "ok" | "reject" | "uncertain" | "invalid";
+type Behaviour = "ok" | "reject" | "uncertain" | "invalid" | "oversized";
 
 type FakeAgent = {
   url: string;
@@ -104,6 +109,18 @@ async function fakeAgent(token: string): Promise<FakeAgent> {
     if (agent.behaviour === "invalid") {
       response.writeHead(200, { "Content-Type": "application/json" });
       response.end(JSON.stringify({ command: "deploy-now" }));
+      return;
+    }
+    if (agent.behaviour === "oversized") {
+      // A well-formed success whose body does not fit the cap of a POST answer.
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(
+        JSON.stringify({
+          command: "deploy-now",
+          status: "success",
+          padding: "x".repeat(AGENT_RESPONSE_LIMITS.post),
+        }),
+      );
       return;
     }
     response.writeHead(200, { "Content-Type": "application/json" });
@@ -461,6 +478,35 @@ describe.skipIf(!baseUrl)("host command API", () => {
     expect(nas.requests).toHaveLength(1);
   });
 
+  it("leaves an answer over its cap pending and never sends it again", async () => {
+    nas.behaviour = "oversized";
+    const key = crypto.randomUUID();
+
+    const response = await api(
+      "/api/host-command?host=nas-home",
+      { command: "deploy-now" },
+      { "Idempotency-Key": key },
+    );
+
+    // Over the cap is a broken contract, not a rejection: the command may have
+    // run, so it stays pending instead of being recorded as failed.
+    expect(response.status).toBe(502);
+    expect((await response.json()).status).toBe("pending");
+    expect(nas.requests).toHaveLength(1);
+    const [operation] = await db.select().from(tables.operations);
+    expect(operation.status).toBe("pending");
+
+    nas.behaviour = "ok";
+    const retry = await api(
+      "/api/host-command?host=nas-home",
+      { command: "deploy-now" },
+      { "Idempotency-Key": key },
+    );
+    expect(retry.status).toBe(200);
+    expect((await retry.json()).operation.status).toBe("pending");
+    expect(nas.requests).toHaveLength(1);
+  });
+
   it("does not report success for a malformed agent response", async () => {
     nas.behaviour = "invalid";
 
@@ -513,4 +559,55 @@ describe.skipIf(!baseUrl)("host command API", () => {
     expect(nas.requests).toEqual([]);
     expect(apps.requests).toEqual([]);
   });
+
+  // The verification gate comes after the body, the host and the key: a bad
+  // request is answered as itself and never looks like a missing verification.
+  it.each<{
+    name: string;
+    path: string;
+    body: unknown;
+    headers: Record<string, string>;
+    status: number;
+  }>([
+    {
+      name: "a command outside the closed list",
+      path: "/api/host-command?host=nas-home",
+      body: { command: "systemctl restart nginx" },
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+      status: 400,
+    },
+    {
+      name: "an unknown host",
+      path: "/api/host-command?host=ghost",
+      body: { command: "deploy-now" },
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+      status: 404,
+    },
+    {
+      name: "a missing Idempotency-Key",
+      path: "/api/host-command?host=nas-home",
+      body: { command: "deploy-now" },
+      headers: {},
+      status: 400,
+    },
+    {
+      name: "an Idempotency-Key that is not a UUID",
+      path: "/api/host-command?host=nas-home",
+      body: { command: "deploy-now" },
+      headers: { "Idempotency-Key": "not-a-uuid" },
+      status: 400,
+    },
+  ])(
+    "answers $name as itself without a recent verification",
+    async ({ path, body, headers, status }) => {
+      await clearVerification(db, tables);
+
+      const response = await api(path, body, headers);
+
+      expect(response.status).toBe(status);
+      expect(nas.requests).toEqual([]);
+      expect(apps.requests).toEqual([]);
+      expect(await db.select().from(tables.operations)).toEqual([]);
+    },
+  );
 });

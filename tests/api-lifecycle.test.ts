@@ -17,6 +17,7 @@ import {
   testDatabaseUrl,
   type TestDatabase,
 } from "./database";
+import { AGENT_RESPONSE_LIMITS } from "@/lib/nas";
 import { seedVerifiedSession } from "./verified-session";
 
 vi.mock("@/lib/auth", () => ({
@@ -38,7 +39,7 @@ type RecordedRequest = {
   path: string;
   body: unknown;
 };
-type Behaviour = "ok" | "reject" | "uncertain";
+type Behaviour = "ok" | "reject" | "uncertain" | "oversized";
 
 type FakeAgent = {
   url: string;
@@ -117,6 +118,17 @@ async function fakeAgent(token: string): Promise<FakeAgent> {
       response.end(
         JSON.stringify({
           error: "El contenedor debe estar detenido",
+        }),
+      );
+      return;
+    }
+    if (agent.behaviour === "oversized") {
+      // A well-formed success whose body does not fit the cap of a POST answer.
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(
+        JSON.stringify({
+          state: "stopped",
+          padding: "x".repeat(AGENT_RESPONSE_LIMITS.post),
         }),
       );
       return;
@@ -524,6 +536,31 @@ describe.skipIf(!baseUrl)("container removal API", () => {
     expect(incident).toMatchObject({ resolvedAt: null, seq: 1, closedBy: null });
     expect(await db.select().from(tables.incidentEvents)).toHaveLength(1);
     expect(await db.select().from(tables.notificationOutbox)).toHaveLength(1);
+  });
+
+  it("leaves an action answered over the cap pending and does not send it again", async () => {
+    agent.behaviour = "oversized";
+    const key = crypto.randomUUID();
+    const body = { action: "stop", id: containerId };
+
+    const response = await api("/api/action?host=nas-home", body, {
+      "Idempotency-Key": key,
+    });
+
+    // Over the cap is a broken contract, not a rejection: the action may have
+    // run, so it stays pending instead of being recorded as failed.
+    expect(response.status).toBe(502);
+    expect((await response.json()).status).toBe("pending");
+    const [operation] = await db.select().from(tables.operations);
+    expect(operation).toMatchObject({ action: "stop", status: "pending" });
+
+    agent.behaviour = "ok";
+    const retry = await api("/api/action?host=nas-home", body, {
+      "Idempotency-Key": key,
+    });
+    expect(retry.status).toBe(200);
+    expect(agent.requests).toHaveLength(1);
+    expect(await db.select().from(tables.operations)).toHaveLength(1);
   });
 
   it("reconciles a lost removal response using the ID recorded by the POST", async () => {

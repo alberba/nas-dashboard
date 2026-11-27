@@ -1,5 +1,6 @@
 import { submitLogin } from "./login";
 import { expect, test, type Cookie, type Page } from "@playwright/test";
+import { requiresVerificationForAction } from "../../src/lib/sensitive-actions";
 const email = "ci@hub.invalid",
   password = "Ci-only-password-not-used-in-production!";
 
@@ -554,6 +555,69 @@ test("rebooting the NAS asks for the typed phrase and sends one action that carr
   expect(sent).toHaveLength(1);
   expect(sent[0].key).toMatch(/^[0-9a-f-]{36}$/);
   expect(sent[0].body).toMatchObject({ action: "reboot" });
+});
+
+test("container row actions open the passkey dialog exactly for the protected ones", async ({
+  page,
+}) => {
+  await signIn(page);
+  await page.route("**/api/verification", (route) =>
+    route.fulfill({
+      json: {
+        method: "passkey",
+        recent: true,
+        reason: null,
+        verifiedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+        ttlSeconds: 300,
+      },
+    }),
+  );
+  const sent: { key: string | undefined; body: unknown }[] = [];
+  await page.route("**/api/action*", async (route) => {
+    sent.push({
+      key: route.request().headers()["idempotency-key"],
+      body: route.request().postDataJSON(),
+    });
+    await route.fulfill({ json: { ok: true, status: "success" } });
+  });
+  await page.goto("/?view=maintenance&tab=status");
+  await stoppedSection(page).locator("summary").click();
+
+  // The UI reads the same manifest as the server: stop and restart need the
+  // passkey, start does not.
+  const rowActions = [
+    ["bazarr", "stop"],
+    ["bazarr", "restart"],
+    ["sonarr", "start"],
+  ] as const;
+  const protectedFlags = rowActions.map(([, action]) =>
+    requiresVerificationForAction(action),
+  );
+  expect(protectedFlags).toContain(true);
+  expect(protectedFlags).toContain(false);
+  for (const [name, action] of rowActions) {
+    const before = sent.length;
+    await page
+      .locator(`[data-container="${name}"] [data-action="${action}"]`)
+      .click();
+    if (requiresVerificationForAction(action)) {
+      const dialog = page.locator("dialog[data-sensitive-action]");
+      await expect(dialog).toBeVisible();
+      expect(sent).toHaveLength(before);
+      await dialog.locator("[data-confirm]").click();
+      await expect(page.locator("dialog[open]")).toHaveCount(0);
+      expect(sent).toHaveLength(before + 1);
+      expect(sent[before].key).toMatch(/^[0-9a-f-]{36}$/);
+      expect(sent[before].body).toEqual({ action, id: name.padEnd(64, "0") });
+    } else {
+      await expect(page.locator("dialog[open]")).toBeVisible();
+      await expect(page.locator("dialog[data-sensitive-action]")).toHaveCount(0);
+      expect(sent).toHaveLength(before);
+      await page.keyboard.press("Escape");
+      await expect(page.locator("dialog[open]")).toHaveCount(0);
+    }
+  }
 });
 
 test("a container links to its page, shows its version and updates with warnings", async ({
