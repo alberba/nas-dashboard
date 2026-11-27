@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { Client } from "pg";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import {
   afterAll,
   afterEach,
@@ -326,6 +326,189 @@ describe.skipIf(!baseUrl)("telegram intents", () => {
     await press(fake, client, token, 304);
 
     expect(await intents()).toHaveLength(0);
+  });
+
+  async function keyboardEdits(incidentId: number) {
+    const rows = await db
+      .select()
+      .from(tables.notificationOutbox)
+      .where(
+        and(
+          eq(tables.notificationOutbox.incidentId, incidentId),
+          eq(tables.notificationOutbox.kind, "incident-edit"),
+        ),
+      );
+    return rows.filter((row) => row.key.includes(":kb:"));
+  }
+
+  /** The url button of the last edit that carries a handoff fragment. */
+  function handoffButtonOf(call: { body: Record<string, unknown> }) {
+    const markup = call.body.reply_markup as {
+      inline_keyboard: Array<
+        Array<{ text?: string; url?: string; callback_data?: string }>
+      >;
+    };
+    return markup.inline_keyboard
+      .flat()
+      .find((button) => button.url?.includes("#intent="));
+  }
+
+  it("queues a keyboard-only edit in the transaction that creates the intent", async () => {
+    await seedVerifiedSession(db, tables);
+    const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
+    const client = await lockOwner();
+    const incidentId = await sendNotice(fake, client, "backup-failed");
+    const token = await issueToken(incidentId, "act_backup_now");
+
+    await press(fake, client, token, 311);
+
+    const [intent] = await intents();
+    const [incident] = await db
+      .select()
+      .from(tables.incidents)
+      .where(eq(tables.incidents.id, incidentId));
+    const edits = await keyboardEdits(incidentId);
+    expect(edits).toHaveLength(1);
+    expect(edits[0]).toMatchObject({
+      key: `incident:${incidentId}:kb:i${intent.id}:open`,
+      kind: "incident-edit",
+      channel: "telegram",
+      status: "pending",
+      chatId: CHAT_ID,
+      messageId: "501",
+      revision: incident.seq,
+    });
+  });
+
+  it("queues a keyboard edit once per discriminator and never without a confirmed message", async () => {
+    const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
+    const client = await lockOwner();
+    const incidentId = await sendNotice(fake, client, "backup-failed");
+
+    const first = await db.transaction((tx) =>
+      store.queueKeyboardEdit(tx, incidentId, "probe"),
+    );
+    const second = await db.transaction((tx) =>
+      store.queueKeyboardEdit(tx, incidentId, "probe"),
+    );
+    expect(first).toBe("queued");
+    expect(second).toBe("queued");
+    expect(await keyboardEdits(incidentId)).toHaveLength(1);
+
+    // A notice whose opening was never confirmed has nothing to edit.
+    const unsent = await store.recordIncidentObservation({
+      hostId: "nas-home",
+      key: "deploy-failed",
+      failing: true,
+      severity: "critical",
+      title: "Aviso sin enviar",
+      detail: "Detalle",
+      now: START + 5_000,
+      delivery: { channel: "telegram", reason: "policy_immediate" },
+    });
+    const none = await db.transaction((tx) =>
+      store.queueKeyboardEdit(tx, unsent.incidentId!, "probe"),
+    );
+    expect(none).toBe("none");
+    expect(await keyboardEdits(unsent.incidentId!)).toHaveLength(0);
+  });
+
+  it("delays a keyboard edit until notBefore when asked", async () => {
+    const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
+    const client = await lockOwner();
+    const incidentId = await sendNotice(fake, client, "backup-failed");
+    const notBefore = new Date(START + 600_000);
+
+    await db.transaction((tx) =>
+      store.queueKeyboardEdit(tx, incidentId, "later", { notBefore }),
+    );
+
+    const [edit] = await keyboardEdits(incidentId);
+    expect(edit.nextAttemptAt.getTime()).toBe(notBefore.getTime());
+  });
+
+  it("edits the notice silently with a url button that carries the handoff token", async () => {
+    await seedVerifiedSession(db, tables);
+    const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
+    const client = await lockOwner();
+    const incidentId = await sendNotice(fake, client, "backup-failed");
+    const token = await issueToken(incidentId, "act_backup_now");
+    await press(fake, client, token, 312);
+    const [intent] = await intents();
+
+    const edited = await dispatch.runDispatchOnce({
+      client,
+      config,
+      now: () => START + 120_000,
+      fetchImpl: fake.transport,
+    });
+    expect(edited.action).toBe("edited");
+
+    // One opening and one edit of the same message: nothing new is sent.
+    expect(
+      fake.calls.filter((call) => call.method === "sendMessage"),
+    ).toHaveLength(1);
+    const editCalls = fake.calls.filter(
+      (call) => call.method === "editMessageText",
+    );
+    expect(editCalls).toHaveLength(1);
+    expect(editCalls[0].body.message_id).toBe("501");
+
+    const button = handoffButtonOf(editCalls[0]);
+    expect(button).toBeDefined();
+    expect(button).not.toHaveProperty("callback_data");
+    const url = new URL(button!.url!);
+    expect(url.origin + url.pathname).toBe("https://hub.example.com/");
+    expect(url.searchParams.get("view")).toBe("alerts");
+    expect(url.searchParams.get("host")).toBe("nas-home");
+    expect(url.searchParams.get("incident")).toBe(String(incidentId));
+    const handoff = url.hash.replace(/^#intent=/, "");
+    expect(handoff).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(createHash("sha256").update(handoff).digest("hex")).toBe(
+      intent.handoffHash,
+    );
+
+    // The token is recomputed, not stored: a second edit of the same state
+    // renders the same link.
+    await db.transaction((tx) =>
+      store.queueKeyboardEdit(tx, incidentId, "again"),
+    );
+    const again = await dispatch.runDispatchOnce({
+      client,
+      config,
+      now: () => START + 180_000,
+      fetchImpl: fake.transport,
+    });
+    expect(again.action).toBe("edited");
+    const secondCall = fake.calls.filter(
+      (call) => call.method === "editMessageText",
+    )[1];
+    expect(handoffButtonOf(secondCall)?.url).toBe(button!.url);
+  });
+
+  it("renders no handoff button once the intent has expired", async () => {
+    await seedVerifiedSession(db, tables);
+    const fake = createFakeBotApi({ chatId: Number(CHAT_ID) });
+    const client = await lockOwner();
+    const incidentId = await sendNotice(fake, client, "backup-failed");
+    await press(
+      fake,
+      client,
+      await issueToken(incidentId, "act_backup_now"),
+      313,
+    );
+
+    const edited = await dispatch.runDispatchOnce({
+      client,
+      config,
+      now: () => START + 60_000 + HANDOFF_TTL_MS + 1_000,
+      fetchImpl: fake.transport,
+    });
+    expect(edited.action).toBe("edited");
+    const editCall = fake.calls.find(
+      (call) => call.method === "editMessageText",
+    );
+    expect(handoffButtonOf(editCall!)).toBeUndefined();
   });
 
   it("fails closed without exactly one user", async () => {
