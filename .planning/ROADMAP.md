@@ -18,7 +18,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: Incidencias y entrega única** - Una incidencia con identidad y exactamente un mensaje, con outbox y estado de entrega. (completed 2026-11-25)
 - [x] **Phase 3: Agrupación, inventario y ayudantes** - Una caída de host es una incidencia, sin fantasmas ni ayudantes huérfanos. (completed 2026-11-25)
 - [x] **Phase 4: Resumen diario** - Lo no urgente llega una vez al día, sin duplicarse ni perderse en los cambios de hora. (completed 2026-11-26)
-- [ ] **Phase 5: Bot de lectura y reconocimiento** - Abrir, silenciar y reconocer desde el mensaje, con allowlist y tokens de un solo uso.
+- [x] **Phase 5: Bot de lectura y reconocimiento** - Abrir, silenciar y reconocer desde el mensaje, con allowlist y tokens de un solo uso. (completed 2026-11-27)
 - [ ] **Phase 6: Puerta de seguridad** - Verificación reciente en el servidor para todas las acciones destructivas, más CSP y HSTS.
 - [ ] **Phase 7: Acciones verificadas desde Telegram** - Iniciar en el chat y completar en el hub con sesión y passkey.
 - [ ] **Phase 8: Cutover de media-stack y consolidación** - Ingest firmado, apagado por familias, rollups y retirada del camino viejo.
@@ -145,7 +145,7 @@ Plans:
   3. "Por qué me llegó esto" responde desde el propio mensaje.
   4. Un callback repetido o caducado no ejecuta dos veces la acción ni rompe el bot.
   5. El token del bot no aparece en logs ni en respuestas.
-**Plans**: 6/6 plans executed
+**Plans**: 6/6 plans complete
 
 Plans:
 **Wave 1**
@@ -236,7 +236,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 2. Incidencias y entrega única | 5/5 | Complete    | 2026-11-25 |
 | 3. Agrupación, inventario y ayudantes | 3/3 | Complete    | 2026-11-25 |
 | 4. Resumen diario | 3/3 | Complete    | 2026-11-26 |
-| 5. Bot de lectura y reconocimiento | 6/6 | In Progress | - |
+| 5. Bot de lectura y reconocimiento | 6/6 | Complete    | 2026-11-27 |
 | 6. Puerta de seguridad | 0/3 | Not started | - |
 | 7. Acciones verificadas desde Telegram | 0/3 | Not started | - |
 | 8. Cutover de media-stack y consolidación | 0/3 | Not started | - |

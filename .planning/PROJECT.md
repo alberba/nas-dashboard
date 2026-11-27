@@ -33,10 +33,12 @@ Saber en segundos qué está pasando en los dos servidores y poder actuar sobre 
 - ✓ Recogida de ayudantes huérfanos de propiedad demostrable y fallos de limpieza visibles — fase 03 (CONT-04)
 - ✓ Resumen diario a las 08:00 de Madrid, sin duplicados ni pérdidas en cambios de hora, con su estado visible en Avisos — fase 04 (DIG-01 a DIG-06)
 - ✓ Healthchecks de agente y worker que declaran unhealthy un proceso vivo pero bloqueado — fase 04 (CONT-03)
+- ✓ Botones del bot en Telegram (Reconocer, Silenciar 1 h/24 h, Quitar silencio, Por qué me llegó esto) con allowlist, tokens de un solo uso, sin filtrar el token, y las mismas acciones desde Avisos — fase 05 (BOT-02, BOT-04, BOT-05, BOT-06, BOT-10), validado en producción el 2026-11-27
 
 ### Active
 
-- [ ] Reconocimiento y acciones desde Telegram con autorización y verificación reciente
+- [ ] Acciones de host desde Telegram (handoff al hub con sesión y verificación reciente) — fases 6 y 7
+- [ ] Emoticono por tipo de mensaje del bot para distinguirlos de un vistazo — backlog 999.1
 - [ ] Exigir verificación reciente en el servidor para todas las acciones destructivas, no solo para algunas
 - [ ] Documentar y probar la rotación conjunta del token de Telegram
 - [ ] CSP y HSTS, más límites de cuerpo y de tamaño de respuesta en el hub
@@ -53,7 +55,7 @@ Saber en segundos qué está pasando en los dos servidores y poder actuar sobre 
 ## Context
 
 - Dos repositorios: este (el hub) y `media-stack` (Compose, scripts y servicios multimedia), que mantiene sus emisores de Telegram hasta la fase 8. El hub ya entrega sus propios avisos al chat configurado. Las fases de notificaciones pueden tocar ambos, con commits y CI separados.
-- Despliegue: Compose en un servidor Oracle con `db`, `migrate`, `app` y `worker`; agentes en el NAS y en el servidor de apps, unidos por Tailscale. Un solo `app` y un solo `worker`.
+- Despliegue: Compose en un servidor Oracle (`webs`, `ubuntu@100.74.226.92`, `/opt/nas-dashboard` sin checkout git: se despliega con `git archive`) con `db`, `migrate`, `app` y `worker`; agentes en el NAS y en el servidor de apps, unidos por Tailscale. Un solo `app` y un solo `worker`.
 - Stack muy reciente: Next.js 16, React 19, TypeScript 7, Effect 4, PostgreSQL 18, Python 3.14. El adaptador de TypeScript 6 para ESLint es el punto más frágil de las actualizaciones.
 - El detalle por archivo está en `.planning/codebase/`; `CONCERNS.md` enumera los huecos de seguridad, rendimiento y cobertura de tests.
 - La fase 1 midió el volumen histórico de Telegram. El volumen histórico de Web Push quedó sin medir. La fase 2 registra el resultado y el motivo de entrega por incidencia.
@@ -81,7 +83,8 @@ Saber en segundos qué está pasando en los dos servidores y poder actuar sobre 
 | Incluir los fallos persistentes de limpieza en el resumen | Mantenimiento muestra el primer fallo y el segundo abre una incidencia por host | La fase 03 registra la incidencia. Su entrega corresponde a la fase 04. |
 | Resumen diario para lo no urgente | Evita interrumpir por informativo sin perderlo | Fase 04 validada en Telegram: un solo envío por fecha, y un intento sin confirmación queda incierto sin reenvío |
 | Healthcheck por marca de progreso, no por proceso vivo | Un proceso congelado sigue vivo; solo el avance del bucle prueba salud | Fase 04 validada en Docker: SIGSTOP lleva a unhealthy y SIGCONT recupera; la purga de la papelera borra fuera del LOCK |
-| Telegram con acciones inline | El usuario quiere resolver desde el móvil, no solo enterarse | — Pending |
+| Telegram con acciones inline | El usuario quiere resolver desde el móvil, no solo enterarse | Fase 05 validada en producción: reconocer, silenciar y Por qué desde el bot, con un solo uso por botón y ediciones silenciosas; las acciones de host siguen en fases 6–7 |
+| Silencio por (host, clave) con plazo cerrado de 1 h o 24 h | Un silencio no puede ocultar una caída indefinidamente | Fase 05: la reapertura dentro del plazo se suprime y queda visible en Avisos; al vencer no se reenvía |
 | Auditar con datos reales del NAS y de media-stack | Sin una cifra de partida no hay criterio de éxito | Telegram medido. El push histórico queda sin medir en ausencia del CSV de `alerts`. |
 
 ## Evolution
@@ -102,4 +105,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-11-26 after Phase 4*
+*Last updated: 2026-11-27 after Phase 5*

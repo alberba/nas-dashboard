@@ -1,43 +1,43 @@
 ---
 gsd_state_version: "1.0"
-current_phase: 05
-current_phase_name: Bot de lectura y reconocimiento
-status: verifying
-stopped_at: Completed 05-05-PLAN.md
-last_updated: "2026-11-26T15:28:37.694Z"
-last_activity: 2026-11-26
-last_activity_desc: Phase 05 execution started
-state_head: c250841a4a4483655baef67e807cdb38268bdb09
+current_phase: 6
+current_phase_name: Puerta de seguridad
+status: planning
+stopped_at: Phase 05 complete, ready to plan Phase 6
+last_updated: "2026-11-27T08:30:53.632Z"
+last_activity: 2026-11-27
+last_activity_desc: Phase 05 complete, transitioned to Phase 6
+state_head: fcb87a8e2910d4d67de0f4a7883f2d8fab3b584f
 progress:
   total_phases: 8
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 20
   completed_plans: 20
-  percent: 50
+  percent: 63
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-11-26)
+See: .planning/PROJECT.md (updated 2026-11-27)
 
 **Core value:** Saber en segundos qué está pasando en los dos servidores y poder actuar sobre ellos sin abrir una consola.
-**Current focus:** Phase 05 — Bot de lectura y reconocimiento
+**Current focus:** Phase 6 — Puerta de seguridad
 
 ## Current Position
 
-Phase: 05 (Bot de lectura y reconocimiento) — EXECUTING
-Plan: 6 of 6
-Status: Phase complete — ready for verification
-Last activity: 2026-11-26 — Phase 05 execution started
+Phase: 6 — Puerta de seguridad
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-11-27 — Phase 05 complete, transitioned to Phase 6
 
-Progress: [█████░░░░░] 50%
+Progress: [██████░░░░] 63%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 14
+- Total plans completed: 20
 - Average duration: —
 - Total execution time: 0 hours
 
@@ -49,6 +49,7 @@ Progress: [█████░░░░░] 50%
 | 02 | 5 | - | - |
 | 3 | 3 | - | - |
 | 04 | 3 | - | - |
+| 05 | 6 | - | - |
 
 **Recent Trend:**
 - Last 5 plans: —
@@ -122,7 +123,10 @@ None yet.
 
 ### Blockers/Concerns
 
-Ningún bloqueo para planificar la fase 5.
+Ningún bloqueo para planificar la fase 6.
+- [Fase 05] Las fases 2–5 se desplegaron en producción el 2026-11-27 (copia previa en `~/hub-deploy/20261127-074705` del servidor); `main` local sigue 160+ commits por delante de `origin/main` sin push.
+- [Fase 05] Pendiente de observar: la etiqueta del episodio reconocido en el resumen del 2026-11-28 y la escalada con Por qué (temperature es siempre crítica).
+- [Fase 05] `05-VALIDATION.md` sigue en draft: `/gsd-validate-phase 5` no se completó.
 - [Fase 04] Para probar el healthcheck del worker hay que congelar el proceso `node`, no el contenedor: `docker kill -s SIGSTOP` solo para `pnpm` (PID 1).
 
 ## Deferred Items
@@ -135,6 +139,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-26T15:28:33.399Z
-Stopped at: Completed 05-05-PLAN.md
+Last session: 2026-11-27T08:35:00Z
+Stopped at: Phase 05 complete, ready to plan Phase 6
 Resume file: None
