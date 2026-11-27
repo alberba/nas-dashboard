@@ -210,6 +210,47 @@ test("the file browser switches between its two roots and navigates folders", as
 });
 
 
+test("a refresh of the same folder refused as too large keeps the listed entries", async ({
+  page,
+}) => {
+  await signIn(page);
+  let refuse = false;
+  // Registered after signIn, so it answers first and falls back to the fixture.
+  await page.route("**/api/files?*", (route) =>
+    refuse
+      ? route.fulfill({
+          status: 502,
+          json: {
+            error: "demasiado grande",
+            code: "agent_response_too_large",
+          },
+        })
+      : route.fallback(),
+  );
+  await page.goto("/?view=files");
+  await expect(page.locator("[data-entry]")).toHaveCount(4);
+  await expect(page.locator("[data-files-error]")).toHaveCount(0);
+
+  refuse = true;
+  await entry(page, "notas.txt")
+    .getByRole("button", { name: "Renombrar notas.txt", exact: true })
+    .click();
+  const dialog = page.locator("dialog[open]");
+  await dialog.getByRole("textbox").fill("leeme.txt");
+  await dialog.locator('button[type="submit"]').click();
+  await expect(dialog).toBeHidden();
+
+  await expect(page.locator("[data-files-error]")).toBeVisible();
+  await expect(page.locator("[data-entry]")).toHaveCount(4);
+
+  // Another folder is not the one that was listed: its entries must not linger.
+  await entry(page, "Películas")
+    .getByRole("button", { name: "Películas", exact: true })
+    .click();
+  await expect(page.locator("[data-files-error]")).toBeVisible();
+  await expect(page.locator("[data-entry]")).toHaveCount(0);
+});
+
 test("rename, move and trash are confirmed actions on the selected root", async ({
   page,
 }) => {
