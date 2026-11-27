@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Client } from "pg";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import {
   afterAll,
@@ -57,6 +57,7 @@ type FakeAgent = {
 };
 
 const PLEX_ID = "c".repeat(64);
+const AGENT_REASON = "El reinicio no está permitido en este host";
 
 function metrics(hostId: string, containers: unknown[] = []) {
   return {
@@ -107,7 +108,7 @@ async function fakeAgent(token: string): Promise<FakeAgent> {
     }
     if (agent.behaviour === "reject") {
       response.writeHead(400, { "Content-Type": "application/json" });
-      response.end(JSON.stringify({ error: "La unidad no está configurada" }));
+      response.end(JSON.stringify({ error: AGENT_REASON }));
       return;
     }
     if (path === "/action") {
@@ -182,35 +183,43 @@ describe.skipIf(!baseUrl)("telegram intent API", () => {
   const execute = (token: string, headers?: Record<string, string>) =>
     api("/api/telegram/intents/execute", { token }, headers);
 
-  async function sample(hostId: string, containers: unknown[] = []) {
+  async function sample(hostId: string, containers: unknown[] = [], ahead = 0) {
     await db.insert(tables.samples).values({
       hostId,
-      at: new Date(),
+      at: new Date(Date.now() + ahead),
       data: metrics(hostId, containers) as never,
     });
   }
 
-  /** A newer sample that carries the container `plex` under the given id. */
-  const withPlex = (id = PLEX_ID) =>
-    sample("nas-home", [
-      {
-        id,
-        name: "plex",
-        image: "plex:latest",
-        state: "running",
-        status: "Up",
-        protected: false,
-        composeProject: null,
-        composeService: null,
-        oneShot: false,
-        exitCode: null,
-        orphan: false,
-        recreateOnCompose: false,
-        cpu: 1,
-        memory: 1,
-        compose: null,
-      },
-    ]);
+  /**
+   * A newer sample that carries one container. `ahead` keeps it the newest even
+   * when two samples are written in the same millisecond.
+   */
+  const withContainer = (name: string, id: string, ahead = 1) =>
+    sample(
+      "nas-home",
+      [
+        {
+          id,
+          name,
+          image: "image:latest",
+          state: "running",
+          status: "Up",
+          protected: false,
+          composeProject: null,
+          composeService: null,
+          oneShot: false,
+          exitCode: null,
+          orphan: false,
+          recreateOnCompose: false,
+          cpu: 1,
+          memory: 1,
+          compose: null,
+        },
+      ],
+      ahead,
+    );
+  const withPlex = (id = PLEX_ID, ahead = 1) => withContainer("plex", id, ahead);
 
   beforeAll(async () => {
     nas = await fakeAgent("a".repeat(32));
@@ -851,26 +860,205 @@ describe.skipIf(!baseUrl)("telegram intent API", () => {
       expect(again.status).toBe(200);
       expect(nas.requests).toHaveLength(1);
     });
+  });
+
+  describe("agent actions", () => {
+    it("runs start with the session alone, resolving the id by name", async () => {
+      const { token, intent } = await handoffFor("container:plex", "act_start");
+      await clearVerification(db, tables);
+      await withPlex();
+
+      const response = await execute(token);
+
+      expect(response.status).toBe(200);
+      expect(nas.requests).toEqual([
+        {
+          method: "POST",
+          path: "/action",
+          body: { action: "start", id: PLEX_ID },
+        },
+      ]);
+      expect((await operations())[0]).toMatchObject({
+        id: intent.id,
+        action: "start",
+        channel: "telegram",
+        requestedBy: TEST_USER_ID,
+      });
+      expect((await intentRow(intent.id)).status).toBe("executed");
+    });
+
+    it("asks for a recent verification before restart and reboot", async () => {
+      await withPlex();
+      for (const [key, action] of [
+        ["container:plex", "act_restart"],
+        ["reboot-pending", "act_reboot"],
+      ] as const) {
+        const { token, intent } = await handoffFor(key, action);
+        await clearVerification(db, tables);
+
+        const response = await execute(token);
+
+        expect(response.status, action).toBe(403);
+        expect((await intentRow(intent.id)).status, action).toBe("pending");
+        await seedVerifiedSession(db, tables);
+      }
+      expect(nas.requests).toEqual([]);
+      expect(await operations()).toEqual([]);
+    });
+
+    it("requests the reboot with the server confirmation and leaves the operation pending", async () => {
+      const { token, intent } = await handoffFor("reboot-pending", "act_reboot");
+
+      const response = await execute(token);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        ok: true,
+        status: "pending",
+        operation: { id: intent.id, action: "reboot", status: "pending" },
+      });
+      expect(nas.requests).toEqual([
+        {
+          method: "POST",
+          path: "/action",
+          body: { action: "reboot", confirmation: "REINICIAR NAS" },
+        },
+      ]);
+      const [latest] = await db
+        .select()
+        .from(tables.samples)
+        .orderBy(desc(tables.samples.at))
+        .limit(1);
+      const [operation] = await operations();
+      expect(operation).toMatchObject({
+        id: intent.id,
+        status: "pending",
+        channel: "telegram",
+        requestedBy: TEST_USER_ID,
+      });
+      expect(operation.detail).toBeTruthy();
+      expect(operation.bootAt?.getTime()).toBe(
+        (latest.data.timestamp - latest.data.uptime) * 1000,
+      );
+      expect((await intentRow(intent.id)).status).toBe("executed");
+    });
+
+    it("closes operation and intent as failed with the agent reason when the reboot is refused", async () => {
+      const { token, intent } = await handoffFor("reboot-pending", "act_reboot");
+      nas.behaviour = "reject";
+
+      const response = await execute(token);
+
+      expect(response.status).toBe(400);
+      expect(nas.requests).toHaveLength(1);
+      expect((await operations())[0]).toMatchObject({
+        id: intent.id,
+        status: "failed",
+        detail: AGENT_REASON,
+      });
+      expect((await intentRow(intent.id)).status).toBe("failed");
+      expect((await execute(token)).status).toBe(200);
+      expect(nas.requests).toHaveLength(1);
+    });
 
     it.each([
       ["container:plex", "act_start"],
-      ["reboot-pending", "act_reboot"],
+      ["container:plex", "act_restart"],
     ] as const)(
-      "answers 501 for %s %s before claiming the intent",
+      "answers 409 for %s %s when no container carries that name, without claiming",
       async (key, action) => {
         const { token, intent } = await handoffFor(key, action);
 
         const response = await execute(token);
 
-        expect(response.status).toBe(501);
-        expect(await response.json()).toMatchObject({
-          code: "action_unavailable",
-        });
+        expect(response.status).toBe(409);
+        expect(await response.json()).toMatchObject({ code: "container_gone" });
         expect(nas.requests).toEqual([]);
         expect(await operations()).toEqual([]);
-        expect((await intentRow(intent.id)).status).toBe("pending");
+        const row = await intentRow(intent.id);
+        expect(row.status).toBe("pending");
+        expect(row.usedAt).toBeNull();
       },
     );
+
+    it("acts on the id the container has now when it was recreated after the notice", async () => {
+      await withPlex("e".repeat(64), 1);
+      const { token } = await handoffFor("container:plex", "act_restart");
+      const recreated = "f".repeat(64);
+      await withPlex(recreated, 2_000);
+
+      const response = await execute(token);
+
+      expect(response.status).toBe(200);
+      expect(nas.requests).toEqual([
+        {
+          method: "POST",
+          path: "/action",
+          body: { action: "restart", id: recreated },
+        },
+      ]);
+    });
+
+    it.each([
+      ["container:plex", "act_start"],
+      ["container:plex", "act_restart"],
+      ["reboot-pending", "act_reboot"],
+    ] as const)(
+      "answers 503 for %s %s without a recent sample and works once the host answers again",
+      async (key, action) => {
+        await withPlex();
+        const { token, intent } = await handoffFor(key, action);
+        await db
+          .update(tables.samples)
+          .set({ at: new Date(Date.now() - 10 * 60_000) });
+
+        const stale = await execute(token);
+
+        expect(stale.status).toBe(503);
+        expect(nas.requests).toEqual([]);
+        expect(await operations()).toEqual([]);
+        const row = await intentRow(intent.id);
+        expect(row.status).toBe("pending");
+        expect(row.usedAt).toBeNull();
+
+        await withPlex();
+        const retried = await execute(token);
+
+        expect(retried.status).toBe(200);
+        expect(nas.requests).toHaveLength(1);
+        expect((await intentRow(intent.id)).status).toBe("executed");
+      },
+    );
+
+    it("leaves a lost reply pending and the intent uncertain without resending", async () => {
+      await withPlex();
+      const { token, intent } = await handoffFor("container:plex", "act_restart");
+      nas.behaviour = "uncertain";
+
+      const response = await execute(token);
+
+      expect(response.status).toBe(502);
+      expect((await operations())[0]).toMatchObject({
+        id: intent.id,
+        status: "pending",
+      });
+      expect((await intentRow(intent.id)).status).toBe("uncertain");
+      const again = await execute(token);
+      expect(again.status).toBe(200);
+      expect(nas.requests).toHaveLength(1);
+    });
+
+    it("sends one request to the agent for two concurrent executes of a restart", async () => {
+      await withPlex();
+      const { token } = await handoffFor("container:plex", "act_restart");
+
+      const [first, second] = await Promise.all([execute(token), execute(token)]);
+
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+      expect(nas.requests).toHaveLength(1);
+      expect(await operations()).toHaveLength(1);
+    });
   });
 
   describe("manifest authority", () => {
@@ -883,13 +1071,16 @@ describe.skipIf(!baseUrl)("telegram intent API", () => {
       "deploy-now": "deploy-failed",
     };
 
-    it("answers 403 to every protected stored action without verification, and not to start", async () => {
+    it("answers 403 to every protected stored action without verification, and runs start with the session alone", async () => {
+      await withContainer("svc-start", "d".repeat(64));
       for (const action of intentsModule.intentActionIds) {
         const { token, intent } = await handoffFor(
           keyFor[action],
           intentsModule.tokenActionOf(action),
         );
         await clearVerification(db, tables);
+        nas.requests = [];
+        const before = (await operations()).length;
 
         const response = await execute(token);
 
@@ -899,11 +1090,13 @@ describe.skipIf(!baseUrl)("telegram intent API", () => {
             code: "recent_verification_required",
           });
           expect((await intentRow(intent.id)).status, action).toBe("pending");
+          expect(nas.requests, action).toEqual([]);
+          expect((await operations()).length, action).toBe(before);
         } else {
-          expect(response.status, action).not.toBe(403);
+          expect(response.status, action).toBe(200);
+          expect(nas.requests, action).toHaveLength(1);
+          expect((await intentRow(intent.id)).status, action).toBe("executed");
         }
-        expect(nas.requests, action).toEqual([]);
-        expect(await operations(), action).toEqual([]);
         await seedVerifiedSession(db, tables);
       }
     });
