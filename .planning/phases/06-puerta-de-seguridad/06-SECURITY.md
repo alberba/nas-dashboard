@@ -73,7 +73,7 @@ created: "2026-11-27"
 
 | Risk ID | Threat Ref | Rationale | Accepted By | Date |
 |---------|------------|-----------|-------------|------|
-| AR-06-01 | T-06-04 | A replay answers before the guard and before any insert or agent call, so nothing new executes; it returns the same operation projection that `/api/overview` already serves, to an authenticated, Origin-checked request that must know a UUID key. The plan's wording "same session" is not enforced (only the host is compared), but on a single-owner hub (sign-up is disabled; only the SETUP_TOKEN-guarded setup creates the first account) the exposure is unchanged | Plan 06-01 | 2026-11-27 |
+| AR-06-01 | T-06-04 | On `/api/action` a replay answers before the guard and before any insert or agent call, so nothing new executes (host commands guard first, which is stricter); it returns the same operation projection that `/api/overview` already serves, to an authenticated, Origin-checked request that must know a UUID key. The plan's wording "same session" is not enforced (only the host is compared), but on a single-owner hub (sign-up is disabled; only the SETUP_TOKEN-guarded setup creates the first account) the exposure is unchanged | Plan 06-01 | 2026-11-27 |
 | AR-06-02 | T-06-08 | A duplicated `Strict-Transport-Security` header is harmless: the browser processes only the first and both are equivalent; the README tells the operator to leave Nginx Proxy Manager's "HSTS Enabled" switch off | Plan 06-02 | 2026-11-27 |
 | AR-06-03 | T-06-11 | `check-health` only issues Docker `GET` calls on the agent and changes nothing (D-03); the server declares it exempt and still requires an `Idempotency-Key`, so a repeat is deduplicated | Plan 06-03 | 2026-11-27 |
 | AR-06-04 | T-06-23 | With the 8 MiB `/files` cap a directory that large cannot be listed; the view shows the error and keeps the last listing (e2e-covered); the limitation is documented in the README and the caps are to be measured against real sizes in production | Plan 06-06 | 2026-11-27 |
@@ -86,7 +86,7 @@ created: "2026-11-27"
 
 | Audit Date | Threats Total | Closed | Open | Run By |
 |------------|---------------|--------|------|--------|
-| 2026-11-27 | 24 | 24 | 0 | /gsd-secure-phase (L1, plan-time register, ASVS 1, short-circuit without auditor spawn; mitigations read in code and re-verified by running 193 integration tests over 8 files and `tests/e2e/csp.spec.ts` 5/5 on the production build; 20 mitigated, 4 plan-time accepts) |
+| 2026-11-27 | 24 | 24 | 0 | /gsd-secure-phase (L1, plan-time register, ASVS 1, short-circuit without auditor spawn; each mitigation read in code and its tests re-run: 315 vitest tests over 15 files against PostgreSQL and 30 Playwright tests over 4 specs on the production build, all green; 20 mitigated, 4 plan-time accepts) |
 
 ---
 
