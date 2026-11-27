@@ -410,4 +410,348 @@ describe.skipIf(!baseUrl)("telegram intent API", () => {
     expect(nas.requests).toEqual([]);
     expect((await intentRow(intent.id)).status).toBe("pending");
   });
+
+  describe("inspect", () => {
+    const inspect = (token: string) =>
+      api("/api/telegram/intents/inspect", { token });
+
+    it("describes a live intent without consuming it", async () => {
+      const { token, intent, incidentId } = await handoffFor(
+        "backup-failed",
+        "act_backup_now",
+      );
+
+      for (let turn = 0; turn < 2; turn += 1) {
+        const response = await inspect(token);
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({
+          state: "ready",
+          action: "backup-now",
+          target: "nas-home",
+          host: { id: "nas-home", name: "NAS-HOME" },
+          incident: { id: incidentId, resolved: false },
+          requiresVerification: true,
+          expiresAt: intent.expiresAt.toISOString(),
+        });
+      }
+      expect((await intentRow(intent.id)).status).toBe("pending");
+      expect(nas.requests).toEqual([]);
+    });
+
+    it("reports that start needs no verification", async () => {
+      const { token } = await handoffFor("container:plex", "act_start");
+
+      const body = await (await inspect(token)).json();
+
+      expect(body).toMatchObject({
+        state: "ready",
+        action: "start",
+        target: "plex",
+        requiresVerification: false,
+      });
+    });
+
+    it("keeps a live intent ready once its incident is resolved (D-05)", async () => {
+      const { token, incidentId } = await handoffFor(
+        "backup-failed",
+        "act_backup_now",
+      );
+      const closed = await store.recordIncidentObservation({
+        hostId: "nas-home",
+        key: "backup-failed",
+        failing: false,
+        now: START + 150_000,
+      });
+      expect(closed.action).toBe("resolved");
+
+      const body = await (await inspect(token)).json();
+
+      expect(body).toMatchObject({
+        state: "ready",
+        incident: { id: incidentId, resolved: true },
+      });
+    });
+
+    it("marks a lapsed intent expired in the database", async () => {
+      const { token, intent } = await handoffFor(
+        "backup-failed",
+        "act_backup_now",
+      );
+      await db
+        .update(tables.telegramActionIntents)
+        .set({ expiresAt: new Date(Date.now() - 1_000) })
+        .where(eq(tables.telegramActionIntents.id, intent.id));
+
+      const response = await inspect(token);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ state: "expired" });
+      expect((await intentRow(intent.id)).status).toBe("expired");
+    });
+
+    it("reports a cancelled intent", async () => {
+      const { token, intent } = await handoffFor(
+        "backup-failed",
+        "act_backup_now",
+      );
+      await db
+        .update(tables.telegramActionIntents)
+        .set({ status: "cancelled" })
+        .where(eq(tables.telegramActionIntents.id, intent.id));
+
+      expect(await (await inspect(token)).json()).toMatchObject({
+        state: "cancelled",
+      });
+    });
+
+    it("reports a consumed intent with its operation", async () => {
+      const { token, intent } = await handoffFor(
+        "backup-failed",
+        "act_backup_now",
+      );
+      expect((await execute(token)).status).toBe(200);
+
+      const body = await (await inspect(token)).json();
+
+      expect(body).toMatchObject({
+        state: "consumed",
+        operation: { id: intent.id, status: "success" },
+      });
+    });
+
+    it("answers the same 404 for an unknown token and for another user's intent", async () => {
+      const { token, intent } = await handoffFor(
+        "backup-failed",
+        "act_backup_now",
+      );
+      await db
+        .insert(tables.user)
+        .values({ id: "other-user", name: "Other", email: "other@hub.invalid" });
+      await db
+        .update(tables.telegramActionIntents)
+        .set({ userId: "other-user" })
+        .where(eq(tables.telegramActionIntents.id, intent.id));
+
+      const foreign = await inspect(token);
+      const unknown = await inspect("A".repeat(43));
+
+      expect(foreign.status).toBe(404);
+      expect(unknown.status).toBe(404);
+      expect(await foreign.json()).toEqual(await unknown.json());
+      const foreignExecute = await execute(token);
+      expect(foreignExecute.status).toBe(404);
+      expect(await foreignExecute.json()).toMatchObject({
+        code: "intent_unknown",
+      });
+      expect(nas.requests).toEqual([]);
+    });
+
+    it("answers 401 without a session and 400 for a body with extra fields", async () => {
+      const { token } = await handoffFor("backup-failed", "act_backup_now");
+      const extra = await api("/api/telegram/intents/inspect", {
+        token,
+        action: "start",
+      });
+      expect(extra.status).toBe(400);
+      session.value = null;
+      expect((await inspect(token)).status).toBe(401);
+    });
+  });
+
+  describe("execute states", () => {
+    it("answers 410 after the intent lapsed and runs nothing", async () => {
+      const { token, intent } = await handoffFor(
+        "backup-failed",
+        "act_backup_now",
+      );
+      await db
+        .update(tables.telegramActionIntents)
+        .set({ expiresAt: new Date(Date.now() - 1_000) })
+        .where(eq(tables.telegramActionIntents.id, intent.id));
+
+      const response = await execute(token);
+
+      expect(response.status).toBe(410);
+      expect(await response.json()).toMatchObject({ code: "intent_expired" });
+      expect(nas.requests).toEqual([]);
+      expect(await operations()).toEqual([]);
+    });
+
+    it("answers 410 after the intent was cancelled and runs nothing", async () => {
+      const { token, intent } = await handoffFor(
+        "backup-failed",
+        "act_backup_now",
+      );
+      await db
+        .update(tables.telegramActionIntents)
+        .set({ status: "cancelled" })
+        .where(eq(tables.telegramActionIntents.id, intent.id));
+
+      const response = await execute(token);
+
+      expect(response.status).toBe(410);
+      expect(await response.json()).toMatchObject({ code: "intent_cancelled" });
+      expect(nas.requests).toEqual([]);
+    });
+
+    it("returns the existing operation when the intent already ran", async () => {
+      const { token, intent } = await handoffFor(
+        "backup-failed",
+        "act_backup_now",
+      );
+      expect((await execute(token)).status).toBe(200);
+
+      const again = await execute(token);
+
+      expect(again.status).toBe(200);
+      expect(await again.json()).toMatchObject({
+        ok: true,
+        status: "success",
+        operation: { id: intent.id },
+      });
+      expect(nas.requests).toHaveLength(1);
+      expect(await operations()).toHaveLength(1);
+    });
+
+    it("answers pending while an executing intent has no operation yet", async () => {
+      const { token, intent } = await handoffFor(
+        "backup-failed",
+        "act_backup_now",
+      );
+      await db
+        .update(tables.telegramActionIntents)
+        .set({ status: "executing", usedAt: new Date() })
+        .where(eq(tables.telegramActionIntents.id, intent.id));
+
+      const response = await execute(token);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, status: "pending" });
+      expect(nas.requests).toEqual([]);
+    });
+
+    it("sends one request to the agent for two concurrent executes", async () => {
+      const { token, intent } = await handoffFor(
+        "backup-failed",
+        "act_backup_now",
+      );
+
+      const [first, second] = await Promise.all([execute(token), execute(token)]);
+
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+      expect(nas.requests).toHaveLength(1);
+      expect(await operations()).toHaveLength(1);
+      expect((await intentRow(intent.id)).status).toBe("executed");
+    });
+
+    it("answers 503 without claiming when the host has no recent sample", async () => {
+      const { token, intent } = await handoffFor(
+        "backup-failed",
+        "act_backup_now",
+      );
+      await db
+        .update(tables.samples)
+        .set({ at: new Date(Date.now() - 10 * 60_000) });
+
+      const response = await execute(token);
+
+      expect(response.status).toBe(503);
+      expect(nas.requests).toEqual([]);
+      expect(await operations()).toEqual([]);
+      const row = await intentRow(intent.id);
+      expect(row.status).toBe("pending");
+      expect(row.usedAt).toBeNull();
+    });
+
+    it("gives the claim back when the executor sent nothing", async () => {
+      const { token, intent } = await handoffFor(
+        "backup-failed",
+        "act_backup_now",
+      );
+      // The precheck reads the injected clock and passes; the executor reads
+      // the real one and finds the sample stale, so nothing is sent.
+      const sampled = Date.now() - 100_000;
+      await db.update(tables.samples).set({ at: new Date(sampled) });
+      const { handleIntentExecute } = await import("@/lib/telegram-intent-api");
+
+      const response = await handleIntentExecute({
+        request: new Request("http://localhost/api/telegram/intents/execute", {
+          method: "POST",
+          headers: { Origin: "http://localhost:3000" },
+          body: JSON.stringify({ token }),
+        }),
+        session: testSession,
+        now: sampled + 10_000,
+      });
+
+      expect(response.status).toBe(503);
+      expect(nas.requests).toEqual([]);
+      expect(await operations()).toEqual([]);
+      const row = await intentRow(intent.id);
+      expect(row.status).toBe("pending");
+      expect(row.usedAt).toBeNull();
+    });
+
+    it("closes the intent as failed when the agent rejects the command", async () => {
+      const { token, intent } = await handoffFor(
+        "backup-failed",
+        "act_backup_now",
+      );
+      nas.behaviour = "reject";
+
+      const response = await execute(token);
+
+      expect(response.status).toBe(400);
+      expect(nas.requests).toHaveLength(1);
+      expect((await operations())[0]).toMatchObject({
+        id: intent.id,
+        status: "failed",
+      });
+      expect((await intentRow(intent.id)).status).toBe("failed");
+      expect((await execute(token)).status).toBe(200);
+      expect(nas.requests).toHaveLength(1);
+    });
+
+    it("leaves a lost reply pending and the intent uncertain without resending", async () => {
+      const { token, intent } = await handoffFor(
+        "backup-failed",
+        "act_backup_now",
+      );
+      nas.behaviour = "uncertain";
+
+      const response = await execute(token);
+
+      expect(response.status).toBe(502);
+      expect((await operations())[0]).toMatchObject({
+        id: intent.id,
+        status: "pending",
+      });
+      expect((await intentRow(intent.id)).status).toBe("uncertain");
+      const again = await execute(token);
+      expect(again.status).toBe(200);
+      expect(nas.requests).toHaveLength(1);
+    });
+
+    it.each([
+      ["container:plex", "act_start"],
+      ["container:plex", "act_restart"],
+      ["reboot-pending", "act_reboot"],
+    ] as const)(
+      "answers 501 for %s %s before claiming the intent",
+      async (key, action) => {
+        const { token, intent } = await handoffFor(key, action);
+
+        const response = await execute(token);
+
+        expect(response.status).toBe(501);
+        expect(await response.json()).toMatchObject({
+          code: "action_unavailable",
+        });
+        expect(nas.requests).toEqual([]);
+        expect(await operations()).toEqual([]);
+        expect((await intentRow(intent.id)).status).toBe("pending");
+      },
+    );
+  });
 });
