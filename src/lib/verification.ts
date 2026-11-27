@@ -82,63 +82,45 @@ export function primaryOrigin() {
   );
 }
 
-export function requestOrigin(request: Request) {
-  const origin = request.headers.get("origin");
-  if (origin) return origin;
+const HOST_HEADER = /^([a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)(?::\d{1,5})?$/i;
 
-  // A same-origin GET carries no Origin header. Behind the reverse proxy the
-  // internal scheme can be http, so read the forwarded host and fall back to
-  // https for public hosts: the method depends on the host, not the scheme.
-  const forwardedHost = (
-    request.headers.get("x-forwarded-host") ?? request.headers.get("host")
-  )
-    ?.split(",")[0]
-    ?.trim();
-  if (forwardedHost) {
-    const forwardedProto = request.headers
-      .get("x-forwarded-proto")
-      ?.split(",")[0]
-      ?.trim();
-    let protocol = forwardedProto;
-    if (!protocol) {
-      try {
-        const url = new URL(request.url);
-        protocol = ["localhost", "127.0.0.1", "[::1]", "::1"].includes(
-          url.hostname,
-        )
-          ? url.protocol.replace(":", "")
-          : "https";
-      } catch {
-        protocol = "https";
-      }
-    }
-    return `${protocol}://${forwardedHost}`;
-  }
-
+function hostnameOf(url: string) {
   try {
-    return new URL(request.url).origin;
+    return new URL(url).hostname.toLowerCase();
   } catch {
     return null;
   }
 }
 
-export function verificationMethodForOrigin(
-  origin: string | null,
-  primary: string | null = primaryOrigin(),
-): VerificationMethod {
-  if (!origin || !primary) return "passkey";
-  try {
-    return new URL(origin).hostname.toLowerCase() ===
-      new URL(primary).hostname.toLowerCase()
-      ? "passkey"
-      : "password";
-  } catch {
-    return "passkey";
-  }
+// The name the proxy routed this connection to. The proxy rewrites Host when it
+// forwards, so the client cannot choose it. A request built in-process carries
+// no Host header and falls back to its URL. A list, an empty value or anything
+// that is not name[:port] has no connection host.
+function connectionHostname(request: Request) {
+  const header = request.headers.get("host");
+  if (header === null) return hostnameOf(request.url);
+  return HOST_HEADER.exec(header.trim())?.[1].toLowerCase() ?? null;
 }
 
-export function verificationMethodForRequest(request: Request) {
-  return verificationMethodForOrigin(requestOrigin(request));
+/**
+ * The method follows the Host the proxy sets, never the Origin the client
+ * picks, and never a forwarded-host or forwarded-protocol header. An Origin
+ * that disagrees with the connection host, or cannot be read, falls back to
+ * the passkey, as does anything ambiguous.
+ */
+export function verificationMethodForRequest(
+  request: Request,
+): VerificationMethod {
+  const connectionHost = connectionHostname(request);
+  const primary = primaryOrigin();
+  const primaryHost = primary ? hostnameOf(primary) : null;
+  if (!connectionHost || !primaryHost) return "passkey";
+
+  const origin = request.headers.get("origin");
+  if (origin !== null && hostnameOf(origin) !== connectionHost)
+    return "passkey";
+
+  return connectionHost === primaryHost ? "passkey" : "password";
 }
 
 function iso(value: Date | null) {
