@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 06
 current_phase_name: Puerta de seguridad
 status: executing
-stopped_at: Completed 06-01-PLAN.md
-last_updated: "2026-11-27T10:44:32.357Z"
+stopped_at: Completed 06-02-PLAN.md
+last_updated: "2026-11-27T11:00:44.755Z"
 last_activity: 2026-11-27
 last_activity_desc: Phase 06 execution started
-state_head: 91cfb3d7b98582360ba0e0f64f0bf953137579ae
+state_head: 7cb2113d0b1df7e9b5a4e9eda476d357814c9dd6
 progress:
   total_phases: 8
   completed_phases: 5
   total_plans: 26
-  completed_plans: 21
+  completed_plans: 22
   percent: 63
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-27)
 ## Current Position
 
 Phase: 06 (Puerta de seguridad) — EXECUTING
-Plan: 2 of 6
+Plan: 3 of 6
 Status: Ready to execute
 Last activity: 2026-11-27 — Phase 06 execution started
 
@@ -73,6 +73,7 @@ Progress: [██████░░░░] 63%
 | Phase 05 P04 | 23 min | 3 tasks | 9 files |
 | Phase 05 P05 | 11 min | 3 tasks | 7 files |
 | Phase 06 P01 | 10 min | 3 tasks | 10 files |
+| Phase 06 P02 | 13 min | 3 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -121,6 +122,10 @@ Recent decisions affecting current work:
 - [Phase 06]: El guard de /api/action se decide por la acción del cuerpo tras el replay idempotente y antes de la muestra reciente y del insert; un 403 no registra operación
 - [Phase 06]: runHostCommand valida cuerpo, host y clave antes del guard por comando; executeHostCommand queda sin guard porque la decisión pertenece a quien lo invoca
 - [Phase 06]: Un replay de un comando de host ya terminado exige verificación vigente: efecto menor aceptado para no partir executeHostCommand
+- [Phase 06]: La CSP de documentos vive solo en src/proxy.ts; next.config.ts no emite CSP para HTML, asi que no hay dos politicas que se pisen
+- [Phase 06]: style-src conserva unsafe-inline por los atributos style dependientes de datos y no se anade upgrade-insecure-requests porque Playwright y el desarrollo van por localhost
+- [Phase 06]: HSTS se emite en la aplicacion con max-age=15552000 sin includeSubDomains ni preload para no arrastrar a otros servicios del dominio ni adoptar una decision casi irreversible
+- [Phase 06]: zod se ejecuta jitless en el cliente para que su sonda de eval no cuente como violacion de CSP; la validacion sigue siendo del servidor
 
 ### Pending Todos
 
@@ -144,6 +149,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-27T10:44:32.012Z
-Stopped at: Completed 06-01-PLAN.md
+Last session: 2026-11-27T11:00:23.587Z
+Stopped at: Completed 06-02-PLAN.md
 Resume file: None

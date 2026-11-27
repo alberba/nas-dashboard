@@ -174,12 +174,12 @@ Plans:
   1. Toda ruta destructiva (stop, restart, update, purge, empty-trash, clean-images, reconnect-apps, host-command, merge de Renovate) rechaza la acción sin verificación reciente en el servidor.
   2. La lista de acciones protegidas vive en un único módulo y un test falla si una ruta nueva no la declara.
   3. Las respuestas incluyen CSP conservadora y HSTS, y una mutación con cuerpo excesivo se rechaza antes de parsear.
-**Plans**: 1/6 plans executed
+**Plans**: 2/6 plans executed
 
 Plans:
 **Wave 1**
 - [x] 06-01-PLAN.md — Manifiesto único de acciones sensibles y guard de verificación reciente en acciones y comandos de host
-- [ ] 06-02-PLAN.md — CSP con nonce por petición y HSTS
+- [x] 06-02-PLAN.md — CSP con nonce por petición y HSTS
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 06-03-PLAN.md — UI: comandos protegidos con diálogo de passkey y e2e adaptados
@@ -247,7 +247,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 3. Agrupación, inventario y ayudantes | 3/3 | Complete    | 2026-11-25 |
 | 4. Resumen diario | 3/3 | Complete    | 2026-11-26 |
 | 5. Bot de lectura y reconocimiento | 6/6 | Complete    | 2026-11-27 |
-| 6. Puerta de seguridad | 1/6 | In Progress | - |
+| 6. Puerta de seguridad | 2/6 | In Progress | - |
 | 7. Acciones verificadas desde Telegram | 0/3 | Not started | - |
 | 8. Cutover de media-stack y consolidación | 0/3 | Not started | - |
 
