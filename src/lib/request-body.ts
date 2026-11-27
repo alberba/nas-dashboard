@@ -10,6 +10,13 @@
 
 export const DEFAULT_BODY_LIMIT = 16 * 1024;
 
+/**
+ * Ceiling for `POST /api/auth/*`: roomy enough for a passkey registration or
+ * sign-in response, far below anything a credential exchange needs. It lives
+ * here because a Next `route.ts` may only export verbs and segment options.
+ */
+export const AUTH_BODY_LIMIT = 32 * 1024;
+
 /** Thrown when a body exceeds its limit. The route answers 413, never 400/503. */
 export class BodyTooLarge extends Error {
   readonly limit: number;
