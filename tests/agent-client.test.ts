@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { NasInvalidResponse, NasRejected, nasForHost } from "../src/lib/nas";
+import {
+  AGENT_RESPONSE_LIMITS,
+  NasInvalidResponse,
+  NasRejected,
+  ResponseTooLarge,
+  nasForHost,
+  responseLimitFor,
+} from "../src/lib/nas";
 import { metricsSnapshot } from "./host-fixtures";
 
 const nas = {
@@ -174,5 +181,180 @@ describe("agent client", () => {
     if (!(withJson instanceof NasRejected))
       throw new Error("expected NasRejected");
     expect(withJson.message).toBe("El host no responde");
+  });
+
+  describe("bounded reads", () => {
+    const post = AGENT_RESPONSE_LIMITS.post;
+    const encoder = new TextEncoder();
+
+    /** A body that reports whether it was pulled and whether it was cancelled. */
+    function probeBody(chunks: Uint8Array[]) {
+      const probe = { pulls: 0, cancelled: false };
+      let next = 0;
+      const stream = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            probe.pulls += 1;
+            if (next >= chunks.length) controller.close();
+            else controller.enqueue(chunks[next++]);
+          },
+          cancel() {
+            probe.cancelled = true;
+          },
+        },
+        { highWaterMark: 0 },
+      );
+      return { probe, stream };
+    }
+
+    function chunked(bytes: Uint8Array, size: number) {
+      const chunks: Uint8Array[] = [];
+      for (let at = 0; at < bytes.length; at += size)
+        chunks.push(bytes.subarray(at, at + size));
+      return chunks;
+    }
+
+    /** A JSON object padded to exactly `size` bytes. */
+    function jsonOfSize(size: number) {
+      const frame = '{"pad":""}'.length;
+      return encoder.encode(`{"pad":"${"a".repeat(size - frame)}"}`);
+    }
+
+    async function failure(promise: Promise<unknown>) {
+      return promise.catch((reason: unknown) => reason);
+    }
+
+    function stubBody(
+      stream: ReadableStream<Uint8Array>,
+      init: ResponseInit = {},
+    ) {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => new Response(stream, { status: 200, ...init })),
+      );
+    }
+
+    it("picks the cap from the pathname and ignores the query", () => {
+      expect(responseLimitFor("/files?root=a&path=%2Flogs")).toBe(
+        AGENT_RESPONSE_LIMITS.files,
+      );
+      expect(responseLimitFor("/deployments?lines=100")).toBe(
+        AGENT_RESPONSE_LIMITS.deployments,
+      );
+      expect(responseLimitFor("/anything-else")).toBe(
+        AGENT_RESPONSE_LIMITS.other,
+      );
+      expect(responseLimitFor("/files", { a: 1 })).toBe(post);
+    });
+
+    it("refuses a declared oversize without reading the stream", async () => {
+      const limit = AGENT_RESPONSE_LIMITS.trash;
+      const { probe, stream } = probeBody([new Uint8Array(8)]);
+      stubBody(stream, {
+        headers: { "Content-Length": String(limit + 1) },
+      });
+      const error = await failure(nasForHost(nas, "/trash"));
+      expect(error).toBeInstanceOf(NasInvalidResponse);
+      if (!(error instanceof NasInvalidResponse))
+        throw new Error("expected NasInvalidResponse");
+      expect(error.cause).toBeInstanceOf(ResponseTooLarge);
+      expect(probe.pulls).toBe(0);
+      expect(probe.cancelled).toBe(true);
+    });
+
+    it("cuts an undeclared oversize while streaming and cancels the reader", async () => {
+      const limit = AGENT_RESPONSE_LIMITS.trash;
+      const size = 64 * 1024;
+      const chunks = Array.from({ length: limit / size + 40 }, () =>
+        new Uint8Array(size).fill(97),
+      );
+      const { probe, stream } = probeBody(chunks);
+      stubBody(stream);
+      const error = await failure(nasForHost(nas, "/trash"));
+      expect(error).toBeInstanceOf(NasInvalidResponse);
+      if (!(error instanceof NasInvalidResponse))
+        throw new Error("expected NasInvalidResponse");
+      expect(error.cause).toBeInstanceOf(ResponseTooLarge);
+      expect(probe.cancelled).toBe(true);
+      expect(probe.pulls).toBeLessThanOrEqual(limit / size + 2);
+    });
+
+    it("reads exactly the cap and parses it whole, never a partial body", async () => {
+      const parse = vi.spyOn(JSON, "parse");
+      try {
+        stubBody(probeBody(chunked(jsonOfSize(post), 4099)).stream);
+        const data = await nasForHost<{ pad: string }>(nas, "/action", {
+          action: "stop",
+        });
+        expect(data.pad).toHaveLength(post - '{"pad":""}'.length);
+
+        parse.mockClear();
+        stubBody(probeBody(chunked(jsonOfSize(post + 1), 4099)).stream);
+        const error = await failure(
+          nasForHost(nas, "/action", { action: "stop" }),
+        );
+        expect(error).toBeInstanceOf(NasInvalidResponse);
+        const bodies = parse.mock.calls.filter(
+          ([arg]) => typeof arg === "string" && arg.startsWith('{"pad"'),
+        );
+        expect(bodies).toEqual([]);
+      } finally {
+        parse.mockRestore();
+      }
+    });
+
+    it("turns every cut point into ResponseTooLarge, even inside a multibyte character", async () => {
+      const text = encoder.encode(`{"note":"${"€".repeat(post)}`);
+      for (const extra of [0, 1, 2, 3, 4]) {
+        for (const size of [1021, 4096, 65537]) {
+          const bytes = text.subarray(0, post + 1 + extra);
+          stubBody(probeBody(chunked(bytes, size)).stream);
+          const error = await failure(
+            nasForHost(nas, "/action", { action: "stop" }),
+          );
+          expect(error, `${extra}/${size}`).toBeInstanceOf(NasInvalidResponse);
+          if (!(error instanceof NasInvalidResponse))
+            throw new Error("expected NasInvalidResponse");
+          expect(error.cause, `${extra}/${size}`).toBeInstanceOf(
+            ResponseTooLarge,
+          );
+        }
+      }
+    });
+
+    it("leaves an oversized POST answer as an unverified result, not a rejection", async () => {
+      stubBody(probeBody(chunked(jsonOfSize(post + 1), 8192)).stream);
+      const error = await failure(
+        nasForHost(nas, "/action", { action: "stop" }),
+      );
+      expect(error).toBeInstanceOf(NasInvalidResponse);
+      expect(error).not.toBeInstanceOf(NasRejected);
+    });
+
+    it("keeps the status of an oversized error answer as a rejection", async () => {
+      const limit = AGENT_RESPONSE_LIMITS.trash;
+      stubBody(probeBody([new Uint8Array(8)]).stream, {
+        status: 502,
+        headers: { "Content-Length": String(limit + 1) },
+      });
+      const error = await failure(nasForHost(nas, "/trash"));
+      expect(error).toBeInstanceOf(NasRejected);
+      if (!(error instanceof NasRejected))
+        throw new Error("expected NasRejected");
+      expect(error.status).toBe(502);
+
+      const size = 64 * 1024;
+      stubBody(
+        probeBody(
+          Array.from({ length: limit / size + 2 }, () => new Uint8Array(size)),
+        ).stream,
+        { status: 500 },
+      );
+      const streamed = await failure(nasForHost(nas, "/trash"));
+      expect(streamed).toBeInstanceOf(NasRejected);
+      if (!(streamed instanceof NasRejected))
+        throw new Error("expected NasRejected");
+      expect(streamed.status).toBe(500);
+    });
   });
 });

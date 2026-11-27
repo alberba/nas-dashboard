@@ -2,6 +2,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { AGENT_RESPONSE_LIMITS } from "../src/lib/nas";
 
 vi.mock("@/lib/auth", () => ({
   auth: {
@@ -25,6 +26,8 @@ type FakeAgent = {
   token: string;
   requests: RecordedRequest[];
   fail: boolean;
+  /** Answer /deployments over its cap, declared up front or streamed. */
+  oversize: "declared" | "streamed" | null;
   close(): Promise<void>;
 };
 
@@ -94,6 +97,7 @@ async function fakeAgent(token: string): Promise<FakeAgent> {
     url: "",
     requests: [],
     fail: false,
+    oversize: null,
     async close() {
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
@@ -112,8 +116,26 @@ async function fakeAgent(token: string): Promise<FakeAgent> {
     if (request.headers.authorization !== `Bearer ${token}`)
       return send(401, { error: "No autorizado" });
     if (agent.fail) return send(503, { error: "El host no responde" });
-    if (new URL(request.url ?? "/", "http://agent").pathname === "/deployments")
+    if (new URL(request.url ?? "/", "http://agent").pathname === "/deployments") {
+      if (agent.oversize) {
+        // Padded past the cap, carrying a marker that must never reach the browser.
+        const pad = `{"marker":"agent-secret-marker","pad":"${"a".repeat(
+          AGENT_RESPONSE_LIMITS.deployments,
+        )}"}`;
+        if (agent.oversize === "declared") {
+          response.writeHead(200, {
+            "Content-Type": "application/json",
+            "Content-Length": Buffer.byteLength(pad),
+          });
+          return response.end(pad);
+        }
+        response.writeHead(200, { "Content-Type": "application/json" });
+        for (let at = 0; at < pad.length; at += 65_536)
+          response.write(pad.slice(at, at + 65_536));
+        return response.end();
+      }
       return send(200, snapshot());
+    }
     return send(404, { error: "No encontrado" });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -169,6 +191,8 @@ describe("deployments API", () => {
     apps.requests = [];
     nas.fail = false;
     apps.fail = false;
+    nas.oversize = null;
+    apps.oversize = null;
   });
 
   it("returns the deployment snapshot of the selected host without credentials", async () => {
@@ -235,5 +259,22 @@ describe("deployments API", () => {
 
     expect(response.status).toBe(503);
     expect(apps.requests).toHaveLength(1);
+  });
+
+  it("answers 502 with a stable code when the agent response is over its cap", async () => {
+    for (const mode of ["declared", "streamed"] as const) {
+      apps.oversize = mode;
+      const response = await api("/api/deployments?host=apps");
+
+      expect(response.status, mode).toBe(502);
+      const text = await response.text();
+      expect(JSON.parse(text).code, mode).toBe("agent_response_too_large");
+      expect(text, mode).not.toContain("agent-secret-marker");
+      expect(text, mode).not.toContain("deployments\":");
+
+      apps.oversize = null;
+      const next = await api("/api/deployments?host=apps");
+      expect(next.status, mode).toBe(200);
+    }
   });
 });
