@@ -177,11 +177,18 @@ Plans:
 **Plans**: 6 plans
 
 Plans:
+**Wave 1**
 - [ ] 06-01-PLAN.md — Manifiesto único de acciones sensibles y guard de verificación reciente en acciones y comandos de host
 - [ ] 06-02-PLAN.md — CSP con nonce por petición y HSTS
+
+**Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 06-03-PLAN.md — UI: comandos protegidos con diálogo de passkey y e2e adaptados
 - [ ] 06-04-PLAN.md — Límite de cuerpo de las mutaciones con 413 antes de parsear
+
+**Wave 3** *(blocked on Wave 2 completion)*
 - [ ] 06-05-PLAN.md — Manifiesto de rutas fail-closed, escaneos que fallan ante una ruta sin declarar y cuerpo acotado de Better Auth
+
+**Wave 4** *(blocked on Wave 3 completion)*
 - [ ] 06-06-PLAN.md — Tope de respuesta del agente (502) y vistas que conservan el último dato
 
 **Repo:** hub (incluye `agent/`)
