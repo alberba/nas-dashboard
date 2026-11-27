@@ -131,6 +131,11 @@ export const routeManifest = {
   hosts: { GET: "read" },
   maintenance: { GET: "read" },
   "host-command": { POST: perItem(hostCommandPolicies) },
+  "telegram/intents/inspect": {
+    POST: exempt(
+      "Lee el estado de un intent del propio operador y no ejecuta nada",
+    ),
+  },
   "telegram/intents/execute": {
     POST: perItem({ ...actionPolicies, ...hostCommandPolicies }),
   },

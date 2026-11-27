@@ -62,7 +62,7 @@ import { hostStatuses } from "@/lib/host-status";
 import { maintenanceForHost } from "@/lib/maintenance";
 import { runHostCommand } from "@/lib/host-commands";
 import { BodyTooLarge, readJsonBody } from "@/lib/request-body";
-import { handleIntentExecute } from "@/lib/telegram-intent-api";
+import { handleIntentExecute, handleIntentInspect } from "@/lib/telegram-intent-api";
 import { projectIncidents } from "@/lib/incident-store";
 import {
   applyIncidentAction,
@@ -254,6 +254,8 @@ async function handle(
         hosts: getHosts(),
       });
     }
+    if (route === "telegram/intents/inspect" && request.method === "POST")
+      return await handleIntentInspect({ request, session: current });
     if (route === "telegram/intents/execute" && request.method === "POST")
       return await handleIntentExecute({ request, session: current });
     if (route === "deployments" && !mutation) {
