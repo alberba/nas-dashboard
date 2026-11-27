@@ -1,19 +1,19 @@
 ---
 gsd_state_version: "1.0"
-current_phase: 06
-current_phase_name: Puerta de seguridad
-status: verifying
-stopped_at: Completed 06-06-PLAN.md
-last_updated: "2026-11-27T12:24:07.441Z"
+current_phase: 7
+current_phase_name: Acciones verificadas desde Telegram
+status: planning
+stopped_at: Phase 06 complete, ready to plan Phase 7
+last_updated: "2026-11-27T16:20:27.245Z"
 last_activity: 2026-11-27
-last_activity_desc: Phase 06 execution started
-state_head: 7e6136225efa5b64271120ca357685aeaacbcb7c
+last_activity_desc: Phase 06 complete, transitioned to Phase 7
+state_head: 940f3b3f2c73f465e48fac83a7ca17135f58e7e0
 progress:
   total_phases: 8
-  completed_phases: 5
+  completed_phases: 6
   total_plans: 26
   completed_plans: 26
-  percent: 63
+  percent: 75
 ---
 
 # Project State
@@ -23,21 +23,21 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-27)
 
 **Core value:** Saber en segundos qué está pasando en los dos servidores y poder actuar sobre ellos sin abrir una consola.
-**Current focus:** Phase 06 — Puerta de seguridad
+**Current focus:** Phase 07 — Acciones verificadas desde Telegram
 
 ## Current Position
 
-Phase: 06 (Puerta de seguridad) — EXECUTING
-Plan: 6 of 6
-Status: Phase complete — ready for verification
-Last activity: 2026-11-27 — Phase 06 execution started
+Phase: 7 — Acciones verificadas desde Telegram
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-11-27 — Phase 06 complete, transitioned to Phase 7
 
-Progress: [██████░░░░] 63%
+Progress: [████████░░] 75%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 20
+- Total plans completed: 26
 - Average duration: —
 - Total execution time: 0 hours
 
@@ -50,6 +50,7 @@ Progress: [██████░░░░] 63%
 | 3 | 3 | - | - |
 | 04 | 3 | - | - |
 | 05 | 6 | - | - |
+| 06 | 6 | - | - |
 
 **Recent Trend:**
 - Last 5 plans: —
@@ -147,8 +148,9 @@ None yet.
 
 ### Blockers/Concerns
 
-Ningún bloqueo para planificar la fase 6.
-- [Fase 05] Las fases 2–5 se desplegaron en producción el 2026-11-27 (copia previa en `~/hub-deploy/20261127-074705` del servidor); `main` local sigue 160+ commits por delante de `origin/main` sin push.
+Ningún bloqueo para planificar la fase 7.
+- [Fase 06] CR-01 de `06-REVIEW.md` sigue `open` en `06-REVIEW-DISPOSITION.md` (el factor passkey/contraseña se elige por la cabecera Origin). La fase 7 confía en esa verificación: resolverlo o registrar la decisión antes de planificarla. WR-01 a WR-04 también siguen `open`.
+- [Fase 06] Producción ya tiene la fase 6 desplegada y `main` coincide con `origin/main`. La entrada pública pasó al NPM de Oracle el 2026-11-27; el NPM del NAS se retiró y el cron de DonDNS del NAS está desactivado.
 - [Fase 05] Pendiente de observar: la etiqueta del episodio reconocido en el resumen del 2026-11-28 y la escalada con Por qué (temperature es siempre crítica).
 - [Fase 05] `05-VALIDATION.md` sigue en draft: `/gsd-validate-phase 5` no se completó.
 - [Fase 04] Para probar el healthcheck del worker hay que congelar el proceso `node`, no el contenedor: `docker kill -s SIGSTOP` solo para `pnpm` (PID 1).
@@ -163,6 +165,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-27T12:24:07.134Z
-Stopped at: Completed 06-06-PLAN.md
+Last session: 2026-11-27T16:25:00Z
+Stopped at: Phase 06 complete, ready to plan Phase 7
 Resume file: None
