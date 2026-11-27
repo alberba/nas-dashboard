@@ -1,4 +1,6 @@
 import { test, expect } from "@playwright/test";
+import type { Page } from "@playwright/test";
+import { hostCommandPolicies } from "../../src/lib/sensitive-actions";
 const host = {
   id: "nas-home",
   name: "NAS-HOME",
@@ -241,4 +243,146 @@ test("merge sends the reviewed SHA once, with explicit major acknowledgement and
   expect(calls).toHaveLength(1);
   expect(calls[0].body).toEqual({ number: 17, headSha: sha, deployNow: false });
   expect(calls[0].key).toMatch(/^[0-9a-f-]{36}$/);
+});
+
+const uuid = /^[0-9a-f-]{36}$/;
+type CommandCall = { body: unknown; key: string | undefined };
+
+/** Counts host-command requests and fails the test on any native dialog. */
+async function watchCommands(page: Page, status = 200) {
+  const calls: CommandCall[] = [];
+  const native: string[] = [];
+  page.on("dialog", (dialog) => {
+    native.push(dialog.type());
+    void dialog.dismiss();
+  });
+  await page.route("**/api/verification", (r) =>
+    r.fulfill({
+      json: {
+        method: "passkey",
+        recent: true,
+        reason: null,
+        verifiedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+        ttlSeconds: 300,
+      },
+    }),
+  );
+  await page.route("**/api/host-command*", (r) => {
+    calls.push({
+      body: r.request().postDataJSON(),
+      key: r.request().headers()["idempotency-key"],
+    });
+    return r.fulfill(
+      status === 200
+        ? { json: { status: "success" } }
+        : { status, json: { error: "rechazado" } },
+    );
+  });
+  return { calls, native };
+}
+
+test("the host actions card asks for verification exactly for the protected commands", async ({
+  page,
+}) => {
+  const { calls, native } = await watchCommands(page);
+  await page.goto("/?view=maintenance&tab=status");
+  const ids = await page
+    .locator("[data-host-command]")
+    .evaluateAll((nodes) =>
+      nodes.map((node) => (node as HTMLElement).dataset.hostCommand ?? ""),
+    );
+  const policies: Record<string, { kind: string }> = hostCommandPolicies;
+  expect(ids.some((id) => policies[id]?.kind === "protected")).toBe(true);
+  expect(ids).toContain("check-health");
+  for (const id of ids) {
+    const sent = calls.length;
+    await page.locator(`[data-host-command="${id}"]`).click();
+    if (policies[id].kind === "protected") {
+      await expect(page.locator("dialog[data-sensitive-action]")).toBeVisible();
+      expect(calls).toHaveLength(sent);
+      await page.keyboard.press("Escape");
+      await expect(page.locator("dialog[data-sensitive-action]")).toHaveCount(0);
+    } else {
+      await expect.poll(() => calls.length).toBe(sent + 1);
+      expect(calls[sent].key).toMatch(uuid);
+      expect(calls[sent].body).toEqual({ command: id });
+      await expect(page.locator("dialog[data-sensitive-action]")).toHaveCount(0);
+      await expect(page.locator("[data-command-state]")).toHaveAttribute(
+        "data-command-state",
+        "success",
+      );
+    }
+  }
+  expect(native).toEqual([]);
+});
+
+test("the Ctrl K search asks for verification exactly for the protected commands", async ({
+  page,
+}) => {
+  const { calls, native } = await watchCommands(page);
+  await page.goto("/?view=maintenance&tab=status");
+  const palette = page.locator("dialog[aria-label]");
+  await page.keyboard.press("Control+k");
+  await expect(palette).toBeVisible();
+  const ids = await page
+    .locator("[data-command-option]")
+    .evaluateAll((nodes) =>
+      nodes.map((node) => (node as HTMLElement).dataset.commandOption ?? ""),
+    );
+  await page.keyboard.press("Control+k");
+  const policies: Record<string, { kind: string }> = hostCommandPolicies;
+  expect(ids.some((id) => policies[id]?.kind === "protected")).toBe(true);
+  expect(ids).toContain("check-health");
+  for (const id of ids) {
+    const sent = calls.length;
+    await page.keyboard.press("Control+k");
+    await expect(palette).toBeVisible();
+    await page.locator(`[data-command-option="${id}"]`).click();
+    if (policies[id].kind === "protected") {
+      await expect(page.locator("dialog[data-sensitive-action]")).toBeVisible();
+      expect(calls).toHaveLength(sent);
+      await page.keyboard.press("Escape");
+      await expect(page.locator("dialog[data-sensitive-action]")).toHaveCount(0);
+    } else {
+      await expect.poll(() => calls.length).toBe(sent + 1);
+      expect(calls[sent].key).toMatch(uuid);
+      expect(calls[sent].body).toEqual({ command: id });
+      await expect(page.locator("dialog[data-sensitive-action]")).toHaveCount(0);
+      await expect(page.locator("[data-toast]")).toBeVisible();
+    }
+  }
+  expect(native).toEqual([]);
+});
+
+test("a check-health rejected from the search is reported in the panel notice", async ({
+  page,
+}) => {
+  const { calls } = await watchCommands(page, 500);
+  await page.goto("/?view=maintenance&tab=status");
+  await page.keyboard.press("Control+k");
+  await page.locator('[data-command-option="check-health"]').click();
+  await expect(page.locator("[data-toast]")).toBeVisible();
+  expect(calls).toHaveLength(1);
+  await expect(page.locator("dialog[data-sensitive-action]")).toHaveCount(0);
+});
+
+test("confirming clean-images in the dialog sends one request and the card shows the outcome", async ({
+  page,
+}) => {
+  const { calls, native } = await watchCommands(page);
+  await page.goto("/?view=maintenance&tab=status");
+  await page.locator('[data-host-command="clean-images"]').click();
+  const dialog = page.locator("dialog[data-sensitive-action]");
+  await expect(dialog).toHaveAttribute("data-verification-recent", "true");
+  expect(calls).toHaveLength(0);
+  await dialog.locator("[data-confirm]").click();
+  await expect(page.locator("[data-command-state]")).toHaveAttribute(
+    "data-command-state",
+    "success",
+  );
+  expect(calls).toHaveLength(1);
+  expect(calls[0].body).toEqual({ command: "clean-images" });
+  expect(calls[0].key).toMatch(uuid);
+  expect(native).toEqual([]);
 });

@@ -491,6 +491,7 @@ export function Dashboard({ name }: { name: string }) {
       const hostLabel = hostName;
       sensitive.request({
         title: action.title,
+        description: hostLabel,
         consequences: [{ tone: "warn", text: action.detail }],
         confirmLabel: "Confirmar",
         destructive:
@@ -662,6 +663,7 @@ export function Dashboard({ name }: { name: string }) {
               <div className="topbar-search" data-slot="search">
                 <CommandSearch
                   containers={metrics?.containers ?? []}
+                  onNotice={setToast}
                   onContainer={(id) => {
                     go({ ...route, view: "maintenance", tab: "status" });
                     window.setTimeout(
@@ -939,7 +941,7 @@ export function Dashboard({ name }: { name: string }) {
           </dialog>
           {sensitive.dialog}
           {toast && (
-            <div className="toast" role="status">
+            <div className="toast" role="status" data-toast="">
               <CircleCheck />
               <span>{toast}</span>
               <button

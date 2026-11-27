@@ -3,8 +3,10 @@ import { useEffect, useRef, useState } from "react";
 import type { Container } from "@/lib/types";
 import type { HostCommand } from "@/lib/host-command-contract";
 import { useHostScope } from "./host-context";
+import { sendHostCommand } from "@/lib/host-command-client";
+import { requiresVerificationForCommand } from "@/lib/sensitive-actions";
 import { useSensitiveAction } from "./sensitive-action/sensitive-action";
-import { commandLabels } from "./views/maintenance-extras";
+import { commandConsequence, commandLabels } from "./views/maintenance-extras";
 import styles from "./views/maintenance-extra.module.css";
 const shortcuts: Record<string, HostCommand> = {
   d: "deploy-now",
@@ -15,9 +17,11 @@ const shortcuts: Record<string, HostCommand> = {
 export function CommandSearch({
   containers,
   onContainer,
+  onNotice,
 }: {
   containers: Container[];
   onContainer: (id: string) => void;
+  onNotice?: (text: string) => void;
 }) {
   const scope = useHostScope();
   const sensitive = useSensitiveAction();
@@ -33,19 +37,35 @@ export function CommandSearch({
     runRef.current = (command) => {
       if (!scope.canMutate) return;
       close();
+      const endpoint = scope.withHost("/api/host-command");
+      if (!requiresVerificationForCommand(command)) {
+        // Read-only commands (check-health) need no passkey (D-03).
+        void sendHostCommand(endpoint, command)
+          .then(({ ok, data }) => {
+            const error = (data as { error?: unknown } | null)?.error;
+            onNotice?.(
+              ok
+                ? `${commandLabels[command]}: completada.`
+                : typeof error === "string"
+                  ? error
+                  : `${commandLabels[command]}: no se pudo completar.`,
+            );
+          })
+          .catch(() =>
+            onNotice?.(
+              `${commandLabels[command]}: pendiente de verificar. Comprueba el host antes de otra acción.`,
+            ),
+          )
+          .finally(() =>
+            window.dispatchEvent(new Event("maintenance-refresh")),
+          );
+        return;
+      }
       sensitive.request({
         title: commandLabels[command],
-        consequences: [
-          {
-            tone: "warn",
-            text:
-              command === "clean-images"
-                ? "Se eliminarán imágenes sin contenedor, conservando las de rollback."
-                : "La acción se ejecutará una sola vez en el host seleccionado.",
-          },
-        ],
+        consequences: [commandConsequence(command)],
         confirmLabel: "Confirmar",
-        endpoint: scope.withHost("/api/host-command"),
+        endpoint,
         body: { command },
         onSettled: () => window.dispatchEvent(new Event("maintenance-refresh")),
       });
@@ -141,6 +161,7 @@ export function CommandSearch({
                 <button
                   className={styles.button}
                   data-search-command={c}
+                  data-command-option={c}
                   disabled={!scope.canMutate}
                   onClick={() => runRef.current(c)}
                 >

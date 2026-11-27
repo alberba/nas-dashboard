@@ -6,8 +6,11 @@ import type {
   HostCommand,
   HostCommandResult,
 } from "@/lib/host-command-contract";
+import { sendHostCommand } from "@/lib/host-command-client";
 import { commandResult } from "@/lib/maintenance-ui";
+import { requiresVerificationForCommand } from "@/lib/sensitive-actions";
 import { useHostScope } from "../host-context";
+import { useSensitiveAction } from "../sensitive-action/sensitive-action";
 import { Panel, StatusDot } from "../ui";
 import { useHostRead } from "./use-host-read";
 import styles from "./maintenance-extra.module.css";
@@ -36,8 +39,26 @@ const commandShortcuts: Partial<Record<HostCommand, string>> = {
   "backup-now": "B",
 };
 
+/** What the sensitive-action dialog tells the Operator before a protected command. */
+export function commandConsequence(command: HostCommand) {
+  return {
+    tone: "warn" as const,
+    text:
+      command === "clean-images"
+        ? "Se eliminarán imágenes sin contenedor, conservando las de rollback."
+        : "La acción se ejecutará una sola vez en el host seleccionado.",
+  };
+}
+
+type CommandBody = {
+  status?: string;
+  error?: unknown;
+  result?: HostCommandResult;
+};
+
 export function HostCommands({ children }: { children?: React.ReactNode }) {
   const { canMutate, host, withHost, key } = useHostScope();
+  const sensitive = useSensitiveAction();
   const sending = useRef(false);
   const [held, setHeld] = useState<{
     key: string;
@@ -46,50 +67,69 @@ export function HostCommands({ children }: { children?: React.ReactNode }) {
     result?: HostCommandResult;
   }>({ key: "", state: "", detail: "" });
   const state = held.key === key ? held : null;
+  /** One way to show a command's outcome, whether it was sent directly or by the dialog. */
+  function applyResult(scope: string, status: number, data: unknown) {
+    const body = (typeof data === "object" && data !== null ? data : {}) as CommandBody;
+    const outcome = commandResult(
+      body as Parameters<typeof commandResult>[0],
+    );
+    const uncertain = status >= 500 && status !== 503;
+    const ok = status >= 200 && status < 300;
+    setHeld({
+      key: scope,
+      ...outcome,
+      detail: ok
+        ? outcome.detail
+        : uncertain
+          ? "Pendiente de verificar"
+          : typeof body.error === "string"
+            ? body.error
+            : "Operación rechazada",
+      state: uncertain ? "pending" : outcome.state,
+      result: body.result,
+    });
+    window.dispatchEvent(new Event("maintenance-refresh"));
+  }
+  function applyPending(scope: string) {
+    setHeld({
+      key: scope,
+      state: "pending",
+      detail:
+        "Pendiente de verificar. Comprueba el host antes de otra acción.",
+    });
+  }
   async function run(command: HostCommand) {
     if (sending.current || state?.state === "pending" || !canMutate) return;
-    if (
-      command === "clean-images" &&
-      !window.confirm(
-        "Se eliminarán imágenes sin contenedor, conservando las de rollback. ¿Continuar?",
-      )
-    )
-      return;
-    sending.current = true;
-    setHeld({ key, state: "executing", detail: "En curso" });
-    try {
-      const response = await fetch(withHost("/api/host-command"), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": crypto.randomUUID(),
+    const scope = key;
+    if (requiresVerificationForCommand(command)) {
+      sensitive.request({
+        title: commandLabels[command],
+        consequences: [commandConsequence(command)],
+        confirmLabel: "Confirmar",
+        endpoint: withHost("/api/host-command"),
+        body: { command },
+        onSettled: (outcome) => {
+          // The dialog reports no HTTP status: rebuild the one the card needs.
+          const data = outcome.data as CommandBody | null;
+          if (outcome.status === "pending" && data === null)
+            return applyPending(scope);
+          if (outcome.status === "failed" && data?.status !== "failed")
+            return applyResult(scope, 400, { error: outcome.error });
+          applyResult(scope, outcome.status === "pending" ? 502 : 200, data);
         },
-        body: JSON.stringify({ command }),
       });
-      const data = await response.json();
-      const outcome = commandResult(data);
-      setHeld({
-        key,
-        ...outcome,
-        detail: response.ok
-          ? outcome.detail
-          : response.status >= 500 && response.status !== 503
-            ? "Pendiente de verificar"
-            : (data.error ?? "Operación rechazada"),
-        state:
-          response.status >= 500 && response.status !== 503
-            ? "pending"
-            : outcome.state,
-        result: data.result,
-      });
-      window.dispatchEvent(new Event("maintenance-refresh"));
+      return;
+    }
+    sending.current = true;
+    setHeld({ key: scope, state: "executing", detail: "En curso" });
+    try {
+      const response = await sendHostCommand(
+        withHost("/api/host-command"),
+        command,
+      );
+      applyResult(scope, response.status, response.data);
     } catch {
-      setHeld({
-        key,
-        state: "pending",
-        detail:
-          "Pendiente de verificar. Comprueba el host antes de otra acción.",
-      });
+      applyPending(scope);
     } finally {
       sending.current = false;
     }
@@ -147,6 +187,7 @@ export function HostCommands({ children }: { children?: React.ReactNode }) {
           )}
         </div>
       )}
+      {sensitive.dialog}
     </Panel>
   );
 }
