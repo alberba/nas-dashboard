@@ -233,7 +233,7 @@ Plans:
   3. 30 días de histórico se sirven desde rollups y el overview cumple un presupuesto medido con 500k muestras.
   4. La rotación conjunta del token del bot (hub y `media-stack`) está documentada y probada.
   5. Ningún emisor del hub puede saltarse la política: el camino de `notify()` ya no existe.
-**Plans**: 7/15 plans executed
+**Plans**: 8/15 plans executed
 
 Plans:
 **Wave 1**
@@ -250,7 +250,7 @@ Plans:
 - [x] 08-08-PLAN.md — Apagado de los emisores de Telegram de `upgrade.sh`, `merged_updates`, `updater` y `security-monitor`
 
 **Wave 4** *(blocked on Wave 3 completion)*
-- [ ] 08-09-PLAN.md — Configuración de `media-stack` sin credenciales de Telegram en WUD y security-monitor
+- [x] 08-09-PLAN.md — Configuración de `media-stack` sin credenciales de Telegram en WUD y security-monitor
 
 **Wave 5** *(blocked on Wave 4 completion)*
 - [ ] 08-12-PLAN.md — Guarda de emisores de `media-stack` y documentación del cutover
@@ -288,7 +288,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 5. Bot de lectura y reconocimiento | 6/6 | Complete    | 2026-11-27 |
 | 6. Puerta de seguridad | 6/6 | Complete    | 2026-11-27 |
 | 7. Acciones verificadas desde Telegram | 6/6 | Complete    | 2026-11-27 |
-| 8. Cutover de media-stack y consolidación | 7/15 | In Progress | - |
+| 8. Cutover de media-stack y consolidación | 8/15 | In Progress | - |
 
 ## Backlog
 
