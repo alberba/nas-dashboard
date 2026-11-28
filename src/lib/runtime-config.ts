@@ -335,6 +335,62 @@ function telegramDirectActions(
   if (raw && raw !== "0") issues.add("TELEGRAM_DIRECT_ACTIONS", "invalid");
 }
 
+export type IngestSecrets = {
+  secret: string;
+  /** Only present during a rotation (D-17): the hub accepts both. */
+  previous: string | null;
+};
+
+function ingestSecret(
+  env: Record<string, string | undefined>,
+  name: "NOTIFY_INGEST_SECRET" | "NOTIFY_INGEST_SECRET_PREVIOUS",
+  issues: IssueList,
+): string | null {
+  const raw = env[name]?.trim();
+  if (!raw) return null;
+  if (isExampleValue(raw)) {
+    issues.add(name, "example");
+    return null;
+  }
+  if (raw.length < MIN_SECRET_LENGTH) {
+    issues.add(name, "invalid");
+    return null;
+  }
+  return raw;
+}
+
+/**
+ * The ingest secret is optional: the hub deploys before the producers publish,
+ * and without it the route answers 503. A value that is present must still be
+ * well formed, and the rotation secret only exists next to the current one.
+ */
+function ingestSecrets(
+  env: Record<string, string | undefined>,
+  issues: IssueList,
+): IngestSecrets | null {
+  const current = ingestSecret(env, "NOTIFY_INGEST_SECRET", issues);
+  const previous = ingestSecret(env, "NOTIFY_INGEST_SECRET_PREVIOUS", issues);
+  if (
+    env.NOTIFY_INGEST_SECRET_PREVIOUS?.trim() &&
+    !env.NOTIFY_INGEST_SECRET?.trim()
+  )
+    issues.add("NOTIFY_INGEST_SECRET_PREVIOUS", "incomplete_pair");
+  return current ? { secret: current, previous } : null;
+}
+
+/**
+ * Secrets the ingest route verifies against, read on every request so the
+ * route never depends on a startup value. `null` closes the route (503): no
+ * current secret, or a pair that startup validation would have rejected.
+ */
+export function readIngestSecrets(
+  env: Record<string, string | undefined> = process.env,
+): IngestSecrets | null {
+  const issues = new IssueList();
+  const secrets = ingestSecrets(env, issues);
+  return issues.length > 0 ? null : secrets;
+}
+
 function pushWarningsEnabled(
   env: Record<string, string | undefined>,
   issues: IssueList,
@@ -453,6 +509,7 @@ export function readRuntimeConfig(
   const digestAt = digestTime(env, issues);
   const telegramConfig = telegram(env, issues);
   telegramDirectActions(env, issues);
+  ingestSecrets(env, issues);
   const vapidConfig = vapid(env, pushWarnings, issues);
   if (issues.length > 0) throw new RuntimeConfigError(issues.list());
 

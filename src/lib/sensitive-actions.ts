@@ -238,7 +238,15 @@ export const routeFiles = {
       "Better Auth valida credenciales y limita intentos; el cuerpo se acota en su envoltorio de 32 KiB",
     ),
   },
+  "src/app/api/notifications/ingest/route.ts": {
+    dispatch: "hmac-ingest",
+    policy: exempt(
+      "Sin sesión: la autenticación es HMAC-SHA256 con ventana de 300 s, cuerpo acotado a 8 KiB y alcance cerrado por fuente",
+    ),
+  },
 } satisfies Record<
   string,
-  { dispatch: "catch-all" } | { dispatch: "better-auth"; policy: Policy }
+  | { dispatch: "catch-all" }
+  | { dispatch: "better-auth"; policy: Policy }
+  | { dispatch: "hmac-ingest"; policy: Policy }
 >;
