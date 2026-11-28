@@ -2712,4 +2712,83 @@ describe.skipIf(!baseUrl)("collector incident store", () => {
     expect(current.incidents[0].resolvedAt).toBeNull();
     expect(current.events).toHaveLength(1);
   });
+  describe("ingest episodes", () => {
+    const iso = (ms: number) => new Date(ms).toISOString();
+    const backupAt = (status: "ok" | "failed", at: number) =>
+      maintenanceSnapshot({ backup: { status, at: iso(at) } });
+
+    async function openByIngest(now: number) {
+      const opened = await store.recordIncidentObservation({
+        hostId: "nas-home",
+        key: "backup-failed",
+        failing: true,
+        severity: "critical",
+        title: "Copia fallida en NAS-HOME",
+        detail: "",
+        now,
+        delivery: { channel: "telegram", reason: "policy_immediate" },
+        closedBy: "ingest",
+        origin: "ingest",
+      });
+      return opened.incidentId!;
+    }
+
+    it("ingest: an older ok snapshot leaves the notice open and a newer one closes it once", async () => {
+      const opened = Date.UTC(2027, 2, 1, 10);
+      const incidentId = await openByIngest(opened);
+      await db
+        .update(tables.notificationOutbox)
+        .set({
+          status: "sent",
+          chatId: "100",
+          messageId: "200",
+          attemptStartedAt: new Date(opened),
+        })
+        .where(eq(tables.notificationOutbox.incidentId, incidentId));
+      const before = await state();
+
+      // The agent cache still holds a copy taken before the notice was opened.
+      nas.maintenance = backupAt("ok", opened - 90_000);
+      await collect(opened + 61_000);
+      let current = await state();
+      expect(current.incidents).toHaveLength(1);
+      expect(current.incidents[0]).toMatchObject({
+        id: incidentId,
+        resolvedAt: null,
+        seq: 1,
+      });
+      expect(current.events).toHaveLength(before.events.length);
+      expect(current.outbox).toHaveLength(before.outbox.length);
+
+      // An older failed copy does not open another episode either.
+      nas.maintenance = backupAt("failed", opened - 90_000);
+      await collect(opened + 122_000);
+      current = await state();
+      expect(current.incidents).toHaveLength(1);
+      expect(current.incidents[0].resolvedAt).toBeNull();
+
+      // A copy made after the notice proves the recovery.
+      nas.maintenance = backupAt("ok", opened + 30_000);
+      await collect(opened + 183_000);
+      current = await state();
+      expect(current.incidents).toHaveLength(1);
+      expect(current.incidents[0]).toMatchObject({
+        id: incidentId,
+        resolvedAt: expect.any(Date),
+        closedBy: "collector",
+        seq: 2,
+      });
+      expect(
+        current.outbox.filter((row) => row.kind === "incident-edit"),
+      ).toHaveLength(1);
+
+      nas.maintenance = backupAt("ok", opened + 60_000);
+      await collect(opened + 244_000);
+      current = await state();
+      expect(current.incidents[0].seq).toBe(2);
+      expect(
+        current.outbox.filter((row) => row.kind === "incident-edit"),
+      ).toHaveLength(1);
+    });
+  });
 });

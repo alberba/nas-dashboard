@@ -149,6 +149,81 @@ describe.skipIf(!baseUrl)("incident store", () => {
     });
   });
 
+  describe("recovery evidence", () => {
+    const opened = Date.UTC(2026, 10, 22, 10);
+
+    async function open(origin?: "live" | "ingest") {
+      return observation({
+        hostId: "nas-home",
+        key: "backup-failed",
+        failing: true,
+        severity: "critical",
+        title: "Copia fallida",
+        detail: "",
+        now: opened,
+        delivery: { channel: "telegram", reason: "policy_immediate" },
+        ...(origin ? { origin } : {}),
+      });
+    }
+
+    const recover = (evidenceAt: number | undefined, now = opened + 60_000) =>
+      observation({
+        hostId: "nas-home",
+        key: "backup-failed",
+        failing: false,
+        now,
+        closedBy: "collector",
+        ...(evidenceAt === undefined ? {} : { evidenceAt }),
+      });
+
+    async function snapshot() {
+      return {
+        incidents: await db.select().from(tables.incidents),
+        events: await db.select().from(tables.incidentEvents),
+        outbox: await db.select().from(tables.notificationOutbox),
+      };
+    }
+
+    it("stores the origin the caller asks for and defaults to live", async () => {
+      await open("ingest");
+      expect((await snapshot()).incidents[0].origin).toBe("ingest");
+      await recover(undefined);
+      await open();
+      const rows = (await snapshot()).incidents;
+      expect(rows.map((row) => row.origin).sort()).toEqual(["ingest", "live"]);
+    });
+
+    it("ignores a recovery whose evidence predates an ingest episode", async () => {
+      await open("ingest");
+      const before = await snapshot();
+
+      const result = await recover(opened - 1);
+
+      expect(result).toEqual({ action: "ignored", delivery: "none" });
+      const after = await snapshot();
+      expect(after.incidents[0].resolvedAt).toBeNull();
+      expect(after.events).toHaveLength(before.events.length);
+      expect(after.outbox).toHaveLength(before.outbox.length);
+    });
+
+    it("closes an ingest episode when the evidence is as new or newer", async () => {
+      await open("ingest");
+      expect(await recover(opened)).toMatchObject({ action: "resolved" });
+      expect((await snapshot()).incidents[0].resolvedAt).not.toBeNull();
+
+      await open("ingest");
+      expect(await recover(opened + 30_000, opened + 90_000)).toMatchObject({
+        action: "resolved",
+      });
+    });
+
+    it("does not hold a live episode back, whatever the evidence", async () => {
+      await open("live");
+      expect(await recover(opened - 1)).toMatchObject({ action: "resolved" });
+      expect((await snapshot()).incidents[0].resolvedAt).not.toBeNull();
+    });
+  });
+
   it("confirms a single opening when several observations race", async () => {
     const start = Date.UTC(2026, 10, 21, 10);
     const results = await Promise.all(

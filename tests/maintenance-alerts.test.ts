@@ -115,6 +115,32 @@ describe("maintenance alert signals", () => {
     expect(ok).toMatchObject({ failing: false });
   });
 
+  it("carries the backup timestamp as evidence only on the backup signal", () => {
+    const at = "2026-11-13T03:00:00Z";
+    for (const status of ["failed", "ok"] as const) {
+      const signals = maintenanceAlertSignals(
+        maintenance({ backup: { status, at } }),
+        "NAS-HOME",
+      );
+      expect(signal(signals, "backup-failed")?.evidenceAt).toBe(Date.parse(at));
+      expect(
+        signals.filter((entry) => entry.evidenceAt !== undefined),
+      ).toHaveLength(1);
+    }
+  });
+
+  it("leaves the evidence out when the backup time is missing or unreadable", () => {
+    for (const at of [null, "not a date", ""]) {
+      const signals = maintenanceAlertSignals(
+        maintenance({ backup: { status: "ok", at } }),
+        "NAS-HOME",
+      );
+      const backup = signal(signals, "backup-failed");
+      expect(backup).toMatchObject({ failing: false });
+      expect(backup).not.toHaveProperty("evidenceAt");
+    }
+  });
+
   it("does not change the backup alert when the status is unknown or degraded", () => {
     const unknown = maintenanceAlertSignals(
       maintenance({ backup: { status: "unknown", at: null } }),

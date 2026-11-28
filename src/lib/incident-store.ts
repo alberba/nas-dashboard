@@ -44,6 +44,12 @@ export type IncidentObservation = {
   closedBy?: "collector" | "lifecycle" | "reconciliation" | "ingest";
   /** Who opens the episode; defaults to `"live"` (the collector's own signals). */
   origin?: "live" | "ingest";
+  /**
+   * Epoch milliseconds of the evidence behind a recovery (`failing: false`).
+   * An episode the ingest opened after that instant stays open: the evidence
+   * predates it.
+   */
+  evidenceAt?: number;
   /** Inventory captured only when a `connection` episode is actually created. */
   context?: IncidentInventoryContext | null;
   /** Removes the observation block after valid evidence for a container. */
@@ -696,6 +702,12 @@ export async function recordIncidentObservationIn(
 
     if (!input.failing) {
       if (!open) return { action: "ignored", delivery: "none" };
+      if (
+        input.evidenceAt !== undefined &&
+        open.origin === "ingest" &&
+        open.at.getTime() > input.evidenceAt
+      )
+        return { action: "ignored", delivery: "none" };
       const seq = open.seq + 1;
       await tx
         .update(incidents)
