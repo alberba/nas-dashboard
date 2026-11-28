@@ -3,17 +3,17 @@ gsd_state_version: "1.0"
 current_phase: 08
 current_phase_name: Cutover de media-stack y consolidación
 status: executing
-stopped_at: Completed 08-06-PLAN.md
-last_updated: "2026-11-28T08:06:47.243Z"
+stopped_at: Completed 08-07-PLAN.md
+last_updated: "2026-11-28T08:15:47.524Z"
 last_activity: 2026-11-28
 last_activity_desc: Phase 08 execution started
-state_head: c5744a8d418f3d1bc5a29a7ed43d9591f33f1f41
+state_head: a46ce36c4ebf5f95afa9b6d3e1644464156399b2
 progress:
   total_phases: 8
   completed_phases: 7
   total_plans: 47
-  completed_plans: 33
-  percent: 70
+  completed_plans: 35
+  percent: 74
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-11-27)
 ## Current Position
 
 Phase: 08 (Cutover de media-stack y consolidación) — EXECUTING
-Plan: 2 of 15
+Plan: 3 of 15
 Status: Ready to execute
 Last activity: 2026-11-28 — Phase 08 execution started
 
-Progress: [███████░░░] 70%
+Progress: [███████░░░] 74%
 
 ## Performance Metrics
 
@@ -87,6 +87,7 @@ Progress: [███████░░░] 70%
 | Phase 07 P04 | 10 min | 3 tasks | 9 files |
 | Phase 07 P05 | 25 min | 3 tasks | 8 files |
 | Phase 08 P06 | 25 min | 3 tasks | 9 files |
+| Phase 08 P07 | 25 min | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -170,6 +171,9 @@ Recent decisions affecting current work:
 - [Phase 07]: 07-05: pending borra el token y no ofrece reintento; failed lo conserva y reintenta solo con inspect, sin llamar a execute
 - [Phase 08]: 08-06: backup-failed se publica firmado en el ingest con 3 intentos (0 30 60) y mismo eventId; solo sin 2xx cae a un unico aviso directo de Telegram con prefijo fijo y token por curl -K -
 - [Phase 08]: 08-06: media-stack phase-08-cutover lleva 3 commits (1e5666c, dc6a4f1, 7cba1ae) y no se integra en main hasta la puerta 08-10
+- [Phase 08]: 08-07 P-22: issue-automator routes by notification type; ISSUE_RESOLVED only publishes the closing, other explicit types are ignored
+- [Phase 08]: 08-07 P-23: build_issue_event/deliver_issue_event are the seam 08-15 replaces with the durable outbox; delivery is one attempt, 2xx only
+- [Phase 08]: 08-07 P-24: NOTIFY_INGEST_URL/SECRET/HOST_ID go together or none; load_config returns ingest instead of telegram
 
 ### Pending Todos
 
@@ -195,6 +199,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-28T08:06:46.832Z
-Stopped at: Completed 08-06-PLAN.md
+Last session: 2026-11-28T08:15:47.176Z
+Stopped at: Completed 08-07-PLAN.md
 Resume file: None
