@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   bigint,
+  doublePrecision,
   pgTable,
   text,
   timestamp,
@@ -117,6 +118,53 @@ export const samples = pgTable(
     index("samples_at_idx").on(t.at),
     index("samples_host_at_idx").on(t.hostId, t.at),
   ],
+);
+/**
+ * 15-minute aggregate of `samples` per host (PERF-01). `bucket` is a
+ * timestamp without time zone, like `samples.at`, so `date_bin` aligns both
+ * the same way whatever the session zone. `n` is the number of samples in the
+ * bucket and weights the 1-hour reaggregation. The metric columns match the
+ * overview series and are null when no sample of the bucket carried them.
+ */
+export const sampleRollups = pgTable(
+  "sample_rollups",
+  {
+    hostId: text().notNull(),
+    bucket: timestamp().notNull(),
+    n: integer().notNull(),
+    cpu: doublePrecision(),
+    memory: doublePrecision(),
+    swap: doublePrecision(),
+    rx: doublePrecision(),
+    tx: doublePrecision(),
+    ioRead: doublePrecision(),
+    ioWrite: doublePrecision(),
+    load1: doublePrecision(),
+    load5: doublePrecision(),
+    load15: doublePrecision(),
+    readAwait: doublePrecision(),
+    writeAwait: doublePrecision(),
+    utilization: doublePrecision(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.hostId, t.bucket] }),
+    index("sample_rollups_bucket_idx").on(t.bucket),
+  ],
+);
+/** The same 15-minute aggregate per host and container (PERF-01, D-19). */
+export const containerRollups = pgTable(
+  "container_rollups",
+  {
+    hostId: text().notNull(),
+    container: text().notNull(),
+    bucket: timestamp().notNull(),
+    n: integer().notNull(),
+    cpu: doublePrecision(),
+    memory: doublePrecision(),
+    rx: doublePrecision(),
+    tx: doublePrecision(),
+  },
+  (t) => [primaryKey({ columns: [t.hostId, t.container, t.bucket] })],
 );
 export const presence = pgTable("presence", {
   id: text().primaryKey(),

@@ -70,6 +70,7 @@ import {
   relatePullRequests,
 } from "@/lib/github";
 import { projectDigestOverview, type DigestOverview } from "@/lib/digest-runs";
+import { HISTORY_RANGES, readHistory } from "@/lib/history-rollups";
 import { deployProgressForHost } from "@/lib/deploy-progress";
 import { mergeRenovatePullRequest } from "@/lib/renovate-merge";
 import type { Metrics, RenovateContainer, Settings } from "@/lib/types";
@@ -90,13 +91,6 @@ const methodNotAllowed = (
       headers: { "Cache-Control": "no-store", Allow: verdict.allow.join(", ") },
     },
   );
-const ranges = {
-  "1h": [3600, 30],
-  "6h": [21600, 60],
-  "24h": [86400, 120],
-  "7d": [604800, 900],
-  "30d": [2592000, 3600],
-} as const;
 
 /** Public settings never expose the internal inventory watch metadata. */
 function publicSettings(settings: Settings) {
@@ -480,28 +474,7 @@ async function handle(
         .enum(["1h", "6h", "24h", "7d", "30d"])
         .catch("1h")
         .parse(request.nextUrl.searchParams.get("range"));
-      const [seconds, bucket] = ranges[range];
-      const history = await db.execute(sql`
-        WITH series AS (SELECT generate_series(
-          date_bin(make_interval(secs => ${bucket}), now() - make_interval(secs => ${seconds}), timestamp '2000-01-01'),
-          date_bin(make_interval(secs => ${bucket}), now(), timestamp '2000-01-01'), make_interval(secs => ${bucket})) AS at),
-        grouped AS (SELECT date_bin(make_interval(secs => ${bucket}), at, timestamp '2000-01-01') AS at,
-          avg((data->>'cpu')::float) AS cpu,
-          avg((data->'memory'->>'used')::float / nullif((data->'memory'->>'total')::float, 0) * 100) AS memory,
-          avg((data->'memory'->'swap'->>'used')::float / nullif((data->'memory'->'swap'->>'total')::float, 0) * 100) AS swap,
-          avg((data->'network'->>'rx')::float) AS rx, avg((data->'network'->>'tx')::float) AS tx,
-          avg((data->'io'->>'read')::float) AS "ioRead", avg((data->'io'->>'write')::float) AS "ioWrite",
-          avg((data->'load'->>0)::float) AS "load1",
-          avg((data->'load'->>1)::float) AS "load5",
-          avg((data->'load'->>2)::float) AS "load15",
-          avg((data->'io'->'latency'->>'readMs')::float) AS "readAwait",
-          avg((data->'io'->'latency'->>'writeMs')::float) AS "writeAwait",
-          avg((data->'io'->'latency'->>'utilization')::float) AS "utilization"
-          FROM samples WHERE "hostId" = ${host.id} AND at > now() - make_interval(secs => ${seconds}) GROUP BY 1)
-        SELECT series.at, grouped.cpu, grouped.memory, grouped.swap, grouped.rx, grouped.tx,
-          grouped."ioRead", grouped."ioWrite", grouped."load1", grouped."load5", grouped."load15",
-          grouped."readAwait", grouped."writeAwait", grouped."utilization"
-        FROM series LEFT JOIN grouped USING(at) ORDER BY series.at`);
+      const history = await readHistory(db, host.id, range);
       const statuses = await hostStatuses(hosts);
       const settings = await getSettings(host.id);
       // The digest belongs to the hub, not to the selected host: the same
@@ -529,7 +502,7 @@ async function handle(
         digest,
         watchPending: pendingWatch(settings),
         operations: recentOperations.map(publicOperation),
-        history: history.rows,
+        history,
         settings: publicSettings(settings),
       });
     }
@@ -550,7 +523,7 @@ async function handle(
         .enum(["1h", "6h", "24h", "7d", "30d"])
         .catch("1h")
         .parse(request.nextUrl.searchParams.get("range"));
-      const [seconds, bucket] = ranges[range];
+      const [seconds, bucket] = HISTORY_RANGES[range];
       const history = await db.execute(sql`
         WITH series AS (SELECT generate_series(
           date_bin(make_interval(secs => ${bucket}), now() - make_interval(secs => ${seconds}), timestamp '2000-01-01'),
