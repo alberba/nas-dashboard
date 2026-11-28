@@ -690,6 +690,110 @@ describe.skipIf(!baseUrl)("ingest firmado", () => {
       expect(incident.resolvedAt).toBeNull();
     });
 
+    describe("texto compuesto por el hub", () => {
+      const CONTROL = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+      // Built with fromCharCode so no invisible character sits in the source:
+      // NUL, bidi override, line separator, then markup, mentions and fences.
+      const invisible = String.fromCharCode(0x0000, 0x202e, 0x2028);
+      const hostile = (limit: number) =>
+        `L1\n\tL2\r${invisible}<b>x</b> **y** _z_ [a](http://evil.test) @usuario ${"`".repeat(3)}`
+          .padEnd(limit, "·")
+          .slice(0, limit);
+
+      it("guarda un título plano y de 120 caracteres como mucho", async () => {
+        const response = await send(
+          issueEvent({ data: { subject: hostile(200) } }),
+        );
+        expect(response.status).toBe(202);
+        const [incident] = await db.select().from(tables.incidents);
+        expect(incident.title).not.toMatch(CONTROL);
+        expect(incident.title.length).toBeLessThanOrEqual(120);
+        expect(incident.title.length).toBeGreaterThan(0);
+      });
+
+      it("guarda un detalle plano y de 600 caracteres como mucho con los campos en su tope", async () => {
+        const response = await send(
+          issueEvent({
+            data: {
+              subject: hostile(200),
+              reportedBy: hostile(100),
+              problem: hostile(300),
+              action: hostile(500),
+            },
+          }),
+        );
+        expect(response.status).toBe(202);
+        const [incident] = await db.select().from(tables.incidents);
+        expect(incident.detail).not.toMatch(CONTROL);
+        expect(incident.detail.length).toBeLessThanOrEqual(600);
+        expect(incident.detail.length).toBeGreaterThan(0);
+      });
+
+      it("acota el detalle de un evento de copia con cinco errores de 200 caracteres", async () => {
+        const response = await send(
+          envelope({
+            data: { errors: Array.from({ length: 5 }, () => hostile(200)) },
+          }),
+        );
+        expect(response.status).toBe(202);
+        const [incident] = await db.select().from(tables.incidents);
+        expect(incident.detail).not.toMatch(CONTROL);
+        expect(incident.detail.length).toBeLessThanOrEqual(600);
+        expect(incident.title).not.toMatch(CONTROL);
+      });
+
+      it("entrega el texto por Telegram sin parse_mode", async () => {
+        const { Client } = await import("pg");
+        const dispatch = await import("@/lib/notification-dispatch");
+        await send(issueEvent({ data: { subject: hostile(200) } }));
+        const [incident] = await db.select().from(tables.incidents);
+
+        const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+        const client = new Client({ connectionString: context!.url });
+        await client.connect();
+        try {
+          expect(await dispatch.acquireCollectionLock(client)).toBe(true);
+          const result = await dispatch.runDispatchOnce({
+            client,
+            config: {
+              databaseUrl: context!.url,
+              betterAuthSecret: "b".repeat(32),
+              betterAuthUrl: "https://hub.example.com",
+              setupToken: "s".repeat(32),
+              trustedOrigins: [],
+              hosts: [],
+              telegram: {
+                botToken: "123456:abcdefghijklmnopqrstuvwxyzABCDEFGH",
+                chatId: "-1001234567890",
+              },
+              vapid: null,
+              pushWarnings: false,
+              digestTime: "08:00",
+            },
+            now: () => Date.now() + 60_000,
+            fetchImpl: async (url, init) => {
+              calls.push({
+                url,
+                body: JSON.parse(String(init.body)) as Record<string, unknown>,
+              });
+              return Response.json({
+                ok: true,
+                result: { message_id: 501, chat: { id: -1001234567890 } },
+              });
+            },
+          });
+          expect(result.action).toBe("sent");
+        } finally {
+          await client.end().catch(() => undefined);
+        }
+
+        expect(calls).toHaveLength(1);
+        expect(calls[0].url.endsWith("/sendMessage")).toBe(true);
+        expect(calls[0].body).not.toHaveProperty("parse_mode");
+        expect(String(calls[0].body.text)).toContain(incident.title);
+      });
+    });
+
     it("responde 202 ignored si no hay nada abierto que cerrar", async () => {
       const response = await route.POST(
         ingestRequest(
