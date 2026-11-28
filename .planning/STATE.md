@@ -3,17 +3,17 @@ gsd_state_version: "1.0"
 current_phase: 08
 current_phase_name: Cutover de media-stack y consolidación
 status: executing
-stopped_at: Completed 08-09-PLAN.md
-last_updated: "2026-11-28T08:31:37.774Z"
+stopped_at: Completed 08-12-PLAN.md
+last_updated: "2026-11-28T08:36:09.373Z"
 last_activity: 2026-11-28
 last_activity_desc: Phase 08 execution started
-state_head: b19a6c9847b74be10740fc9fd2524bddfe40fce1
+state_head: e22668a05daad43309f2f6be204e91f49a522cb0
 progress:
   total_phases: 8
   completed_phases: 7
   total_plans: 47
-  completed_plans: 40
-  percent: 85
+  completed_plans: 41
+  percent: 87
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-11-27)
 ## Current Position
 
 Phase: 08 (Cutover de media-stack y consolidación) — EXECUTING
-Plan: 5 of 15
+Plan: 6 of 15
 Status: Ready to execute
 Last activity: 2026-11-28 — Phase 08 execution started
 
-Progress: [█████████░] 85%
+Progress: [█████████░] 87%
 
 ## Performance Metrics
 
@@ -90,6 +90,7 @@ Progress: [█████████░] 85%
 | Phase 08 P07 | 25 min | 3 tasks | 4 files |
 | Phase 08 P08 | 25 min | 3 tasks | 8 files |
 | Phase 08 P09 | 3 min | 2 tasks | 7 files |
+| Phase 08 P12 | 3 min | 2 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -181,6 +182,8 @@ Recent decisions affecting current work:
 - [Phase 08]: 08-08: media-stack phase-08-cutover lleva 8 commits (ultimo 907369e) y no se integra en main hasta la puerta 08-10
 - [Phase 08]: P-27: WUD queda sin trigger de notificacion (WUD_TRIGGER_TELEGRAM_* eliminadas); estado en su UI y en security-monitor
 - [Phase 08]: P-28: TELEGRAM_BOT_TOKEN/CHAT_ID solo en el alcance instance; apps-server los pierde en catalogo, plantilla y .env.example (claves sobrantes solo advierten)
+- [Phase 08]: P-29: guarda estatica de emisores de Telegram como tests/*.test.sh (find y grep sin git, controles negativos sobre copia alterada); la ejecuta check.sh ci sin cambios
+- [Phase 08]: P-30: comentarios wud.tag.transform de arr, jackett, vo y vpn sin mencion a Telegram ni al umbral de WUD
 
 ### Pending Todos
 
@@ -206,6 +209,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-28T08:31:37.360Z
-Stopped at: Completed 08-09-PLAN.md
+Last session: 2026-11-28T08:36:08.946Z
+Stopped at: Completed 08-12-PLAN.md
 Resume file: None
