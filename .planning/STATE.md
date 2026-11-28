@@ -3,17 +3,17 @@ gsd_state_version: "1.0"
 current_phase: 08
 current_phase_name: Cutover de media-stack y consolidación
 status: executing
-stopped_at: Completed 08-07-PLAN.md
-last_updated: "2026-11-28T08:15:47.524Z"
+stopped_at: Completed 08-08-PLAN.md
+last_updated: "2026-11-28T08:27:54.146Z"
 last_activity: 2026-11-28
 last_activity_desc: Phase 08 execution started
-state_head: a46ce36c4ebf5f95afa9b6d3e1644464156399b2
+state_head: aaec63df2de0683c04f81af8a914d63a00807736
 progress:
   total_phases: 8
   completed_phases: 7
   total_plans: 47
-  completed_plans: 35
-  percent: 74
+  completed_plans: 37
+  percent: 79
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-11-27)
 ## Current Position
 
 Phase: 08 (Cutover de media-stack y consolidación) — EXECUTING
-Plan: 3 of 15
+Plan: 4 of 15
 Status: Ready to execute
 Last activity: 2026-11-28 — Phase 08 execution started
 
-Progress: [███████░░░] 74%
+Progress: [████████░░] 79%
 
 ## Performance Metrics
 
@@ -88,6 +88,7 @@ Progress: [███████░░░] 74%
 | Phase 07 P05 | 25 min | 3 tasks | 8 files |
 | Phase 08 P06 | 25 min | 3 tasks | 9 files |
 | Phase 08 P07 | 25 min | 3 tasks | 4 files |
+| Phase 08 P08 | 25 min | 3 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -174,6 +175,9 @@ Recent decisions affecting current work:
 - [Phase 08]: 08-07 P-22: issue-automator routes by notification type; ISSUE_RESOLVED only publishes the closing, other explicit types are ignored
 - [Phase 08]: 08-07 P-23: build_issue_event/deliver_issue_event are the seam 08-15 replaces with the durable outbox; delivery is one attempt, 2xx only
 - [Phase 08]: 08-07 P-24: NOTIFY_INGEST_URL/SECRET/HOST_ID go together or none; load_config returns ingest instead of telegram
+- [Phase 08]: 08-08 P-25: upgrade.sh notify() pasa a notice(), solo escribe notice: <texto> con UNATTENDED=1; sin lectura de Telegram ni curl
+- [Phase 08]: 08-08 P-26: merged_updates.py y updater.py pierden envios y colas; los avisos pasan a print y los outcomes solo fijan el codigo de salida; main.py pierde telegram y digest y conserva notified-updates.json
+- [Phase 08]: 08-08: media-stack phase-08-cutover lleva 8 commits (ultimo 907369e) y no se integra en main hasta la puerta 08-10
 
 ### Pending Todos
 
@@ -199,6 +203,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-28T08:15:47.176Z
-Stopped at: Completed 08-07-PLAN.md
+Last session: 2026-11-28T08:27:53.771Z
+Stopped at: Completed 08-08-PLAN.md
 Resume file: None
