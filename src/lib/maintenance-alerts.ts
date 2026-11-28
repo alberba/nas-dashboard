@@ -14,6 +14,12 @@ export type AlertSignal = {
   title: string;
   detail: string;
   severity: AlertSeverity;
+  /**
+   * Epoch milliseconds of the evidence behind the signal. Only `backup-failed`
+   * carries it (the backup's own timestamp), so a cached snapshot older than an
+   * episode the ingest just opened cannot close it.
+   */
+  evidenceAt?: number;
 };
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -66,12 +72,15 @@ export function maintenanceAlertSignals(
     (backup.status === "ok" || backup.status === "failed")
   ) {
     const failed = backup.status === "failed";
+    const evidenceAt =
+      typeof backup.at === "string" ? Date.parse(backup.at) : Number.NaN;
     signals.push({
       key: "backup-failed",
       failing: failed,
       title: failed ? `Copia fallida en ${hostName}` : "Copia recuperada",
       detail: failed ? "La última copia registrada ha fallado." : "",
       severity: "critical",
+      ...(Number.isFinite(evidenceAt) ? { evidenceAt } : {}),
     });
   }
 

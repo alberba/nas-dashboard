@@ -548,6 +548,252 @@ describe.skipIf(!baseUrl)("ingest firmado", () => {
       expect(incident.closedBy).toBe("ingest");
     });
 
+    const issueEvent = (overrides: Record<string, unknown> = {}) =>
+      envelope({
+        source: "issue-automator",
+        eventId: "issue:seerr:42:open",
+        key: "issue:seerr:42",
+        state: "open",
+        data: {
+          subject: "Sin audio en el capítulo 3",
+          reportedBy: "ana",
+          problem: "Audio",
+        },
+        ...overrides,
+      });
+    const send = (event: Record<string, unknown>) =>
+      route.POST(ingestRequest(JSON.stringify(event)));
+
+    /** Marks the first notice as delivered, as the dispatcher would. */
+    async function confirmSent() {
+      await db
+        .update(tables.notificationOutbox)
+        .set({
+          status: "sent",
+          chatId: "100",
+          messageId: "200",
+          attemptStartedAt: new Date(),
+        })
+        .where(eq(tables.notificationOutbox.kind, "incident-open"));
+    }
+
+    it("abre una issue de Seerr como incidencia inmediata de Telegram con origen ingest", async () => {
+      const response = await send(issueEvent());
+
+      expect(response.status).toBe(202);
+      expect(await response.json()).toEqual({
+        status: "accepted",
+        action: "opened",
+      });
+      const [incident] = await db.select().from(tables.incidents);
+      expect(incident).toMatchObject({
+        hostId: "nas-home",
+        key: "issue:seerr:42",
+        severity: "warning",
+        origin: "ingest",
+        resolvedAt: null,
+      });
+      const outbox = await db.select().from(tables.notificationOutbox);
+      expect(outbox).toHaveLength(1);
+      expect(outbox[0]).toMatchObject({
+        kind: "incident-open",
+        channel: "telegram",
+        status: "pending",
+      });
+    });
+
+    it("no depende de PUSH_WARNINGS para entregar la issue por Telegram", async () => {
+      const previous = process.env.PUSH_WARNINGS;
+      process.env.PUSH_WARNINGS = "true";
+      try {
+        await send(issueEvent());
+      } finally {
+        if (previous === undefined) delete process.env.PUSH_WARNINGS;
+        else process.env.PUSH_WARNINGS = previous;
+      }
+      const outbox = await db.select().from(tables.notificationOutbox);
+      expect(outbox.map((row) => [row.kind, row.channel])).toEqual([
+        ["incident-open", "telegram"],
+      ]);
+    });
+
+    it("cierra la issue editando el mensaje original, sin mensaje nuevo", async () => {
+      await send(issueEvent());
+      await confirmSent();
+
+      const closed = await send(
+        issueEvent({ eventId: "issue:seerr:42:resolved", state: "resolved" }),
+      );
+
+      expect(closed.status).toBe(202);
+      expect(await closed.json()).toEqual({
+        status: "accepted",
+        action: "resolved",
+      });
+      const [incident] = await db.select().from(tables.incidents);
+      expect(incident.resolvedAt).not.toBeNull();
+      expect(incident.closedBy).toBe("ingest");
+      const outbox = await db.select().from(tables.notificationOutbox);
+      expect(outbox.map((row) => row.kind).sort()).toEqual([
+        "incident-edit",
+        "incident-open",
+      ]);
+    });
+
+    it("no abre otra incidencia con un reintento ni con otro open sobre la clave abierta", async () => {
+      const first = await send(issueEvent());
+      const retry = await send(issueEvent());
+      const again = await send(issueEvent({ eventId: "issue:seerr:42:open-2" }));
+
+      expect(first.status).toBe(202);
+      expect(retry.status).toBe(200);
+      expect(await again.json()).toEqual({
+        status: "accepted",
+        action: "observed",
+      });
+      expect(await db.select().from(tables.incidents)).toHaveLength(1);
+      expect(await db.select().from(tables.notificationOutbox)).toHaveLength(1);
+    });
+
+    it("abre un episodio nuevo al reabrir la misma issue tras cerrarla", async () => {
+      await send(issueEvent());
+      await send(
+        issueEvent({ eventId: "issue:seerr:42:resolved", state: "resolved" }),
+      );
+      const reopened = await send(
+        issueEvent({ eventId: "issue:seerr:42:reopen" }),
+      );
+
+      expect(await reopened.json()).toEqual({
+        status: "accepted",
+        action: "opened",
+      });
+      const rows = await db.select().from(tables.incidents);
+      expect(rows).toHaveLength(2);
+      expect(new Set(rows.map((row) => row.id)).size).toBe(2);
+      expect(rows.filter((row) => row.resolvedAt === null)).toHaveLength(1);
+    });
+
+    it("una resolved de una fuente no cierra la incidencia de otra", async () => {
+      await send(issueEvent());
+      const crossed = await send(
+        envelope({
+          source: "backup",
+          eventId: "backup-failed:cross",
+          key: "issue:seerr:42",
+          state: "resolved",
+        }),
+      );
+
+      expect(crossed.status).toBe(422);
+      const [incident] = await db.select().from(tables.incidents);
+      expect(incident.resolvedAt).toBeNull();
+    });
+
+    describe("texto compuesto por el hub", () => {
+      const CONTROL = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+      // Built with fromCharCode so no invisible character sits in the source:
+      // NUL, bidi override, line separator, then markup, mentions and fences.
+      const invisible = String.fromCharCode(0x0000, 0x202e, 0x2028);
+      const hostile = (limit: number) =>
+        `L1\n\tL2\r${invisible}<b>x</b> **y** _z_ [a](http://evil.test) @usuario ${"`".repeat(3)}`
+          .padEnd(limit, "·")
+          .slice(0, limit);
+
+      it("guarda un título plano y de 120 caracteres como mucho", async () => {
+        const response = await send(
+          issueEvent({ data: { subject: hostile(200) } }),
+        );
+        expect(response.status).toBe(202);
+        const [incident] = await db.select().from(tables.incidents);
+        expect(incident.title).not.toMatch(CONTROL);
+        expect(incident.title.length).toBeLessThanOrEqual(120);
+        expect(incident.title.length).toBeGreaterThan(0);
+      });
+
+      it("guarda un detalle plano y de 600 caracteres como mucho con los campos en su tope", async () => {
+        const response = await send(
+          issueEvent({
+            data: {
+              subject: hostile(200),
+              reportedBy: hostile(100),
+              problem: hostile(300),
+              action: hostile(500),
+            },
+          }),
+        );
+        expect(response.status).toBe(202);
+        const [incident] = await db.select().from(tables.incidents);
+        expect(incident.detail).not.toMatch(CONTROL);
+        expect(incident.detail.length).toBeLessThanOrEqual(600);
+        expect(incident.detail.length).toBeGreaterThan(0);
+      });
+
+      it("acota el detalle de un evento de copia con cinco errores de 200 caracteres", async () => {
+        const response = await send(
+          envelope({
+            data: { errors: Array.from({ length: 5 }, () => hostile(200)) },
+          }),
+        );
+        expect(response.status).toBe(202);
+        const [incident] = await db.select().from(tables.incidents);
+        expect(incident.detail).not.toMatch(CONTROL);
+        expect(incident.detail.length).toBeLessThanOrEqual(600);
+        expect(incident.title).not.toMatch(CONTROL);
+      });
+
+      it("entrega el texto por Telegram sin parse_mode", async () => {
+        const { Client } = await import("pg");
+        const dispatch = await import("@/lib/notification-dispatch");
+        await send(issueEvent({ data: { subject: hostile(200) } }));
+        const [incident] = await db.select().from(tables.incidents);
+
+        const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+        const client = new Client({ connectionString: context!.url });
+        await client.connect();
+        try {
+          expect(await dispatch.acquireCollectionLock(client)).toBe(true);
+          const result = await dispatch.runDispatchOnce({
+            client,
+            config: {
+              databaseUrl: context!.url,
+              betterAuthSecret: "b".repeat(32),
+              betterAuthUrl: "https://hub.example.com",
+              setupToken: "s".repeat(32),
+              trustedOrigins: [],
+              hosts: [],
+              telegram: {
+                botToken: "123456:abcdefghijklmnopqrstuvwxyzABCDEFGH",
+                chatId: "-1001234567890",
+              },
+              vapid: null,
+              pushWarnings: false,
+              digestTime: "08:00",
+            },
+            now: () => Date.now() + 60_000,
+            fetchImpl: async (url, init) => {
+              calls.push({
+                url,
+                body: JSON.parse(String(init.body)) as Record<string, unknown>,
+              });
+              return Response.json({
+                ok: true,
+                result: { message_id: 501, chat: { id: -1001234567890 } },
+              });
+            },
+          });
+          expect(result.action).toBe("sent");
+        } finally {
+          await client.end().catch(() => undefined);
+        }
+
+        expect(calls).toHaveLength(1);
+        expect(calls[0].url.endsWith("/sendMessage")).toBe(true);
+        expect(calls[0].body).not.toHaveProperty("parse_mode");
+        expect(String(calls[0].body.text)).toContain(incident.title);
+      });
+    });
+
     it("responde 202 ignored si no hay nada abierto que cerrar", async () => {
       const response = await route.POST(
         ingestRequest(

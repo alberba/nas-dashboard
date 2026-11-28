@@ -107,6 +107,8 @@ type ConditionOptions = {
   inhibitContainers?: { reason: string };
   /** Removes a container observation block after valid evidence. */
   clearObservation?: boolean;
+  /** Evidence time of a recovery; keeps a stale snapshot from closing an ingest episode. */
+  evidenceAt?: number;
 };
 
 async function condition(
@@ -132,6 +134,9 @@ async function condition(
       now,
       closedBy: "collector",
       ...(options.clearObservation ? { clearObservation: true } : {}),
+      ...(options.evidenceAt !== undefined
+        ? { evidenceAt: options.evidenceAt }
+        : {}),
     });
   }
   if (!started.has(scoped(host, key))) started.set(scoped(host, key), now);
@@ -198,6 +203,7 @@ async function collectSnapshotAlerts(host: HostConfig, now: number) {
       now,
       0,
       signal.severity,
+      signal.evidenceAt !== undefined ? { evidenceAt: signal.evidenceAt } : {},
     );
   }
 }
