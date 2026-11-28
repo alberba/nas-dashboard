@@ -441,6 +441,27 @@ export const telegramActionIntents = pgTable(
   ],
 );
 
+/**
+ * Idempotency ledger of the external ingest (CONT-02). `(source, eventId)` is
+ * the dedupe key; `bodyHash` (SHA-256 hex of the raw body) tells an exact retry
+ * from a collision. `incidentId` has no foreign key on purpose: the incident can
+ * be pruned and this table is pruned on its own by `receivedAt`.
+ */
+export const ingestEvents = pgTable(
+  "ingest_events",
+  {
+    source: text().notNull(),
+    eventId: text().notNull(),
+    bodyHash: text().notNull(),
+    incidentId: integer(),
+    receivedAt: timestamp().notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.source, t.eventId] }),
+    index("ingest_events_received_at_idx").on(t.receivedAt),
+  ],
+);
+
 export const operations = pgTable(
   "operations",
   {

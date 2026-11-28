@@ -64,6 +64,13 @@
       "when": 1795802822545,
       "tag": "0008_acciones_telegram",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1795852819490,
+      "tag": "0009_ingest_events",
+      "breakpoints": true
     }
   ]
 }
