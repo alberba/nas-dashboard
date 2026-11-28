@@ -233,7 +233,7 @@ Plans:
   3. 30 días de histórico se sirven desde rollups y el overview cumple un presupuesto medido con 500k muestras.
   4. La rotación conjunta del token del bot (hub y `media-stack`) está documentada y probada.
   5. Ningún emisor del hub puede saltarse la política: el camino de `notify()` ya no existe.
-**Plans**: 3/15 plans executed
+**Plans**: 4/15 plans executed
 
 Plans:
 **Wave 1**
@@ -241,7 +241,7 @@ Plans:
 - [x] 08-14-PLAN.md — Tabla `ingest_events`: migración 0009 aditiva con reversa guardada y ensayada
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 08-01-PLAN.md — Ingest firmado e idempotente en el hub (HMAC, ventana de 300 s, alcance por fuente; repetición exacta 200, colisión 409)
+- [x] 08-01-PLAN.md — Ingest firmado e idempotente en el hub (HMAC, ventana de 300 s, alcance por fuente; repetición exacta 200, colisión 409)
 - [x] 08-07-PLAN.md — Productor de issue-automator en `media-stack`: apertura y cierre de incidencias de Seerr por el ingest
 
 **Wave 3** *(blocked on Wave 2 completion)*
@@ -288,7 +288,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 5. Bot de lectura y reconocimiento | 6/6 | Complete    | 2026-11-27 |
 | 6. Puerta de seguridad | 6/6 | Complete    | 2026-11-27 |
 | 7. Acciones verificadas desde Telegram | 6/6 | Complete    | 2026-11-27 |
-| 8. Cutover de media-stack y consolidación | 3/15 | In Progress | - |
+| 8. Cutover de media-stack y consolidación | 4/15 | In Progress | - |
 
 ## Backlog
 
