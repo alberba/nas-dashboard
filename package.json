@@ -10,6 +10,7 @@
     "lint": "node --import ./scripts/eslint-typescript-api.mjs ./node_modules/eslint/bin/eslint.js",
     "typecheck": "tsc --noEmit --incremental false",
     "test": "vitest run",
+    "test:perf": "HUB_PERF=1 HUB_REQUIRE_TEST_DB=1 vitest run tests/overview-budget.test.ts --silent=false",
     "test:e2e": "playwright test",
     "test:agent": "python3 -m unittest discover -s agent -p 'test_*.py'",
     "test:audit": "python3 -m unittest discover -s scripts/audit -p 'test_*.py'",

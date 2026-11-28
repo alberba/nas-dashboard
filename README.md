@@ -270,6 +270,8 @@ pnpm exec playwright install chromium
 pnpm test:e2e
 ```
 
+`pnpm test:perf` mide el overview de 30 días con 500 000 muestras sembradas en una base local: tarda varios minutos y ocupa del orden de 1 GB, por eso no corre en CI ni con `pnpm test`. El presupuesto es un p95 menor de 150 ms, con el plan comprobado para que la consulta no lea `samples`. Las muestras crudas se conservan 48 horas, solo se borran cuando su cubo de 15 minutos ya está agregado y siempre queda la última de cada host; los rollups y los eventos de ingest se conservan 30 días.
+
 `tests/notification-senders.test.ts` es una guarda estática: falla si un módulo de `src/` distinto de `notification-dispatch.ts` y `digest-runs.ts` (más las definiciones `telegram.ts` y `push.ts`) envía a Telegram o por Web Push, de modo que ningún aviso se salta la política.
 
 Playwright usa una base de datos de desarrollo/pruebas, crea una cuenta de prueba cuando está vacía y comprueba acceso, registro cerrado, origen de peticiones, navegación, móvil y passkeys con un autenticador virtual. No apuntes estas pruebas a producción. Los tests del agente utilizan archivos temporales; las operaciones `renameat2` requieren Linux.

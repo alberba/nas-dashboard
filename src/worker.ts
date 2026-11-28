@@ -1,7 +1,7 @@
 import type { PoolClient } from "pg";
 import { gt, lt } from "drizzle-orm";
 import { db, pool } from "./lib/db";
-import { operations, presence, samples } from "./lib/schema";
+import { operations, presence } from "./lib/schema";
 import { readRuntimeConfig, RuntimeConfigError } from "./lib/runtime-config";
 import { collectAll } from "./lib/collector";
 import { cleanupExpiredIncidents } from "./lib/incident-store";
@@ -15,7 +15,7 @@ import {
 import { runDigestOnce, publicDigestReason, type DigestTransition } from "./lib/digest-runs";
 import { createUpdatesLane } from "./lib/telegram-updates";
 import { cleanupTelegramState } from "./lib/telegram-cleanup";
-import { backfillRollups, rollupRecent } from "./lib/history-rollups";
+import { backfillRollups, pruneHistory, rollupRecent } from "./lib/history-rollups";
 import { sampleInterval } from "./lib/validation";
 import { WorkerHealth } from "./lib/worker-health";
 import {
@@ -182,7 +182,11 @@ async function main() {
           drain: () => drain(config, lock, health!),
           cleanup: async () => {
             const cutoff = new Date(Date.now() - 30 * 86400000);
-            await db.delete(samples).where(lt(samples.at, cutoff));
+            // Raw samples keep 48 h and only once rolled up; rollups and ingest
+            // events keep 30 days. A pass is bounded below the health threshold.
+            const pruned = await pruneHistory(db);
+            if (pruned.deleted > 0)
+              console.log(`Historial: ${pruned.deleted} muestras podadas`);
             await cleanupExpiredIncidents(cutoff);
             await db.delete(operations).where(lt(operations.at, cutoff));
             await db.delete(presence).where(lt(presence.expiresAt, new Date()));
