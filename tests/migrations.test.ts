@@ -1204,6 +1204,199 @@ describe.skipIf(!baseUrl)("action intents migration runner", () => {
   }, 120_000);
 });
 
+describe.skipIf(!baseUrl)("ingest events migration 0009", () => {
+  async function appliedCount(url: string) {
+    const client = new Client({ connectionString: url });
+    await client.connect();
+    try {
+      const applied = await client.query<{ count: number }>(
+        "SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations",
+      );
+      const table = await client.query<{ name: string | null }>(
+        "SELECT to_regclass('public.ingest_events') AS name",
+      );
+      return { count: applied.rows[0].count, table: table.rows[0].name };
+    } finally {
+      await client.end();
+    }
+  }
+
+  it("adds the idempotency table without rewriting history", async () => {
+    const context = await createTestDatabase(baseUrl!);
+    const client = new Client({ connectionString: context.url });
+    await client.connect();
+    try {
+      await migrateThrough(client, 8);
+      const seeded = await client.query<{ id: number }>(`
+        INSERT INTO incidents ("hostId", key, title, detail, severity, fingerprint, seq, origin)
+        VALUES ('nas-home','backup-failed','Copia fallida','', 'warning','fp-ingest-open', 1, 'live')
+        RETURNING id
+      `);
+      const incidentId = seeded.rows[0].id;
+      await client.query(
+        `INSERT INTO operations (id, "hostId", "userId", action, target, status, detail)
+         VALUES ('op-before-0009', 'nas-home', 'user-1', 'restart', 'plex', 'success', 'ok')`,
+      );
+      const before = {
+        incidents: (await client.query("SELECT * FROM incidents ORDER BY id")).rows,
+        operations: (await client.query("SELECT * FROM operations ORDER BY id")).rows,
+      };
+
+      await migrateAll(client);
+
+      // Rows written before the migration are identical afterwards.
+      expect(
+        (await client.query("SELECT * FROM incidents ORDER BY id")).rows,
+      ).toEqual(before.incidents);
+      expect(
+        (await client.query("SELECT * FROM operations ORDER BY id")).rows,
+      ).toEqual(before.operations);
+
+      // The table, its columns, nullability and index match the snapshot.
+      const current = snapshot("0009_ingest_events");
+      expect(current.prevId).toBe(snapshot("0008_acciones_telegram").id);
+      const expected = current.tables["public.ingest_events"];
+      expect(expected).toBeDefined();
+      const live = await liveColumns(client, "ingest_events");
+      expect(live.map((column) => column.column_name).sort()).toEqual([
+        "bodyHash",
+        "eventId",
+        "incidentId",
+        "receivedAt",
+        "source",
+      ]);
+      expect(live.map((column) => column.column_name).sort()).toEqual(
+        Object.keys(expected.columns).sort(),
+      );
+      const nullability = new Map(
+        live.map((column) => [column.column_name, column.is_nullable]),
+      );
+      expect(nullability.get("bodyHash")).toBe("NO");
+      expect(nullability.get("incidentId")).toBe("YES");
+      expect(
+        (await liveIndexes(client, "ingest_events"))
+          .filter((name) => !name.endsWith("_pk"))
+          .sort(),
+      ).toEqual(["ingest_events_received_at_idx"]);
+      // No foreign key: the incident may be pruned while the ledger stays.
+      const foreignKeys = await client.query(
+        `SELECT 1 FROM pg_constraint
+          WHERE conrelid = 'public.ingest_events'::regclass AND contype = 'f'`,
+      );
+      expect(foreignKeys.rowCount).toBe(0);
+
+      // drizzle reads back what it wrote; the composite key is the lock.
+      const db = drizzle(client, { schema });
+      const row = {
+        source: "grafana",
+        eventId: "evt-1",
+        bodyHash: "a".repeat(64),
+        incidentId,
+      };
+      const [first] = await db
+        .insert(schema.ingestEvents)
+        .values(row)
+        .onConflictDoNothing()
+        .returning();
+      expect(first).toMatchObject(row);
+      expect(first.receivedAt).toBeInstanceOf(Date);
+      const duplicate = await db
+        .insert(schema.ingestEvents)
+        .values({ ...row, bodyHash: "b".repeat(64) })
+        .onConflictDoNothing()
+        .returning();
+      expect(duplicate).toEqual([]);
+      expect(await db.select().from(schema.ingestEvents)).toEqual([first]);
+      await expect(
+        client.query(
+          `INSERT INTO ingest_events (source, "eventId", "bodyHash")
+           VALUES ('grafana', 'evt-1', 'c')`,
+        ),
+      ).rejects.toMatchObject({ code: "23505" });
+      // The same event id from another source is a different event.
+      await client.query(
+        `INSERT INTO ingest_events (source, "eventId", "bodyHash")
+         VALUES ('uptime', 'evt-1', 'd')`,
+      );
+      await expect(
+        client.query(
+          `INSERT INTO ingest_events (source, "eventId", "bodyHash")
+           VALUES ('uptime', 'evt-2', NULL)`,
+        ),
+      ).rejects.toMatchObject({ code: "23502" });
+      const withoutIncident = await client.query<{ incidentId: number | null }>(
+        `SELECT "incidentId" FROM ingest_events WHERE source = 'uptime'`,
+      );
+      expect(withoutIncident.rows).toEqual([{ incidentId: null }]);
+
+      // Re-running the real migrator applies nothing twice.
+      await migrateAll(client);
+      const reapplied = await client.query<{ count: number }>(
+        "SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations",
+      );
+      expect(reapplied.rows[0].count).toBe(journal().entries.length);
+    } finally {
+      await client.end();
+      await dropTestDatabase(context);
+    }
+  });
+
+  it("applies 0009 to a new database and on top of 0008 with pnpm db:migrate", async () => {
+    const fresh = await createTestDatabase(baseUrl!);
+    try {
+      const first = await runMigrator(fresh.url);
+      expect(first.stderr).toBe("");
+      expect(first.code).toBe(0);
+      expect(await appliedCount(fresh.url)).toEqual({
+        count: journal().entries.length,
+        table: "ingest_events",
+      });
+      const again = await runMigrator(fresh.url);
+      expect(again.code).toBe(0);
+      expect((await appliedCount(fresh.url)).count).toBe(
+        journal().entries.length,
+      );
+    } finally {
+      await dropTestDatabase(fresh);
+    }
+
+    const legacy = await createTestDatabase(baseUrl!);
+    try {
+      const before = new Client({ connectionString: legacy.url });
+      await before.connect();
+      try {
+        await migrateThrough(before, 8);
+        await before.query(
+          `INSERT INTO operations (id, "hostId", "userId", action, target, status)
+           VALUES ('op-runner-0009', 'nas-home', 'user-1', 'reboot', 'nas-home', 'success')`,
+        );
+      } finally {
+        await before.end();
+      }
+      const runner = await runMigrator(legacy.url);
+      expect(runner.stderr).toBe("");
+      expect(runner.code).toBe(0);
+      expect(await appliedCount(legacy.url)).toEqual({
+        count: journal().entries.length,
+        table: "ingest_events",
+      });
+      const after = new Client({ connectionString: legacy.url });
+      await after.connect();
+      try {
+        const operations = await after.query(`SELECT id FROM operations`);
+        expect(operations.rows).toEqual([{ id: "op-runner-0009" }]);
+        const second = await runMigrator(legacy.url);
+        expect(second.stderr).toBe("");
+        expect(second.code).toBe(0);
+      } finally {
+        await after.end();
+      }
+    } finally {
+      await dropTestDatabase(legacy);
+    }
+  }, 120_000);
+});
+
 describe.skipIf(!baseUrl)("incidents rollback rehearsal", () => {
   async function rehearsal() {
     const context = await createTestDatabase(baseUrl!);
