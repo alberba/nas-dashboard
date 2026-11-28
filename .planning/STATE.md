@@ -3,17 +3,17 @@ gsd_state_version: "1.0"
 current_phase: 08
 current_phase_name: Cutover de media-stack y consolidación
 status: executing
-stopped_at: Phase 8 context gathered
-last_updated: "2026-11-28T07:57:06.330Z"
+stopped_at: Completed 08-06-PLAN.md
+last_updated: "2026-11-28T08:06:47.243Z"
 last_activity: 2026-11-28
 last_activity_desc: Phase 08 execution started
-state_head: 64787b93b205574da550746c7d8eaf048d36c9e0
+state_head: c5744a8d418f3d1bc5a29a7ed43d9591f33f1f41
 progress:
   total_phases: 8
   completed_phases: 7
   total_plans: 47
-  completed_plans: 32
-  percent: 68
+  completed_plans: 33
+  percent: 70
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-11-27)
 ## Current Position
 
 Phase: 08 (Cutover de media-stack y consolidación) — EXECUTING
-Plan: 1 of 15
-Status: Executing Phase 08
+Plan: 2 of 15
+Status: Ready to execute
 Last activity: 2026-11-28 — Phase 08 execution started
 
-Progress: [███████░░░] 68%
+Progress: [███████░░░] 70%
 
 ## Performance Metrics
 
@@ -86,6 +86,7 @@ Progress: [███████░░░] 68%
 | Phase 07 P03 | 5 min | 3 tasks | 10 files |
 | Phase 07 P04 | 10 min | 3 tasks | 9 files |
 | Phase 07 P05 | 25 min | 3 tasks | 8 files |
+| Phase 08 P06 | 25 min | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -167,6 +168,8 @@ Recent decisions affecting current work:
 - [Phase 07]: 07-04: TELEGRAM_DIRECT_ACTIONS solo se valida (0 o ausente) y no añade campo a RuntimeConfig
 - [Phase 07]: P-20 a P-24: confirmar y verificar son un solo paso; el token del handoff vive en sessionStorage (hub.handoff) hasta un estado terminal y captureHandoff es idempotente; un 401 de inspect recarga la página; cerrar el diálogo deja dismissed; useSensitiveAction gana requiresVerification
 - [Phase 07]: 07-05: pending borra el token y no ofrece reintento; failed lo conserva y reintenta solo con inspect, sin llamar a execute
+- [Phase 08]: 08-06: backup-failed se publica firmado en el ingest con 3 intentos (0 30 60) y mismo eventId; solo sin 2xx cae a un unico aviso directo de Telegram con prefijo fijo y token por curl -K -
+- [Phase 08]: 08-06: media-stack phase-08-cutover lleva 3 commits (1e5666c, dc6a4f1, 7cba1ae) y no se integra en main hasta la puerta 08-10
 
 ### Pending Todos
 
@@ -192,6 +195,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-27T20:41:27.047Z
-Stopped at: Phase 8 context gathered
-Resume file: .planning/phases/08-cutover-de-media-stack-y-consolidaci-n/08-CONTEXT.md
+Last session: 2026-11-28T08:06:46.832Z
+Stopped at: Completed 08-06-PLAN.md
+Resume file: None
