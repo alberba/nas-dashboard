@@ -3,17 +3,17 @@ gsd_state_version: "1.0"
 current_phase: 08
 current_phase_name: Cutover de media-stack y consolidación
 status: executing
-stopped_at: Completed 08-12-PLAN.md
-last_updated: "2026-11-28T08:36:09.373Z"
+stopped_at: Completed 08-15-PLAN.md
+last_updated: "2026-11-28T08:44:45.653Z"
 last_activity: 2026-11-28
 last_activity_desc: Phase 08 execution started
-state_head: e22668a05daad43309f2f6be204e91f49a522cb0
+state_head: c29798d1291f569a873cd79f360931b8093e30a6
 progress:
   total_phases: 8
   completed_phases: 7
   total_plans: 47
-  completed_plans: 41
-  percent: 87
+  completed_plans: 42
+  percent: 88
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-11-27)
 ## Current Position
 
 Phase: 08 (Cutover de media-stack y consolidación) — EXECUTING
-Plan: 6 of 15
+Plan: 7 of 15
 Status: Ready to execute
 Last activity: 2026-11-28 — Phase 08 execution started
 
-Progress: [█████████░] 87%
+Progress: [█████████░] 88%
 
 ## Performance Metrics
 
@@ -91,6 +91,7 @@ Progress: [█████████░] 87%
 | Phase 08 P08 | 25 min | 3 tasks | 8 files |
 | Phase 08 P09 | 3 min | 2 tasks | 7 files |
 | Phase 08 P12 | 3 min | 2 tasks | 9 files |
+| Phase 08 P15 | 5 min | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -184,6 +185,9 @@ Recent decisions affecting current work:
 - [Phase 08]: P-28: TELEGRAM_BOT_TOKEN/CHAT_ID solo en el alcance instance; apps-server los pierde en catalogo, plantilla y .env.example (claves sobrantes solo advierten)
 - [Phase 08]: P-29: guarda estatica de emisores de Telegram como tests/*.test.sh (find y grep sin git, controles negativos sobre copia alterada); la ejecuta check.sh ci sin cambios
 - [Phase 08]: P-30: comentarios wud.tag.transform de arr, jackett, vo y vpn sin mencion a Telegram ni al umbral de WUD
+- [Phase 08]: 08-15 P-42/P-43: issue-automator outbox is one atomic JSON file per event in APPDATA_ROOT/issue-automator mounted on /outbox (run as PUID:PGID, folder declared in PROFILE_DIRS[extras]); SQLite, a broker and in-memory retries rejected
+- [Phase 08]: 08-15 P-44/P-45: retry on any non-2xx with backoff 15s doubling to 900s, same body and eventId, fresh signature with the current secret; limits 14 days and 200 events; a closing never leaves before its opening is confirmed
+- [Phase 08]: 08-15 P-46: issue-automator exits 1 at start, naming the folder and scripts/init.sh, when the outbox cannot be written; last phase-08-cutover commit ab88c11
 
 ### Pending Todos
 
@@ -209,6 +213,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-28T08:36:08.946Z
-Stopped at: Completed 08-12-PLAN.md
+Last session: 2026-11-28T08:44:45.225Z
+Stopped at: Completed 08-15-PLAN.md
 Resume file: None

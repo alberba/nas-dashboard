@@ -233,7 +233,7 @@ Plans:
   3. 30 días de histórico se sirven desde rollups y el overview cumple un presupuesto medido con 500k muestras.
   4. La rotación conjunta del token del bot (hub y `media-stack`) está documentada y probada.
   5. Ningún emisor del hub puede saltarse la política: el camino de `notify()` ya no existe.
-**Plans**: 9/15 plans executed
+**Plans**: 10/15 plans executed
 
 Plans:
 **Wave 1**
@@ -256,7 +256,7 @@ Plans:
 - [x] 08-12-PLAN.md — Guarda de emisores de `media-stack` y documentación del cutover
 
 **Wave 6** *(blocked on Wave 5 completion)*
-- [ ] 08-15-PLAN.md — Bandeja durable de issue-automator: los eventos del ingest se guardan en disco y se reintentan hasta un 2xx
+- [x] 08-15-PLAN.md — Bandeja durable de issue-automator: los eventos del ingest se guardan en disco y se reintentan hasta un 2xx
 
 **Wave 7** *(blocked on Wave 6 completion)*
 - [ ] 08-10-PLAN.md — Puerta 1: despliegue del ingest, eventos de prueba y release del apagado de `media-stack`
@@ -288,7 +288,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
 | 5. Bot de lectura y reconocimiento | 6/6 | Complete    | 2026-11-27 |
 | 6. Puerta de seguridad | 6/6 | Complete    | 2026-11-27 |
 | 7. Acciones verificadas desde Telegram | 6/6 | Complete    | 2026-11-27 |
-| 8. Cutover de media-stack y consolidación | 9/15 | In Progress | - |
+| 8. Cutover de media-stack y consolidación | 10/15 | In Progress | - |
 
 ## Backlog
 
