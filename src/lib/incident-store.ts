@@ -41,7 +41,7 @@ export type IncidentObservation = {
   now?: number;
   /** Caller-provided channel disposition, never chosen inside the transaction. */
   delivery?: IncidentDelivery;
-  closedBy?: "collector" | "lifecycle" | "reconciliation";
+  closedBy?: "collector" | "lifecycle" | "reconciliation" | "ingest";
   /** Inventory captured only when a `connection` episode is actually created. */
   context?: IncidentInventoryContext | null;
   /** Removes the observation block after valid evidence for a container. */

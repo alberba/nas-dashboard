@@ -12,6 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  readIngestSecrets,
   readRuntimeConfig,
   RuntimeConfigError,
 } from "@/lib/runtime-config";
@@ -35,6 +36,8 @@ const CONFIG_KEYS = [
   "TELEGRAM_BOT_TOKEN",
   "TELEGRAM_CHAT_ID",
   "TELEGRAM_DIRECT_ACTIONS",
+  "NOTIFY_INGEST_SECRET",
+  "NOTIFY_INGEST_SECRET_PREVIOUS",
   "VAPID_PUBLIC_KEY",
   "VAPID_PRIVATE_KEY",
   "PUSH_WARNINGS",
@@ -305,6 +308,81 @@ describe("readRuntimeConfig", () => {
       expect(error.message).not.toContain(`=${value}`);
     },
   );
+
+  describe("notification ingest secrets", () => {
+    const secret = "ingest-secret-with-at-least-32-characters-ok";
+    const previous = "previous-secret-with-at-least-32-characters-ok";
+
+    it("starts without any ingest secret and leaves the config unchanged", () => {
+      const config = readRuntimeConfig(env());
+      expect(Object.keys(config).join()).not.toMatch(/ingest/i);
+      expect(readIngestSecrets(env())).toBeNull();
+    });
+
+    it("accepts a current secret, alone or with a rotation secret", () => {
+      expect(
+        readRuntimeConfig(env({ NOTIFY_INGEST_SECRET: secret })),
+      ).toEqual(readRuntimeConfig(env()));
+      expect(
+        readRuntimeConfig(
+          env({
+            NOTIFY_INGEST_SECRET: secret,
+            NOTIFY_INGEST_SECRET_PREVIOUS: previous,
+          }),
+        ),
+      ).toEqual(readRuntimeConfig(env()));
+      expect(
+        readIngestSecrets(
+          env({
+            NOTIFY_INGEST_SECRET: ` ${secret} `,
+            NOTIFY_INGEST_SECRET_PREVIOUS: previous,
+          }),
+        ),
+      ).toEqual({ secret, previous });
+      expect(readIngestSecrets(env({ NOTIFY_INGEST_SECRET: secret }))).toEqual({
+        secret,
+        previous: null,
+      });
+    });
+
+    it.each([
+      ["NOTIFY_INGEST_SECRET", "too-short", "invalid"],
+      [
+        "NOTIFY_INGEST_SECRET",
+        "replace-with-a-random-secret-of-at-least-32-characters",
+        "example",
+      ],
+      ["NOTIFY_INGEST_SECRET_PREVIOUS", "too-short", "invalid"],
+    ] as const)(
+      "rejects %s=%s at startup without echoing it",
+      (variable, value, reason) => {
+        const error = errorFor({
+          NOTIFY_INGEST_SECRET: secret,
+          [variable]: value,
+        });
+        expect(error.issues).toContainEqual({ variable, reason });
+        expect(error.message).toContain(`${variable} (${reason})`);
+        expect(error.message).not.toContain(value);
+        expect(
+          readIngestSecrets(
+            env({ NOTIFY_INGEST_SECRET: secret, [variable]: value }),
+          ),
+        ).toBeNull();
+      },
+    );
+
+    it("rejects a rotation secret without the current one", () => {
+      const error = errorFor({ NOTIFY_INGEST_SECRET_PREVIOUS: previous });
+      expect(error.issues).toContainEqual({
+        variable: "NOTIFY_INGEST_SECRET_PREVIOUS",
+        reason: "incomplete_pair",
+      });
+      expect(error.message).not.toContain(previous);
+      expect(
+        readIngestSecrets(env({ NOTIFY_INGEST_SECRET_PREVIOUS: previous })),
+      ).toBeNull();
+    });
+  });
 
   it.each([
     "DATABASE_URL",
