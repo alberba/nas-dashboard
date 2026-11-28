@@ -135,6 +135,14 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f scripts/rollback/0004_incidents.sql
 
 El script comprueba que 0004 es el último avance del journal, elimina el índice parcial, restaura solo los cierres sintéticos de la migración y conserva los cierres válidos y los identificadores. Arranca entonces la versión anterior. Si necesitas recuperar también la actividad posterior a 0004 (outbox, eventos y marcas de entrega), restaura la copia completa tomada antes de migrar en lugar de confiar solo en el script; la copia es la única que conserva esos datos. Para volver a avanzar, aplica de nuevo `pnpm db:migrate` con la versión nueva: los identificadores se conservan y los duplicados se vuelven a deduplicar.
 
+### Ingest de avisos de media-stack
+
+`media-stack` ya no avisa a Telegram por su cuenta: la copia (`backup-failed`) e issue-automator publican en `POST /api/notifications/ingest`, que el hub verifica con HMAC-SHA256 y convierte en incidencias por el mismo camino que el resto. Define `NOTIFY_INGEST_SECRET` (mínimo 32 caracteres, el mismo valor en el `.env` de `media-stack`) y, solo durante una rotación, `NOTIFY_INGEST_SECRET_PREVIOUS`; el hub acepta ambos hasta que se retire el anterior. Mientras no haya secreto, el ingest responde 503 y el hub arranca igual.
+
+`scripts/ingest-test-event.sh` firma y envía un evento de prueba desde cualquier equipo con `curl`, `openssl` y `jq`; lee el secreto de `NOTIFY_INGEST_SECRET` y nunca de un argumento. El orden del cutover y su verificación están en [`docs/media-stack-cutover.md`](docs/media-stack-cutover.md), y la rotación conjunta del token del bot y del secreto, en [`docs/rotacion-token-y-secreto.md`](docs/rotacion-token-y-secreto.md).
+
+Duplicado aceptado: si el hub estaba caído o tardó en confirmar, la copia envía un aviso directo a Telegram y, al volver el hub, el evento reintentado puede abrir la misma incidencia. Es un comportamiento conocido y aceptado, no un defecto.
+
 ## Entrada privada alternativa
 
 Puedes publicar `127.0.0.1:4324` mediante Tailscale Serve. Añade la URL HTTPS resultante a `TRUSTED_ORIGINS`, separada por una coma, y recrea la aplicación. Better Auth admite los dominios exactos configurados. Las passkeys pertenecen al dominio principal; en el dominio alternativo utiliza correo y contraseña.
@@ -261,6 +269,8 @@ pnpm build
 pnpm exec playwright install chromium
 pnpm test:e2e
 ```
+
+`tests/notification-senders.test.ts` es una guarda estática: falla si un módulo de `src/` distinto de `notification-dispatch.ts` y `digest-runs.ts` (más las definiciones `telegram.ts` y `push.ts`) envía a Telegram o por Web Push, de modo que ningún aviso se salta la política.
 
 Playwright usa una base de datos de desarrollo/pruebas, crea una cuenta de prueba cuando está vacía y comprueba acceso, registro cerrado, origen de peticiones, navegación, móvil y passkeys con un autenticador virtual. No apuntes estas pruebas a producción. Los tests del agente utilizan archivos temporales; las operaciones `renameat2` requieren Linux.
 

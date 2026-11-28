@@ -1,5 +1,5 @@
 import { execFile, spawnSync } from "node:child_process";
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
@@ -276,5 +276,31 @@ describe("scripts/ingest-test-event.sh against a live endpoint", () => {
     const { code, received } = await runAgainst(409, sequence);
     expect(code).not.toBe(0);
     expect(received).toHaveLength(1);
+  });
+});
+
+describe("cutover and rotation documents", () => {
+  const documents = [
+    "docs/media-stack-cutover.md",
+    "docs/rotacion-token-y-secreto.md",
+  ];
+
+  it("name the script and both secret variables", () => {
+    for (const file of documents) {
+      const text = readFileSync(path.join(repoRoot, file), "utf8");
+      for (const identifier of [
+        "scripts/ingest-test-event.sh",
+        "NOTIFY_INGEST_SECRET",
+        "NOTIFY_INGEST_SECRET_PREVIOUS",
+      ])
+        expect(text, `${file} names ${identifier}`).toContain(identifier);
+    }
+  });
+
+  it("never pass the secret as a command argument", () => {
+    for (const file of documents) {
+      const text = readFileSync(path.join(repoRoot, file), "utf8");
+      expect(text, file).not.toMatch(/--secret\b/);
+    }
   });
 });
