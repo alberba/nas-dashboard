@@ -57,12 +57,12 @@ Alcance de este milestone: auditar el ruido, sustituir los emisores por una entr
 - [x] **SEC-03**: El arranque rechaza credenciales de ejemplo y la falta de configuración obligatoria, y el contenedor no se declara sano
 - [x] **SEC-04**: Las respuestas incluyen CSP conservadora y HSTS, y las mutaciones tienen límite de cuerpo
 - [ ] **SEC-05**: La rotación conjunta del token del bot (hub y `media-stack`) está documentada y probada
-- [ ] **SEC-06**: El fallback de copia de `media-stack` solo envía `backup-failed`, solo si el ingest no confirma, y se marca con origen propio
+- [x] **SEC-06**: El fallback de copia de `media-stack` solo envía `backup-failed`, solo si el ingest no confirma, y se marca con origen propio
 
 ### Contratos y operación
 
 - [x] **CONT-01**: Métricas, mantenimiento y despliegues se validan en runtime en el borde del hub, y un payload inválido no resuelve incidencias
-- [ ] **CONT-02**: El ingest de `media-stack` valida HMAC, ventana de 5 minutos e idempotencia por evento
+- [x] **CONT-02**: El ingest de `media-stack` valida HMAC, ventana de 5 minutos e idempotencia por evento
 - [x] **CONT-03**: Agente y worker tienen healthcheck, y el worker puede reportar que el resumen no salió
 - [x] **CONT-04**: Los contenedores auxiliares huérfanos del agente se recogen y los fallos de limpieza son visibles
 
@@ -142,8 +142,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | BOT-08 | Phase 7 | Complete |
 | BOT-09 | Phase 7 | Complete |
 | SEC-05 | Phase 8 | Pending |
-| SEC-06 | Phase 8 | Pending |
-| CONT-02 | Phase 8 | Pending |
+| SEC-06 | Phase 8 | Complete |
+| CONT-02 | Phase 8 | Complete |
 | PERF-01 | Phase 8 | Pending |
 | PERF-02 | Phase 8 | Pending |
 

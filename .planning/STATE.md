@@ -3,16 +3,16 @@ gsd_state_version: "1.0"
 current_phase: 08
 current_phase_name: Cutover de media-stack y consolidación
 status: executing
-stopped_at: Completed 08-15-PLAN.md
-last_updated: "2026-11-28T08:44:45.653Z"
+stopped_at: Completed 08-10-PLAN.md
+last_updated: "2026-11-28T10:07:33.474Z"
 last_activity: 2026-11-28
 last_activity_desc: Phase 08 execution started
-state_head: c29798d1291f569a873cd79f360931b8093e30a6
+state_head: 1439f6e332ae54edc6c69723b797fc0c696b2d8e
 progress:
   total_phases: 8
   completed_phases: 7
   total_plans: 47
-  completed_plans: 42
+  completed_plans: 43
   percent: 88
 ---
 
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-11-27)
 ## Current Position
 
 Phase: 08 (Cutover de media-stack y consolidación) — EXECUTING
-Plan: 7 of 15
+Plan: 8 of 15
 Status: Ready to execute
 Last activity: 2026-11-28 — Phase 08 execution started
 
@@ -92,6 +92,7 @@ Progress: [█████████░] 88%
 | Phase 08 P09 | 3 min | 2 tasks | 7 files |
 | Phase 08 P12 | 3 min | 2 tasks | 9 files |
 | Phase 08 P15 | 5 min | 3 tasks | 7 files |
+| Phase 08 P10 | puerta humana 2026-11-28 | 3 tasks | 0 files |
 
 ## Accumulated Context
 
@@ -188,6 +189,8 @@ Recent decisions affecting current work:
 - [Phase 08]: 08-15 P-42/P-43: issue-automator outbox is one atomic JSON file per event in APPDATA_ROOT/issue-automator mounted on /outbox (run as PUID:PGID, folder declared in PROFILE_DIRS[extras]); SQLite, a broker and in-memory retries rejected
 - [Phase 08]: 08-15 P-44/P-45: retry on any non-2xx with backoff 15s doubling to 900s, same body and eventId, fresh signature with the current secret; limits 14 days and 200 events; a closing never leaves before its opening is confirmed
 - [Phase 08]: 08-15 P-46: issue-automator exits 1 at start, naming the folder and scripts/init.sh, when the outbox cannot be written; last phase-08-cutover commit ab88c11
+- [Phase 08]: P-31: pasos de produccion de la puerta 1 como checkpoint:human-action (D-11); PR de media-stack abierto en borrador hasta probar el ingest
+- [Phase 08]: 08-10: NOTIFY_INGEST_URL = http://100.74.226.92:4323/api/notifications/ingest (Tailscale), probada desde un contenedor del NAS; emisor SMART externo no encontrado
 
 ### Pending Todos
 
@@ -213,6 +216,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-28T08:44:45.225Z
-Stopped at: Completed 08-15-PLAN.md
+Last session: 2026-11-28T10:07:33.017Z
+Stopped at: Completed 08-10-PLAN.md
 Resume file: None
