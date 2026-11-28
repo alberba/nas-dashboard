@@ -158,6 +158,42 @@ export async function rollupRecent(executor: HistoryExecutor, now?: Date) {
   });
 }
 
+/**
+ * Populates both tables from the existing history, one day and one transaction
+ * at a time so memory and lock time stay bounded (D-20: the rollups are filled
+ * before the raw retention is shortened). It runs the same statements as the
+ * periodic pass over each whole day, so it is idempotent and a late sample is
+ * folded in by the next run. Days are walked as `timestamp` without zone,
+ * like `samples.at`. Returns the number of days processed. Nothing is deleted.
+ */
+export async function backfillRollups(
+  executor: HistoryExecutor,
+  options: {
+    onDay?: (day: string) => void | Promise<void>;
+    /** Checked between days so a shutdown never waits for the whole history. */
+    stopping?: () => boolean;
+  } = {},
+): Promise<number> {
+  const days = await executor.execute(sql`
+    SELECT d::date::text AS day FROM generate_series(
+      date_trunc('day', (SELECT min(at) FROM samples)),
+      date_trunc('day', now()::timestamp), interval '1 day') d`);
+  let done = 0;
+  for (const { day } of days.rows as { day: string }[]) {
+    if (options.stopping?.()) break;
+    await executor.transaction(async (tx) => {
+      await rollupRange(
+        tx,
+        sql`${day}::timestamp`,
+        sql`${day}::timestamp + interval '1 day'`,
+      );
+    });
+    done += 1;
+    await options.onDay?.(day);
+  }
+  return done;
+}
+
 async function rawHistory(
   executor: HistoryExecutor,
   hostId: string,

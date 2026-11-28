@@ -332,7 +332,9 @@ describe.skipIf(!baseUrl)("history rollups", () => {
     const alpha = await rollups.readContainerHistory(db, "nas-home", "alpha", "7d");
     expect(beta.some((row) => row.cpu === null)).toBe(true);
     expect(beta.some((row) => row.cpu !== null)).toBe(true);
-    expect(beta.filter((row) => row.cpu === 0)).toEqual([]);
+    // A bucket without the container is a null row in every column, never zeros.
+    for (const row of beta.filter((entry) => entry.cpu === null))
+      expect([row.memory, row.rx, row.tx]).toEqual([null, null, null]);
     const gaps = alpha.slice(1, -1).filter((row) => row.cpu === null);
     expect(gaps).toEqual([]);
 
@@ -364,10 +366,205 @@ describe.skipIf(!baseUrl)("history rollups", () => {
     expect(route).toContain("readContainerHistory");
   });
 
+  async function rollupContents() {
+    const samplesTable = await db.execute(
+      sql`SELECT * FROM sample_rollups ORDER BY "hostId", bucket`,
+    );
+    const containers = await db.execute(
+      sql`SELECT * FROM container_rollups ORDER BY "hostId", container, bucket`,
+    );
+    return { samples: samplesTable.rows as Row[], containers: containers.rows as Row[] };
+  }
+
+  /** Same keys and counts, every float within tolerance. */
+  function expectSameContents(
+    actual: Awaited<ReturnType<typeof rollupContents>>,
+    expected: Awaited<ReturnType<typeof rollupContents>>,
+  ) {
+    for (const table of ["samples", "containers"] as const) {
+      expect(actual[table]).toHaveLength(expected[table].length);
+      actual[table].forEach((row, index) => {
+        for (const [key, want] of Object.entries(expected[table][index])) {
+          if (typeof want === "number")
+            expect(Number(row[key]), `${table}.${key} #${index}`).toBeCloseTo(want, 6);
+          else expect(row[key], `${table}.${key} #${index}`).toEqual(want);
+        }
+      });
+    }
+  }
+
+  it("idempotencia: repetir rollupRecent deja el mismo contenido en ambas tablas", async () => {
+    await rollups.rollupRecent(db);
+    const first = await rollupContents();
+    expect(first.samples.length).toBeGreaterThan(0);
+    expect(first.containers.length).toBeGreaterThan(0);
+    await rollups.rollupRecent(db);
+    expectSameContents(await rollupContents(), first);
+    // Also with an injected clock instead of the database one.
+    await rollups.rollupRecent(db, new Date());
+    expectSameContents(await rollupContents(), first);
+  });
+
+  it("backfill: puebla ambas tablas desde el histórico y es idempotente", async () => {
+    const expected = await rollupContents();
+    await db.execute(sql`DELETE FROM sample_rollups`);
+    await db.execute(sql`DELETE FROM container_rollups`);
+    expect((await rollupContents()).samples).toEqual([]);
+
+    const days: string[] = [];
+    const started = performance.now();
+    const processed = await rollups.backfillRollups(db, {
+      onDay: (day) => {
+        days.push(day);
+      },
+    });
+    const elapsed = performance.now() - started;
+    // 30 days of history plus today, walked one day at a time.
+    expect(processed).toBe(days.length);
+    expect(processed).toBeGreaterThanOrEqual(31);
+    expect(elapsed).toBeLessThan(60_000);
+    expectSameContents(await rollupContents(), expected);
+
+    await rollups.backfillRollups(db);
+    expectSameContents(await rollupContents(), expected);
+
+    // A shutdown between days stops the walk without leaving a half day.
+    const stopped = await rollups.backfillRollups(db, { stopping: () => true });
+    expect(stopped).toBe(0);
+  });
+
+  it("backfill: una muestra tardía en las 2 últimas horas se corrige con rollupRecent", async () => {
+    const bucket = sql`date_bin(interval '15 minutes', (now() - interval '40 minutes')::timestamp, timestamp '2000-01-01')`;
+    const read = async () =>
+      (
+        await db.execute(sql`
+          SELECT n, cpu FROM sample_rollups
+          WHERE "hostId" = 'nas-home' AND bucket = ${bucket}`)
+      ).rows[0] as { n: number; cpu: number };
+    const before = await read();
+    await db.execute(sql`
+      INSERT INTO samples ("hostId", at, data)
+      VALUES ('nas-home', (now() - interval '40 minutes')::timestamp, '{"cpu": 1000}'::jsonb)`);
+    // Not yet folded in: the late sample is invisible to the rollup.
+    expect((await read()).n).toBe(before.n);
+
+    await rollups.rollupRecent(db);
+
+    const after = await read();
+    expect(after.n).toBe(before.n + 1);
+    const truth = (
+      await db.execute(sql`
+        SELECT count(*)::int AS n, avg((data->>'cpu')::float) AS cpu FROM samples
+        WHERE "hostId" = 'nas-home' AND date_bin(interval '15 minutes', at, timestamp '2000-01-01') = ${bucket}`)
+    ).rows[0] as { n: number; cpu: number };
+    expect(after.n).toBe(truth.n);
+    expect(after.cpu).toBeCloseTo(truth.cpu, 6);
+  });
+
   it("no borra ninguna muestra cruda", async () => {
     const before = await db.execute(sql`SELECT count(*)::int AS n FROM samples`);
     await rollups.rollupRecent(db);
     const after = await db.execute(sql`SELECT count(*)::int AS n FROM samples`);
     expect(after.rows).toEqual(before.rows);
+  });
+});
+
+describe("history rollups: carril del worker", () => {
+  type Turn = import("@/lib/worker-loop").WorkerTurnDeps;
+
+  async function harness(overrides: Partial<Turn> = {}) {
+    const loop = await import("@/lib/worker-loop");
+    const rollupModule = await import("@/lib/history-rollups");
+    const order: string[] = [];
+    let now = 10_000_000;
+    // The same shape the earlier harnesses use: no `lastRollup` in the state.
+    const state: Turn["state"] = { lastCollection: 0, lastCleanup: 0 };
+    const deps: Turn = {
+      health: {
+        renew: async () => {
+          order.push("renew");
+          return true;
+        },
+      } as unknown as Turn["health"],
+      holdsLock: async () => true,
+      stopping: () => false,
+      now: () => now,
+      presenceActive: async () => false,
+      sampleInterval: () => 30_000,
+      collect: async () => {
+        order.push("collect");
+      },
+      drain: async () => {
+        order.push("drain");
+      },
+      cleanup: async () => {
+        order.push("cleanup");
+      },
+      rollups: async () => {
+        order.push("rollups");
+      },
+      state,
+      ...overrides,
+    };
+    return {
+      deps,
+      state,
+      order,
+      loop,
+      period: rollupModule.WORKER_ROLLUP_MS,
+      advance: (ms: number) => {
+        now += ms;
+      },
+    };
+  }
+
+  it("ejecuta rollups en el primer turno, no antes de WORKER_ROLLUP_MS y renueva la marca", async () => {
+    const { deps, state, order, loop, period, advance } = await harness();
+    await loop.workerTurn(deps);
+    const first = order.indexOf("rollups");
+    expect(first).toBeGreaterThan(-1);
+    // A completed rollup renews the health mark right after it ran.
+    expect(order[first + 1]).toBe("renew");
+    expect(state.lastRollup).toBe(10_000_000);
+
+    advance(period - 1);
+    await loop.workerTurn(deps);
+    expect(order.filter((step) => step === "rollups")).toHaveLength(1);
+
+    advance(1);
+    await loop.workerTurn(deps);
+    expect(order.filter((step) => step === "rollups")).toHaveLength(2);
+    expect(state.lastRollup).toBe(10_000_000 + period);
+  });
+
+  it("sin la dependencia rollups se comporta como antes", async () => {
+    const { deps, state, order, loop } = await harness({ rollups: undefined });
+    await loop.workerTurn(deps);
+    expect(order).not.toContain("rollups");
+    expect(state.lastRollup).toBeUndefined();
+    expect(order).toEqual([
+      "renew",
+      "collect",
+      "renew",
+      "drain",
+      "renew",
+      "cleanup",
+      "renew",
+    ]);
+  });
+
+  it("un fallo de rollups propaga el error antes de renovar la marca", async () => {
+    const failures: string[] = [];
+    const { deps, order, loop } = await harness({
+      rollups: async () => {
+        failures.push("rollups");
+        throw new Error("db down");
+      },
+    });
+    await expect(loop.workerTurn(deps)).rejects.toThrow("db down");
+    expect(failures).toEqual(["rollups"]);
+    // Nothing renewed after the failed lane: the last step is the cleanup mark.
+    expect(order.at(-1)).toBe("renew");
+    expect(order.slice(-2)).toEqual(["cleanup", "renew"]);
   });
 });
