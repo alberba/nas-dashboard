@@ -42,6 +42,8 @@ export type IncidentObservation = {
   /** Caller-provided channel disposition, never chosen inside the transaction. */
   delivery?: IncidentDelivery;
   closedBy?: "collector" | "lifecycle" | "reconciliation" | "ingest";
+  /** Who opens the episode; defaults to `"live"` (the collector's own signals). */
+  origin?: "live" | "ingest";
   /** Inventory captured only when a `connection` episode is actually created. */
   context?: IncidentInventoryContext | null;
   /** Removes the observation block after valid evidence for a container. */
@@ -848,7 +850,7 @@ export async function recordIncidentObservationIn(
         at,
         fingerprint: incidentFingerprint(input.hostId, input.key),
         seq: 1,
-        origin: "live",
+        origin: input.origin ?? "live",
         context: input.context ?? null,
       })
       .onConflictDoNothing()

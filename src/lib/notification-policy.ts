@@ -40,6 +40,9 @@ const DIGEST_KEYS = new Set([
 
 const SILENT_PREFIX = "container:";
 
+/** D-04: every Seerr issue is an immediate Telegram episode, whatever its severity. */
+export const SEERR_ISSUE_PREFIX = "issue:seerr:";
+
 /** `PUSH_WARNINGS` opt-in, false unless the operator explicitly enables it. */
 export function pushWarningsEnabled(value = process.env.PUSH_WARNINGS): boolean {
   if (value === undefined) return false;
@@ -79,6 +82,15 @@ export function notificationPolicy(
       reason: "policy_silent",
       digest: false,
       immediate: false,
+    };
+  if (key.startsWith(SEERR_ISSUE_PREFIX))
+    // Explicit branch: falling through to the not-audited digest (or letting
+    // PUSH_WARNINGS turn a warning into a push) would bury a user's report.
+    return {
+      channel: "telegram",
+      reason: "policy_immediate",
+      digest: false,
+      immediate: true,
     };
   if (key === "helper-cleanup")
     // D-11: phase 4 wants this condition in the daily digest. It must not turn

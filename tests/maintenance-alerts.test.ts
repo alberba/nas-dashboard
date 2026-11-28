@@ -545,6 +545,21 @@ describe("notification policy", () => {
     });
   });
 
+  it("sends every Seerr issue to Telegram at once, whatever the severity or PUSH_WARNINGS", () => {
+    for (const severity of ["warning", "critical"] as const) {
+      for (const pushWarnings of [true, false]) {
+        expect(
+          notificationPolicy("issue:seerr:42", severity, { pushWarnings }),
+        ).toEqual({
+          channel: "telegram",
+          reason: "policy_immediate",
+          digest: false,
+          immediate: true,
+        });
+      }
+    }
+  });
+
   it("replaces only eligible warnings with push when PUSH_WARNINGS is enabled", () => {
     expect(
       notificationPolicy("cpu", "warning", { pushWarnings: false }),

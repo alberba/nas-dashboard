@@ -280,6 +280,7 @@ export async function handleIngest(
         now,
         delivery: deliveryFor(event.key, notice.severity),
         closedBy: "ingest",
+        origin: "ingest",
       });
       if (result.incidentId !== undefined)
         await tx
