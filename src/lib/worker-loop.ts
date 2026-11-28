@@ -1,3 +1,4 @@
+import { WORKER_ROLLUP_MS } from "./history-rollups";
 import { CollectionLockLost } from "./notification-dispatch";
 import type { UpdatesOutcome } from "./telegram-updates";
 import type { WorkerHealth } from "./worker-health";
@@ -54,9 +55,15 @@ export type WorkerTurnDeps = {
   collect: () => Promise<void>;
   drain: () => Promise<void>;
   cleanup: () => Promise<void>;
+  /**
+   * Optional history rollup lane (PERF-01): aggregates the recent hours of
+   * samples every `WORKER_ROLLUP_MS`.
+   */
+  rollups?: () => Promise<void>;
   /** Optional Telegram updates lane: the long poll replaces the idle pause. */
   updates?: (budget: { waitSeconds: number }) => Promise<UpdatesOutcome>;
-  state: { lastCollection: number; lastCleanup: number };
+  /** `lastRollup` is optional so a harness that predates the lane still fits. */
+  state: { lastCollection: number; lastCleanup: number; lastRollup?: number };
 };
 
 /**
@@ -94,6 +101,17 @@ export async function workerTurn(deps: WorkerTurnDeps): Promise<void> {
   if (deps.now() - deps.state.lastCleanup > WORKER_CLEANUP_MS) {
     await deps.cleanup();
     deps.state.lastCleanup = deps.now();
+    await deps.health.renew();
+  }
+
+  if (
+    deps.rollups &&
+    deps.now() - (deps.state.lastRollup ?? 0) >= WORKER_ROLLUP_MS
+  ) {
+    // Marked before the run, like the collection: a failing aggregation is
+    // retried on the next period, not on every one-second turn.
+    deps.state.lastRollup = deps.now();
+    await deps.rollups();
     await deps.health.renew();
   }
 

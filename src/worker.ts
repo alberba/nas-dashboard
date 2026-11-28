@@ -15,6 +15,7 @@ import {
 import { runDigestOnce, publicDigestReason, type DigestTransition } from "./lib/digest-runs";
 import { createUpdatesLane } from "./lib/telegram-updates";
 import { cleanupTelegramState } from "./lib/telegram-cleanup";
+import { backfillRollups, rollupRecent } from "./lib/history-rollups";
 import { sampleInterval } from "./lib/validation";
 import { WorkerHealth } from "./lib/worker-health";
 import {
@@ -43,6 +44,7 @@ function logDigestTransition(event: DigestTransition) {
 
 let lastCollection = 0;
 let lastCleanup = 0;
+let lastRollup = 0;
 let stopping = false;
 let lockLost = false;
 let health: WorkerHealth | null = null;
@@ -142,7 +144,23 @@ async function main() {
     console.log(
       `Recolector iniciado para ${hosts.map((host) => host.name).join(", ")}`,
     );
-    const state = { lastCollection, lastCleanup };
+    // D-20: fill the history rollups from the existing samples before anything
+    // may shorten the raw retention. It is idempotent and a failure must not
+    // stop the collector from starting; the periodic pass keeps the recent
+    // hours current either way.
+    try {
+      const days = await backfillRollups(db, {
+        stopping: () => stopping,
+        onDay: async (day) => {
+          console.log(`Rollups de historial: día ${day}`);
+          await health?.renew();
+        },
+      });
+      console.log(`Rollups de historial poblados (${days} días)`);
+    } catch {
+      console.error("No se pudo poblar el historial agregado; se reintentará al reiniciar");
+    }
+    const state = { lastCollection, lastCleanup, lastRollup };
     while (!stopping) {
       try {
         await workerTurn({
@@ -171,6 +189,7 @@ async function main() {
             // Bound the bot state: expired tokens and stale silences only.
             await cleanupTelegramState(db, new Date());
           },
+          rollups: () => rollupRecent(db),
           updates: updatesLane
             ? (budget) => updatesLane.run({ waitSeconds: budget.waitSeconds })
             : undefined,
@@ -178,6 +197,7 @@ async function main() {
         });
         lastCollection = state.lastCollection;
         lastCleanup = state.lastCleanup;
+        lastRollup = state.lastRollup ?? lastRollup;
       } catch (error) {
         if (error instanceof CollectionLockLost || lockLost) throw error;
         console.error(
