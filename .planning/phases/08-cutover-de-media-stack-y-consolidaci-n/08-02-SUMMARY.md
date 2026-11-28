@@ -148,7 +148,7 @@ P-07, P-08 y P-09 se aplicaron como estan en el plan (ver `key-decisions`). Sin 
 
 **2. [Rule 3 - Blocking] Caracteres invisibles literales en una prueba**
 - **Found during:** Tarea 3
-- **Issue:** la herramienta de escritura convirtio las secuencias `‮` y ` ` de la cadena hostil en caracteres literales invisibles dentro del fichero de pruebas (el mismo fenomeno que ya se anoto en 08-01).
+- **Issue:** la herramienta de escritura convirtio los escapes Unicode de direccion (bidi) y de separador de linea de la cadena hostil en caracteres literales invisibles dentro del fichero de pruebas (el mismo fenomeno que ya se anoto en 08-01).
 - **Fix:** la cadena se construye con `String.fromCharCode(0x0000, 0x202e, 0x2028)`, de modo que el fichero no contiene ningun caracter invisible.
 - **Files modified:** `tests/notification-ingest.test.ts`
 - **Commit:** `beec7d9`
