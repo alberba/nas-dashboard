@@ -1421,7 +1421,9 @@ describe.skipIf(!baseUrl)("ingest events migration 0009", () => {
     const client = new Client({ connectionString: context.url });
     await client.connect();
     try {
-      await migrateAll(client);
+      // 0009 is the last advance only while the journal stops there; later
+      // migrations have their own rehearsals.
+      await migrateThrough(client, 9);
       await client.query(
         `INSERT INTO operations (id, "hostId", "userId", action, target, status)
          VALUES ('op-rehearsal-0009', 'nas-home', 'user-1', 'restart', 'plex', 'success')`,
@@ -1431,7 +1433,7 @@ describe.skipIf(!baseUrl)("ingest events migration 0009", () => {
          VALUES ('grafana', 'evt-1', 'hash-1')`,
       );
       // The guard reads the real `when` of the 0009 entry, never a guess.
-      const last = journal().entries.at(-1)!;
+      const last = journal().entries[9];
       expect(last.tag).toBe("0009_ingest_events");
       expect((await journalWhens(client)).at(-1)).toBe(last.when);
 
@@ -1439,7 +1441,7 @@ describe.skipIf(!baseUrl)("ingest events migration 0009", () => {
 
       expect(await tableName(client)).toBeNull();
       expect(await journalWhens(client)).toEqual(
-        journal().entries.slice(0, -1).map((entry) => entry.when),
+        journal().entries.slice(0, 9).map((entry) => entry.when),
       );
       const operations = await client.query(`SELECT id FROM operations`);
       expect(operations.rows).toEqual([{ id: "op-rehearsal-0009" }]);
@@ -1703,6 +1705,208 @@ describe.skipIf(!baseUrl)("incidents rollback rehearsal", () => {
       expect(journalRows.rows[0].count).toBe(
         String(journal().entries.length + 1),
       );
+    } finally {
+      await client.end();
+      await dropTestDatabase(context);
+    }
+  });
+});
+
+describe.skipIf(!baseUrl)("history rollups migration 0010", () => {
+  const rollupTables = ["sample_rollups", "container_rollups"];
+
+  async function rollupsPresent(client: Client) {
+    const { rows } = await client.query<{ sample: string | null; container: string | null }>(
+      `SELECT to_regclass('public.sample_rollups') AS sample,
+              to_regclass('public.container_rollups') AS container`,
+    );
+    return [rows[0].sample, rows[0].container];
+  }
+
+  async function journalWhens(client: Client) {
+    const { rows } = await client.query<{ created_at: string }>(
+      "SELECT created_at FROM drizzle.__drizzle_migrations ORDER BY id",
+    );
+    return rows.map((row) => Number(row.created_at));
+  }
+
+  async function runRollback(client: Client) {
+    await client.query(
+      readFileSync("scripts/rollback/0010_history_rollups.sql", "utf8"),
+    );
+  }
+
+  async function seedBefore0010(client: Client) {
+    await client.query(
+      `INSERT INTO samples ("hostId", at, data)
+       SELECT 'nas-home', now()::timestamp - make_interval(mins => g), '{"cpu": 5}'::jsonb
+       FROM generate_series(1, 30) g`,
+    );
+    await client.query(
+      `INSERT INTO incidents ("hostId", key, title, detail, severity, fingerprint, seq, origin)
+       VALUES ('nas-home','backup-failed','Copia fallida','', 'warning','fp-rollups', 1, 'live')`,
+    );
+    return {
+      samples: (await client.query("SELECT * FROM samples ORDER BY id")).rows,
+      incidents: (await client.query("SELECT * FROM incidents ORDER BY id")).rows,
+    };
+  }
+
+  it("adds the rollup tables without rewriting any existing row", async () => {
+    const context = await createTestDatabase(baseUrl!);
+    const client = new Client({ connectionString: context.url });
+    await client.connect();
+    try {
+      await migrateThrough(client, 9);
+      const before = await seedBefore0010(client);
+      expect(await rollupsPresent(client)).toEqual([null, null]);
+
+      await migrateAll(client);
+
+      // Rows written before the migration are identical afterwards.
+      expect((await client.query("SELECT * FROM samples ORDER BY id")).rows).toEqual(
+        before.samples,
+      );
+      expect(
+        (await client.query("SELECT * FROM incidents ORDER BY id")).rows,
+      ).toEqual(before.incidents);
+      expect(await rollupsPresent(client)).toEqual(rollupTables);
+
+      // The tables, their columns, nullability and indexes match the snapshot.
+      const current = snapshot("0010_history_rollups");
+      expect(current.prevId).toBe(snapshot("0009_ingest_events").id);
+      for (const table of rollupTables) {
+        const expected = current.tables[`public.${table}`];
+        expect(expected).toBeDefined();
+        const live = await liveColumns(client, table);
+        expect(live.map((column) => column.column_name).sort()).toEqual(
+          Object.keys(expected.columns).sort(),
+        );
+        for (const column of live) {
+          const wanted = expected.columns[column.column_name];
+          expect(column.is_nullable === "NO").toBe(wanted.notNull);
+        }
+      }
+      // The bucket has no zone, like samples.at.
+      const types = await client.query<{ data_type: string }>(
+        `SELECT data_type FROM information_schema.columns
+          WHERE table_name = 'sample_rollups' AND column_name = 'bucket'`,
+      );
+      expect(types.rows).toEqual([{ data_type: "timestamp without time zone" }]);
+      expect(
+        (await liveIndexes(client, "sample_rollups"))
+          .filter((name) => !name.endsWith("_pkey") && !name.endsWith("_pk"))
+          .sort(),
+      ).toEqual(["sample_rollups_bucket_idx"]);
+
+      // Composite keys: one row per host and bucket, and per container.
+      await client.query(
+        `INSERT INTO sample_rollups ("hostId", bucket, n) VALUES ('nas-home', '2026-01-01 00:00', 3)`,
+      );
+      await expect(
+        client.query(
+          `INSERT INTO sample_rollups ("hostId", bucket, n) VALUES ('nas-home', '2026-01-01 00:00', 4)`,
+        ),
+      ).rejects.toMatchObject({ code: "23505" });
+      await client.query(
+        `INSERT INTO container_rollups ("hostId", container, bucket, n)
+         VALUES ('nas-home', 'plex', '2026-01-01 00:00', 3), ('nas-home', 'sonarr', '2026-01-01 00:00', 3)`,
+      );
+      await expect(
+        client.query(
+          `INSERT INTO container_rollups ("hostId", container, bucket, n)
+           VALUES ('nas-home', 'plex', '2026-01-01 00:00', 9)`,
+        ),
+      ).rejects.toMatchObject({ code: "23505" });
+
+      // Re-running the real migrator applies nothing twice.
+      await migrateAll(client);
+      expect(await journalWhens(client)).toEqual(
+        journal().entries.map((entry) => entry.when),
+      );
+      expect((await client.query("SELECT * FROM samples ORDER BY id")).rows).toEqual(
+        before.samples,
+      );
+    } finally {
+      await client.end();
+      await dropTestDatabase(context);
+    }
+  });
+
+  it("rehearses 0010 → rollback → 0010 and leaves the rest untouched", async () => {
+    const context = await createTestDatabase(baseUrl!);
+    const client = new Client({ connectionString: context.url });
+    await client.connect();
+    try {
+      await migrateAll(client);
+      const before = await seedBefore0010(client);
+      // The guard reads the real `when` of the 0010 entry, never a guess.
+      const last = journal().entries.at(-1)!;
+      expect(last.tag).toBe("0010_history_rollups");
+      expect((await journalWhens(client)).at(-1)).toBe(last.when);
+      expect(readFileSync("scripts/rollback/0010_history_rollups.sql", "utf8")).toContain(
+        String(last.when),
+      );
+
+      await runRollback(client);
+
+      expect(await rollupsPresent(client)).toEqual([null, null]);
+      expect(await journalWhens(client)).toEqual(
+        journal().entries.slice(0, -1).map((entry) => entry.when),
+      );
+      expect((await client.query("SELECT * FROM samples ORDER BY id")).rows).toEqual(
+        before.samples,
+      );
+
+      await migrateAll(client);
+
+      expect(await rollupsPresent(client)).toEqual(rollupTables);
+      expect(await journalWhens(client)).toEqual(
+        journal().entries.map((entry) => entry.when),
+      );
+      expect((await client.query("SELECT * FROM samples ORDER BY id")).rows).toEqual(
+        before.samples,
+      );
+      expect(
+        (await client.query("SELECT * FROM incidents ORDER BY id")).rows,
+      ).toEqual(before.incidents);
+    } finally {
+      await client.end();
+      await dropTestDatabase(context);
+    }
+  });
+
+  it("refuses a journal where 0010 is not the last applied advance", async () => {
+    const context = await createTestDatabase(baseUrl!);
+    const client = new Client({ connectionString: context.url });
+    await client.connect();
+    try {
+      await migrateAll(client);
+      await client.query(
+        `INSERT INTO sample_rollups ("hostId", bucket, n) VALUES ('nas-home', '2026-01-01 00:00', 3)`,
+      );
+      const future = journal().entries.at(-1)!.when + 1;
+      await client.query(
+        `INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES ('future-migration', $1)`,
+        [future],
+      );
+
+      let message = "";
+      try {
+        await runRollback(client);
+      } catch (error) {
+        message = (error as Error).message;
+        await client.query("ROLLBACK");
+      }
+      expect(message).toContain("no es el último avance");
+
+      expect(await rollupsPresent(client)).toEqual(rollupTables);
+      const rows = await client.query(`SELECT count(*)::int AS count FROM sample_rollups`);
+      expect(rows.rows[0].count).toBe(1);
+      expect(await journalWhens(client)).toEqual([
+        ...journal().entries.map((entry) => entry.when),
+        future,
+      ]);
     } finally {
       await client.end();
       await dropTestDatabase(context);

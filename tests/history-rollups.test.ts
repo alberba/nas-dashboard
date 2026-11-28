@@ -113,6 +113,39 @@ async function rawOverview(
   return result.rows as Row[];
 }
 
+const CONTAINER_COLUMNS = ["cpu", "memory", "rx", "tx"] as const;
+
+/** The per-container aggregation the route ran before the rollups. */
+async function rawContainer(
+  executor: Executor,
+  hostId: string,
+  container: string,
+  seconds: number,
+  bucket: number,
+): Promise<Row[]> {
+  const result = await executor.execute(sql`
+        WITH series AS (SELECT generate_series(
+          date_bin(make_interval(secs => ${bucket}), now() - make_interval(secs => ${seconds}), timestamp '2000-01-01'),
+          date_bin(make_interval(secs => ${bucket}), now(), timestamp '2000-01-01'), make_interval(secs => ${bucket})) AS at),
+        grouped AS (SELECT date_bin(make_interval(secs => ${bucket}), s.at, timestamp '2000-01-01') AS at,
+          avg((c->>'cpu')::float) AS cpu,
+          avg((c->>'memory')::float) AS memory,
+          avg((c->'network'->>'rx')::float) AS rx,
+          avg((c->'network'->>'tx')::float) AS tx
+          FROM samples s
+          CROSS JOIN LATERAL jsonb_array_elements(
+            CASE WHEN jsonb_typeof(s.data->'containers') = 'array'
+              THEN s.data->'containers' ELSE '[]'::jsonb END
+          ) c
+          WHERE s."hostId" = ${hostId}
+            AND s.at > now() - make_interval(secs => ${seconds})
+            AND c->>'name' = ${container}
+          GROUP BY 1)
+        SELECT series.at, grouped.cpu, grouped.memory, grouped.rx, grouped.tx
+        FROM series LEFT JOIN grouped USING(at) ORDER BY series.at`);
+  return result.rows as Row[];
+}
+
 const instant = (value: unknown) => new Date(value as string | Date).getTime();
 
 /**
@@ -150,6 +183,10 @@ describe.skipIf(!baseUrl)("history rollups", () => {
   let pool: typeof import("@/lib/db").pool;
   let rollups: typeof import("@/lib/history-rollups");
   let routes: typeof import("../src/app/api/[...path]/route");
+  const HISTORY_RANGES = {
+    "7d": [604800, 900],
+    "30d": [2592000, 3600],
+  } as const;
 
   async function api(path: string) {
     const url = new URL(`http://localhost${path}`);
@@ -251,11 +288,80 @@ describe.skipIf(!baseUrl)("history rollups", () => {
     });
   });
 
-  it("las rutas no leen samples para el historial de 7d", () => {
+  it("equivale: el overview de 30d reagrega a una hora con media ponderada", async () => {
+    const response = await api("/api/overview?host=nas-home&range=30d");
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    const oracle = await rawOverview(db, "nas-home", 2592000, 3600);
+    expectEquivalent(body.history, oracle, OVERVIEW_COLUMNS);
+    const steps = body.history.map((row: Row) => instant(row.at));
+    for (let index = 1; index < steps.length; index += 1)
+      expect(steps[index] - steps[index - 1]).toBe(3_600_000);
+
+    // The weighting is exercised: the 15-minute buckets differ in size and some
+    // lack swap altogether, so an unweighted mean could not match the oracle.
+    const shape = await db.execute(sql`
+      SELECT count(DISTINCT n)::int AS sizes,
+        count(*) FILTER (WHERE swap IS NULL)::int AS without_swap
+      FROM sample_rollups WHERE "hostId" = 'nas-home'`);
+    expect(shape.rows[0].sizes).toBeGreaterThan(1);
+    expect(shape.rows[0].without_swap).toBeGreaterThan(0);
+  });
+
+  it.each(["7d", "30d"] as const)(
+    "equivale: el historial de contenedor de %s coincide con la agregación cruda",
+    async (range) => {
+      const [seconds, bucket] = HISTORY_RANGES[range];
+      for (const name of ["alpha", "beta"]) {
+        const response = await api(
+          `/api/container-history?host=nas-home&name=${name}&range=${range}`,
+        );
+        expect(response.status).toBe(200);
+        const body = await response.json();
+        expect(body.name).toBe(name);
+        const oracle = await rawContainer(db, "nas-home", name, seconds, bucket);
+        expectEquivalent(body.history, oracle, CONTAINER_COLUMNS);
+        expect(Object.keys(body.history[0])).toEqual(["at", ...CONTAINER_COLUMNS]);
+      }
+    },
+  );
+
+  it("equivale: un contenedor ausente en algunos cubos da huecos nulos, no ceros", async () => {
+    // `beta` is missing from one bucket in three, `alpha` from none.
+    const beta = await rollups.readContainerHistory(db, "nas-home", "beta", "7d");
+    const alpha = await rollups.readContainerHistory(db, "nas-home", "alpha", "7d");
+    expect(beta.some((row) => row.cpu === null)).toBe(true);
+    expect(beta.some((row) => row.cpu !== null)).toBe(true);
+    expect(beta.filter((row) => row.cpu === 0)).toEqual([]);
+    const gaps = alpha.slice(1, -1).filter((row) => row.cpu === null);
+    expect(gaps).toEqual([]);
+
+    const unknown = await rollups.readContainerHistory(db, "nas-home", "ghost", "30d");
+    expect(unknown.length).toBeGreaterThan(1);
+    expect(unknown.every((row) => row.cpu === null)).toBe(true);
+  });
+
+  it("equivale: la validación del nombre de contenedor sigue respondiendo 400", async () => {
+    for (const name of ["", "x".repeat(201)]) {
+      const response = await api(
+        `/api/container-history?host=nas-home&name=${name}&range=7d`,
+      );
+      expect(response.status).toBe(400);
+    }
+    const missing = await api("/api/container-history?host=nas-home&range=7d");
+    expect(missing.status).toBe(400);
+    const edge = await api(
+      `/api/container-history?host=nas-home&name=${"x".repeat(200)}&range=7d`,
+    );
+    expect(edge.status).toBe(200);
+  });
+
+  it("las rutas no consultan samples para el historial", () => {
     const route = readFileSync("src/app/api/[...path]/route.ts", "utf8");
     // The raw SQL of the short ranges lives in the history module.
-    expect(route).not.toContain('FROM samples WHERE "hostId"');
+    expect(route).not.toContain("FROM samples");
     expect(route).toContain("readHistory");
+    expect(route).toContain("readContainerHistory");
   });
 
   it("no borra ninguna muestra cruda", async () => {

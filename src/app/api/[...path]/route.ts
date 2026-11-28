@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID, timingSafeEqual } from "node:crypto";
-import { and, count, desc, eq, gt, isNull, sql } from "drizzle-orm";
+import { and, count, desc, eq, gt, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { auth, bootstrapAuth, origins } from "@/lib/auth";
 import { db, pool } from "@/lib/db";
@@ -70,7 +70,7 @@ import {
   relatePullRequests,
 } from "@/lib/github";
 import { projectDigestOverview, type DigestOverview } from "@/lib/digest-runs";
-import { HISTORY_RANGES, readHistory } from "@/lib/history-rollups";
+import { readContainerHistory, readHistory } from "@/lib/history-rollups";
 import { deployProgressForHost } from "@/lib/deploy-progress";
 import { mergeRenovatePullRequest } from "@/lib/renovate-merge";
 import type { Metrics, RenovateContainer, Settings } from "@/lib/types";
@@ -523,31 +523,16 @@ async function handle(
         .enum(["1h", "6h", "24h", "7d", "30d"])
         .catch("1h")
         .parse(request.nextUrl.searchParams.get("range"));
-      const [seconds, bucket] = HISTORY_RANGES[range];
-      const history = await db.execute(sql`
-        WITH series AS (SELECT generate_series(
-          date_bin(make_interval(secs => ${bucket}), now() - make_interval(secs => ${seconds}), timestamp '2000-01-01'),
-          date_bin(make_interval(secs => ${bucket}), now(), timestamp '2000-01-01'), make_interval(secs => ${bucket})) AS at),
-        grouped AS (SELECT date_bin(make_interval(secs => ${bucket}), s.at, timestamp '2000-01-01') AS at,
-          avg((c->>'cpu')::float) AS cpu,
-          avg((c->>'memory')::float) AS memory,
-          avg((c->'network'->>'rx')::float) AS rx,
-          avg((c->'network'->>'tx')::float) AS tx
-          FROM samples s
-          CROSS JOIN LATERAL jsonb_array_elements(
-            CASE WHEN jsonb_typeof(s.data->'containers') = 'array'
-              THEN s.data->'containers' ELSE '[]'::jsonb END
-          ) c
-          WHERE s."hostId" = ${host.id}
-            AND s.at > now() - make_interval(secs => ${seconds})
-            AND c->>'name' = ${name.data}
-          GROUP BY 1)
-        SELECT series.at, grouped.cpu, grouped.memory, grouped.rx, grouped.tx
-        FROM series LEFT JOIN grouped USING(at) ORDER BY series.at`);
+      const history = await readContainerHistory(
+        db,
+        host.id,
+        name.data,
+        range,
+      );
       return json({
         host: publicHost(host),
         name: name.data,
-        history: history.rows,
+        history,
       });
     }
     if (route === "presence" && mutation) {

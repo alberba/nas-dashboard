@@ -3,10 +3,11 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import type * as schema from "./schema";
 
 /**
- * Overview history (PERF-01). The short ranges read the raw samples with their
- * current buckets; 7d reads the 15-minute rollup. Every time comparison keeps
- * `timestamp` without zone, like `samples.at`, so no range shifts with the
- * session time zone.
+ * Overview and per-container history (PERF-01). The short ranges read the raw
+ * samples with their current buckets; 7d reads the 15-minute rollup and 30d
+ * reaggregates it to 1 hour, weighting each bucket by its sample count. Every
+ * time comparison keeps `timestamp` without zone, like `samples.at`, so no
+ * range shifts with the session time zone.
  */
 
 export type HistoryRange = "1h" | "6h" | "24h" | "7d" | "30d";
@@ -50,11 +51,18 @@ const OVERVIEW_COLUMNS = [
   "writeAwait",
   "utilization",
 ] as const;
+const CONTAINER_COLUMNS = ["cpu", "memory", "rx", "tx"] as const;
 
 /** Fixed identifiers only: nothing user-controlled reaches `sql.raw`. */
 const quoted = (name: string) => sql.raw(`"${name}"`);
 const columnList = (names: readonly string[]) =>
   sql.join(names.map(quoted), sql`, `);
+/** `col = EXCLUDED.col` for every listed column, for the upsert. */
+const upsertAll = (names: readonly string[]) =>
+  sql.join(
+    names.map((name) => sql`${quoted(name)} = EXCLUDED.${quoted(name)}`),
+    sql`, `,
+  );
 
 /** The averages over `samples.data`, one per overview column. */
 const sampleAverages = sql`
@@ -81,12 +89,16 @@ const overviewSelect = sql`
     grouped."readAwait", grouped."writeAwait", grouped."utilization"
   FROM series LEFT JOIN grouped USING(at) ORDER BY series.at`;
 
-/** `col = EXCLUDED.col` for every listed column, for the upsert. */
-const upsertAll = (names: readonly string[]) =>
-  sql.join(
-    names.map((name) => sql`${quoted(name)} = EXCLUDED.${quoted(name)}`),
-    sql`, `,
-  );
+const containerSelect = sql`
+  SELECT series.at, grouped.cpu, grouped.memory, grouped.rx, grouped.tx
+  FROM series LEFT JOIN grouped USING(at) ORDER BY series.at`;
+
+/** The container entries of one sample, tolerant of a missing or odd field. */
+const containerElements = sql`
+  CROSS JOIN LATERAL jsonb_array_elements(
+    CASE WHEN jsonb_typeof(s.data->'containers') = 'array'
+      THEN s.data->'containers' ELSE '[]'::jsonb END
+  ) c`;
 
 /**
  * One definition of the sample aggregation, shared by the periodic pass and the
@@ -105,19 +117,38 @@ function sampleRollupStatement(from: SQL, to: SQL) {
     ON CONFLICT ("hostId", bucket) DO UPDATE SET ${upsertAll(names)}`;
 }
 
-/** Aggregates `[from, to)` into the rollup tables, in the caller's transaction. */
+/** The same aggregation per container, from `data->'containers'`. */
+function containerRollupStatement(from: SQL, to: SQL) {
+  const names = ["n", ...CONTAINER_COLUMNS];
+  return sql`
+    INSERT INTO container_rollups ("hostId", container, bucket, ${columnList(names)})
+    SELECT s."hostId", c->>'name' AS container,
+      date_bin(${interval(ROLLUP_BUCKET_SECONDS)}, s.at, ${ORIGIN}) AS bucket,
+      count(*)::int AS n,
+      avg((c->>'cpu')::float) AS cpu,
+      avg((c->>'memory')::float) AS memory,
+      avg((c->'network'->>'rx')::float) AS rx,
+      avg((c->'network'->>'tx')::float) AS tx
+    FROM samples s ${containerElements}
+    WHERE s.at >= ${from} AND s.at < ${to} AND c->>'name' IS NOT NULL
+    GROUP BY 1, 2, 3
+    ON CONFLICT ("hostId", container, bucket) DO UPDATE SET ${upsertAll(names)}`;
+}
+
+/** Aggregates `[from, to)` into both rollup tables, in the caller's transaction. */
 export async function rollupRange(
   executor: Pick<HistoryExecutor, "execute">,
   from: SQL,
   to: SQL,
 ) {
   await executor.execute(sampleRollupStatement(from, to));
+  await executor.execute(containerRollupStatement(from, to));
 }
 
 /**
- * The periodic pass: recomputes the last `ROLLUP_WINDOW_HOURS` hours, so the
- * bucket in progress and a late sample inside the window are both corrected.
- * Repeating it leaves the same rows.
+ * The periodic pass: recomputes the last `ROLLUP_WINDOW_HOURS` hours of both
+ * tables in one transaction, so the bucket in progress and a late sample inside
+ * the window are both corrected. Repeating it leaves the same rows.
  */
 export async function rollupRecent(executor: HistoryExecutor, now?: Date) {
   const current = now ? sql`${now.toISOString()}::timestamptz` : sql`now()`;
@@ -141,29 +172,105 @@ async function rawHistory(
   return result.rows as HistoryRow[];
 }
 
-async function rollupHistory(
+async function rawContainerHistory(
   executor: HistoryExecutor,
   hostId: string,
+  container: string,
   seconds: number,
   bucket: number,
 ) {
   const result = await executor.execute(sql`
     WITH series AS (${series(seconds, bucket)}),
-    grouped AS (SELECT bucket AS at, ${columnList(OVERVIEW_COLUMNS)}
-      FROM sample_rollups
-      WHERE "hostId" = ${hostId}
-        AND bucket >= date_bin(${interval(bucket)}, now() - ${interval(seconds)}, ${ORIGIN}))
-    ${overviewSelect}`);
+    grouped AS (SELECT date_bin(${interval(bucket)}, s.at, ${ORIGIN}) AS at,
+      avg((c->>'cpu')::float) AS cpu,
+      avg((c->>'memory')::float) AS memory,
+      avg((c->'network'->>'rx')::float) AS rx,
+      avg((c->'network'->>'tx')::float) AS tx
+      FROM samples s ${containerElements}
+      WHERE s."hostId" = ${hostId}
+        AND s.at > now() - ${interval(seconds)}
+        AND c->>'name' = ${container}
+      GROUP BY 1)
+    ${containerSelect}`);
   return result.rows as HistoryRow[];
 }
 
-/** Overview series for one host: raw for the short ranges, rollup for 7d. */
+/**
+ * Serves a range from a rollup table. At the rollup width the stored buckets
+ * are read as they are; wider buckets reaggregate them with a mean weighted by
+ * the sample count of each bucket, ignoring buckets where the column is null so
+ * a missing column never dilutes the mean. Where a column is null for only part
+ * of the samples of one bucket the weighting is an approximation; the agent
+ * drops these columns for whole buckets in practice.
+ */
+async function rollupSeries(
+  executor: HistoryExecutor,
+  options: {
+    table: "sample_rollups" | "container_rollups";
+    scope: SQL;
+    columns: readonly string[];
+    seconds: number;
+    bucket: number;
+    select: SQL;
+  },
+) {
+  const { table, scope, columns, seconds, bucket } = options;
+  const stored = bucket === ROLLUP_BUCKET_SECONDS;
+  const measures = stored
+    ? columnList(columns)
+    : sql.join(
+        columns.map(
+          (name) =>
+            sql`sum(${quoted(name)} * n) / nullif(sum(n) FILTER (WHERE ${quoted(name)} IS NOT NULL), 0) AS ${quoted(name)}`,
+        ),
+        sql`, `,
+      );
+  const result = await executor.execute(sql`
+    WITH series AS (${series(seconds, bucket)}),
+    grouped AS (SELECT date_bin(${interval(bucket)}, bucket, ${ORIGIN}) AS at, ${measures}
+      FROM ${sql.raw(table)}
+      WHERE ${scope}
+        AND bucket >= date_bin(${interval(bucket)}, now() - ${interval(seconds)}, ${ORIGIN})
+      ${stored ? sql`` : sql`GROUP BY 1`})
+    ${options.select}`);
+  return result.rows as HistoryRow[];
+}
+
+/** Overview series: raw for the short ranges, rollup for 7d and 30d. */
 export async function readHistory(
   executor: HistoryExecutor,
   hostId: string,
   range: HistoryRange,
 ): Promise<HistoryRow[]> {
   const [seconds, bucket] = HISTORY_RANGES[range];
-  if (range === "7d") return rollupHistory(executor, hostId, seconds, bucket);
-  return rawHistory(executor, hostId, seconds, bucket);
+  if (range !== "7d" && range !== "30d")
+    return rawHistory(executor, hostId, seconds, bucket);
+  return rollupSeries(executor, {
+    table: "sample_rollups",
+    scope: sql`"hostId" = ${hostId}`,
+    columns: OVERVIEW_COLUMNS,
+    seconds,
+    bucket,
+    select: overviewSelect,
+  });
+}
+
+/** Series of one container on one host, with the same range policy. */
+export async function readContainerHistory(
+  executor: HistoryExecutor,
+  hostId: string,
+  container: string,
+  range: HistoryRange,
+): Promise<HistoryRow[]> {
+  const [seconds, bucket] = HISTORY_RANGES[range];
+  if (range !== "7d" && range !== "30d")
+    return rawContainerHistory(executor, hostId, container, seconds, bucket);
+  return rollupSeries(executor, {
+    table: "container_rollups",
+    scope: sql`"hostId" = ${hostId} AND container = ${container}`,
+    columns: CONTAINER_COLUMNS,
+    seconds,
+    bucket,
+    select: containerSelect,
+  });
 }
