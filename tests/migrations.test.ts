@@ -1395,6 +1395,108 @@ describe.skipIf(!baseUrl)("ingest events migration 0009", () => {
       await dropTestDatabase(legacy);
     }
   }, 120_000);
+
+  async function runRollback(client: Client) {
+    await client.query(
+      readFileSync("scripts/rollback/0009_ingest_events.sql", "utf8"),
+    );
+  }
+
+  async function journalWhens(client: Client) {
+    const { rows } = await client.query<{ created_at: string }>(
+      "SELECT created_at FROM drizzle.__drizzle_migrations ORDER BY id",
+    );
+    return rows.map((row) => Number(row.created_at));
+  }
+
+  async function tableName(client: Client) {
+    const { rows } = await client.query<{ name: string | null }>(
+      "SELECT to_regclass('public.ingest_events') AS name",
+    );
+    return rows[0].name;
+  }
+
+  it("rehearses 0009 → rollback → 0009 and leaves the rest untouched", async () => {
+    const context = await createTestDatabase(baseUrl!);
+    const client = new Client({ connectionString: context.url });
+    await client.connect();
+    try {
+      await migrateAll(client);
+      await client.query(
+        `INSERT INTO operations (id, "hostId", "userId", action, target, status)
+         VALUES ('op-rehearsal-0009', 'nas-home', 'user-1', 'restart', 'plex', 'success')`,
+      );
+      await client.query(
+        `INSERT INTO ingest_events (source, "eventId", "bodyHash")
+         VALUES ('grafana', 'evt-1', 'hash-1')`,
+      );
+      // The guard reads the real `when` of the 0009 entry, never a guess.
+      const last = journal().entries.at(-1)!;
+      expect(last.tag).toBe("0009_ingest_events");
+      expect((await journalWhens(client)).at(-1)).toBe(last.when);
+
+      await runRollback(client);
+
+      expect(await tableName(client)).toBeNull();
+      expect(await journalWhens(client)).toEqual(
+        journal().entries.slice(0, -1).map((entry) => entry.when),
+      );
+      const operations = await client.query(`SELECT id FROM operations`);
+      expect(operations.rows).toEqual([{ id: "op-rehearsal-0009" }]);
+
+      await migrateAll(client);
+
+      expect(await tableName(client)).toBe("ingest_events");
+      expect(await journalWhens(client)).toEqual(
+        journal().entries.map((entry) => entry.when),
+      );
+      const events = await client.query(`SELECT count(*)::int AS count FROM ingest_events`);
+      expect(events.rows[0].count).toBe(0);
+      const operationsAfter = await client.query(`SELECT id FROM operations`);
+      expect(operationsAfter.rows).toEqual([{ id: "op-rehearsal-0009" }]);
+    } finally {
+      await client.end();
+      await dropTestDatabase(context);
+    }
+  });
+
+  it("refuses a journal where 0009 is not the last applied advance", async () => {
+    const context = await createTestDatabase(baseUrl!);
+    const client = new Client({ connectionString: context.url });
+    await client.connect();
+    try {
+      await migrateAll(client);
+      await client.query(
+        `INSERT INTO ingest_events (source, "eventId", "bodyHash")
+         VALUES ('grafana', 'evt-1', 'hash-1')`,
+      );
+      const future = journal().entries.at(-1)!.when + 1;
+      await client.query(
+        `INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES ('future-migration', $1)`,
+        [future],
+      );
+
+      let message = "";
+      try {
+        await runRollback(client);
+      } catch (error) {
+        message = (error as Error).message;
+        await client.query("ROLLBACK");
+      }
+      expect(message).toContain("no es el último avance");
+
+      expect(await tableName(client)).toBe("ingest_events");
+      const events = await client.query(`SELECT count(*)::int AS count FROM ingest_events`);
+      expect(events.rows[0].count).toBe(1);
+      expect(await journalWhens(client)).toEqual([
+        ...journal().entries.map((entry) => entry.when),
+        future,
+      ]);
+    } finally {
+      await client.end();
+      await dropTestDatabase(context);
+    }
+  });
 });
 
 describe.skipIf(!baseUrl)("incidents rollback rehearsal", () => {
