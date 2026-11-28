@@ -23,6 +23,13 @@ export const HISTORY_RANGES = {
 
 export const WORKER_ROLLUP_MS = 60_000;
 export const ROLLUP_WINDOW_HOURS = 2;
+/** Raw samples are kept this long; older ones go only once their bucket is rolled up (D-20). */
+export const RAW_RETENTION_HOURS = 48;
+/** Rollups and ingest events are kept this long. */
+export const ROLLUP_RETENTION_DAYS = 30;
+/** Rows per pruning statement, and the time after which no new batch starts. */
+export const PRUNE_BATCH_SIZE = 2000;
+export const PRUNE_BUDGET_MS = 15_000;
 /** Width of a stored rollup bucket; it divides the 1-hour bucket of 30d. */
 export const ROLLUP_BUCKET_SECONDS = 900;
 
@@ -194,18 +201,12 @@ export async function backfillRollups(
   return done;
 }
 
-async function rawHistory(
-  executor: HistoryExecutor,
-  hostId: string,
-  seconds: number,
-  bucket: number,
-) {
-  const result = await executor.execute(sql`
+function rawHistoryStatement(hostId: string, seconds: number, bucket: number) {
+  return sql`
     WITH series AS (${series(seconds, bucket)}),
     grouped AS (SELECT date_bin(${interval(bucket)}, at, ${ORIGIN}) AS at, ${sampleAverages}
       FROM samples WHERE "hostId" = ${hostId} AND at > now() - ${interval(seconds)} GROUP BY 1)
-    ${overviewSelect}`);
-  return result.rows as HistoryRow[];
+    ${overviewSelect}`;
 }
 
 async function rawContainerHistory(
@@ -239,17 +240,14 @@ async function rawContainerHistory(
  * of the samples of one bucket the weighting is an approximation; the agent
  * drops these columns for whole buckets in practice.
  */
-async function rollupSeries(
-  executor: HistoryExecutor,
-  options: {
+function rollupStatement(options: {
     table: "sample_rollups" | "container_rollups";
     scope: SQL;
     columns: readonly string[];
     seconds: number;
     bucket: number;
     select: SQL;
-  },
-) {
+  }) {
   const { table, scope, columns, seconds, bucket } = options;
   const stored = bucket === ROLLUP_BUCKET_SECONDS;
   const measures = stored
@@ -261,15 +259,33 @@ async function rollupSeries(
         ),
         sql`, `,
       );
-  const result = await executor.execute(sql`
+  return sql`
     WITH series AS (${series(seconds, bucket)}),
     grouped AS (SELECT date_bin(${interval(bucket)}, bucket, ${ORIGIN}) AS at, ${measures}
       FROM ${sql.raw(table)}
       WHERE ${scope}
         AND bucket >= date_bin(${interval(bucket)}, now() - ${interval(seconds)}, ${ORIGIN})
       ${stored ? sql`` : sql`GROUP BY 1`})
-    ${options.select}`);
-  return result.rows as HistoryRow[];
+    ${options.select}`;
+}
+
+/**
+ * The overview statement of one range: raw for the short ranges, rollup for 7d
+ * and 30d. `readHistory` runs exactly this, so a test can ask the planner about
+ * the real statement.
+ */
+export function historyStatement(hostId: string, range: HistoryRange): SQL {
+  const [seconds, bucket] = HISTORY_RANGES[range];
+  if (range !== "7d" && range !== "30d")
+    return rawHistoryStatement(hostId, seconds, bucket);
+  return rollupStatement({
+    table: "sample_rollups",
+    scope: sql`"hostId" = ${hostId}`,
+    columns: OVERVIEW_COLUMNS,
+    seconds,
+    bucket,
+    select: overviewSelect,
+  });
 }
 
 /** Overview series: raw for the short ranges, rollup for 7d and 30d. */
@@ -278,17 +294,8 @@ export async function readHistory(
   hostId: string,
   range: HistoryRange,
 ): Promise<HistoryRow[]> {
-  const [seconds, bucket] = HISTORY_RANGES[range];
-  if (range !== "7d" && range !== "30d")
-    return rawHistory(executor, hostId, seconds, bucket);
-  return rollupSeries(executor, {
-    table: "sample_rollups",
-    scope: sql`"hostId" = ${hostId}`,
-    columns: OVERVIEW_COLUMNS,
-    seconds,
-    bucket,
-    select: overviewSelect,
-  });
+  const result = await executor.execute(historyStatement(hostId, range));
+  return result.rows as HistoryRow[];
 }
 
 /** Series of one container on one host, with the same range policy. */
@@ -301,12 +308,84 @@ export async function readContainerHistory(
   const [seconds, bucket] = HISTORY_RANGES[range];
   if (range !== "7d" && range !== "30d")
     return rawContainerHistory(executor, hostId, container, seconds, bucket);
-  return rollupSeries(executor, {
-    table: "container_rollups",
-    scope: sql`"hostId" = ${hostId} AND container = ${container}`,
-    columns: CONTAINER_COLUMNS,
-    seconds,
-    bucket,
-    select: containerSelect,
-  });
+  const result = await executor.execute(
+    rollupStatement({
+      table: "container_rollups",
+      scope: sql`"hostId" = ${hostId} AND container = ${container}`,
+      columns: CONTAINER_COLUMNS,
+      seconds,
+      bucket,
+      select: containerSelect,
+    }),
+  );
+  return result.rows as HistoryRow[];
+}
+
+export type PruneOptions = { batchSize?: number; budgetMs?: number };
+
+/**
+ * Deletes raw samples older than `RAW_RETENTION_HOURS` in batches, each one a
+ * statement of its own (short locks, WAL spread out). A sample goes only when
+ * its 15-minute bucket is already in `sample_rollups` (the same `date_bin` as
+ * the aggregation) and a newer sample of the same host exists, so unaggregated
+ * history and the latest sample of every host always survive. No new batch
+ * starts once `budgetMs` has elapsed, but every pass runs at least one, so
+ * `budgetMs: 0` runs exactly one. `exhausted` is true when the last batch
+ * deleted fewer rows than `batchSize`. Time comes from the database (`now()`).
+ */
+export async function pruneSamples(
+  executor: Pick<HistoryExecutor, "execute">,
+  options: PruneOptions = {},
+): Promise<{ deleted: number; exhausted: boolean }> {
+  const batchSize = options.batchSize ?? PRUNE_BATCH_SIZE;
+  const budgetMs = options.budgetMs ?? PRUNE_BUDGET_MS;
+  const startedAt = performance.now();
+  let deleted = 0;
+  let last: number;
+  do {
+    const result = await executor.execute(sql`
+      DELETE FROM samples WHERE id IN (
+        SELECT s.id FROM samples s
+        WHERE s.at < now() - make_interval(hours => ${RAW_RETENTION_HOURS})
+          AND EXISTS (
+            SELECT 1 FROM sample_rollups r
+            WHERE r."hostId" = s."hostId"
+              AND r.bucket = date_bin(${interval(ROLLUP_BUCKET_SECONDS)}, s.at, ${ORIGIN}))
+          AND EXISTS (
+            SELECT 1 FROM samples newer
+            WHERE newer."hostId" = s."hostId" AND (newer.at, newer.id) > (s.at, s.id))
+        LIMIT ${batchSize})`);
+    last = result.rowCount ?? 0;
+    deleted += last;
+  } while (last >= batchSize && performance.now() - startedAt < budgetMs);
+  return { deleted, exhausted: last < batchSize };
+}
+
+/**
+ * The whole history cleanup of the worker: guarded sample pruning, then the
+ * rollups and the ingest events older than `ROLLUP_RETENTION_DAYS`. The
+ * signature window of an ingest event is 300 s, so 30 days is ample for its
+ * idempotency while the table stays bounded.
+ */
+export async function pruneHistory(
+  executor: Pick<HistoryExecutor, "execute">,
+  options: PruneOptions = {},
+) {
+  const samplesResult = await pruneSamples(executor, options);
+  const cutoff = sql`now() - make_interval(days => ${ROLLUP_RETENTION_DAYS})`;
+  const sampleRollups = await executor.execute(
+    sql`DELETE FROM sample_rollups WHERE bucket < ${cutoff}`,
+  );
+  const containerRollups = await executor.execute(
+    sql`DELETE FROM container_rollups WHERE bucket < ${cutoff}`,
+  );
+  const ingestEvents = await executor.execute(
+    sql`DELETE FROM ingest_events WHERE "receivedAt" < ${cutoff}`,
+  );
+  return {
+    ...samplesResult,
+    sampleRollups: sampleRollups.rowCount ?? 0,
+    containerRollups: containerRollups.rowCount ?? 0,
+    ingestEvents: ingestEvents.rowCount ?? 0,
+  };
 }

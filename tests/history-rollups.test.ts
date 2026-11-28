@@ -286,6 +286,13 @@ describe.skipIf(!baseUrl)("history rollups", () => {
         OVERVIEW_COLUMNS,
       );
     });
+    // Those rows are naive local times of another zone, hours ahead of the
+    // session clock; leaving them would make the later whole-day backfill
+    // disagree with the passes capped at now().
+    for (const table of ["samples", "sample_rollups", "container_rollups"])
+      await db.execute(
+        sql`DELETE FROM ${sql.raw(table)} WHERE "hostId" = 'zone-host'`,
+      );
   });
 
   it("equivale: el overview de 30d reagrega a una hora con media ponderada", async () => {
@@ -466,6 +473,201 @@ describe.skipIf(!baseUrl)("history rollups", () => {
     await rollups.rollupRecent(db);
     const after = await db.execute(sql`SELECT count(*)::int AS n FROM samples`);
     expect(after.rows).toEqual(before.rows);
+  });
+
+  describe("retención", () => {
+    const ROLLED_BACK = Symbol("rolled back");
+    type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
+
+    /**
+     * Runs `body` on an empty database inside a transaction that is always
+     * rolled back, so pruning never touches the seed the other tests share.
+     */
+    async function isolated(body: (tx: Transaction) => Promise<void>) {
+      await db
+        .transaction(async (tx) => {
+          await tx.execute(sql`DELETE FROM samples`);
+          await tx.execute(sql`DELETE FROM sample_rollups`);
+          await tx.execute(sql`DELETE FROM container_rollups`);
+          await tx.execute(sql`DELETE FROM ingest_events`);
+          await body(tx);
+          throw ROLLED_BACK;
+        })
+        .catch((error: unknown) => {
+          if (error !== ROLLED_BACK) throw error;
+        });
+    }
+
+    /** One sample every `stepMinutes` between two ages in hours, relative to the database clock. */
+    async function seed(
+      tx: Transaction,
+      hostId: string,
+      fromHoursAgo: number,
+      toHoursAgo: number,
+      stepMinutes = 30,
+    ) {
+      await tx.execute(sql`
+        INSERT INTO samples ("hostId", at, data)
+        SELECT ${hostId}, (now() - make_interval(mins => m))::timestamp, '{"cpu": 10}'::jsonb
+        FROM generate_series(${toHoursAgo * 60}::int, ${fromHoursAgo * 60}::int, ${stepMinutes}::int) m`);
+    }
+
+    const aggregate = (tx: Transaction) =>
+      rollups.rollupRange(tx, sql`timestamp '2000-01-01'`, sql`now()`);
+
+    const count = async (tx: Transaction, where: ReturnType<typeof sql>) => {
+      const result = await tx.execute(
+        sql`SELECT count(*)::int AS n FROM samples WHERE ${where}`,
+      );
+      return (result.rows[0] as { n: number }).n;
+    };
+
+    const cutoff = sql`at < now() - make_interval(hours => 48)`;
+
+    it("borra lo anterior a 48 horas con cubo agregado y conserva lo reciente", async () => {
+      await isolated(async (tx) => {
+        await seed(tx, "ret-a", 72, 0);
+        await aggregate(tx);
+        const before = await count(tx, sql`true`);
+        const recent = await count(tx, sql`NOT (${cutoff})`);
+        const old = before - recent;
+        expect(old).toBeGreaterThan(0);
+
+        const result = await rollups.pruneSamples(tx, { budgetMs: 60_000 });
+
+        expect(result.deleted).toBe(old);
+        expect(result.exhausted).toBe(true);
+        expect(await count(tx, sql`true`)).toBe(before - result.deleted);
+        expect(await count(tx, sql`NOT (${cutoff})`)).toBe(recent);
+      });
+    });
+
+    it("conserva una muestra anterior a 48 horas cuyo cubo no está agregado", async () => {
+      await isolated(async (tx) => {
+        await seed(tx, "ret-a", 72, 0);
+        await aggregate(tx);
+        // The bucket of the sample from 60 hours ago is dropped from the rollup.
+        const missing = sql`date_bin(interval '15 minutes', (now() - make_interval(hours => 60))::timestamp, timestamp '2000-01-01')`;
+        const inBucket = sql`date_bin(interval '15 minutes', at, timestamp '2000-01-01') = ${missing}`;
+        const kept = await count(tx, inBucket);
+        expect(kept).toBeGreaterThan(0);
+        await tx.execute(sql`DELETE FROM sample_rollups WHERE bucket = ${missing}`);
+
+        await rollups.pruneSamples(tx, { budgetMs: 60_000 });
+
+        expect(await count(tx, inBucket)).toBe(kept);
+        expect(await count(tx, sql`${cutoff} AND NOT (${inBucket})`)).toBe(0);
+      });
+    });
+
+    it("conserva la última muestra de cada host aunque sea antigua y esté agregada", async () => {
+      await isolated(async (tx) => {
+        await seed(tx, "ret-a", 100, 60);
+        await seed(tx, "ret-b", 120, 70);
+        await aggregate(tx);
+
+        await rollups.pruneSamples(tx, { budgetMs: 60_000 });
+
+        const left = await tx.execute(sql`
+          SELECT "hostId", at, id FROM samples ORDER BY "hostId"`);
+        expect(left.rows.map((row) => row.hostId)).toEqual(["ret-a", "ret-b"]);
+        const latest = await tx.execute(sql`
+          SELECT s."hostId" FROM samples s WHERE NOT EXISTS (
+            SELECT 1 FROM samples n WHERE n."hostId" = s."hostId" AND n.at > s.at)`);
+        expect(latest.rows).toHaveLength(2);
+      });
+    });
+
+    it("conserva la última muestra aunque otra tenga la misma marca de tiempo", async () => {
+      await isolated(async (tx) => {
+        await tx.execute(sql`
+          INSERT INTO samples ("hostId", at, data)
+          SELECT 'ret-a', (now() - make_interval(hours => 80))::timestamp, '{"cpu": 1}'::jsonb
+          FROM generate_series(1, 3)`);
+        await aggregate(tx);
+
+        const result = await rollups.pruneSamples(tx, { budgetMs: 60_000 });
+
+        expect(result.deleted).toBe(2);
+        expect(await count(tx, sql`true`)).toBe(1);
+      });
+    });
+
+    it("borra por lotes y con budgetMs 0 ejecuta un solo lote por pasada", async () => {
+      await isolated(async (tx) => {
+        await seed(tx, "ret-a", 100, 49, 30);
+        await seed(tx, "ret-a", 1, 0, 30);
+        await aggregate(tx);
+        const eligible = await count(tx, cutoff);
+        expect(eligible).toBeGreaterThan(25);
+
+        const first = await rollups.pruneSamples(tx, { batchSize: 10, budgetMs: 0 });
+        expect(first).toEqual({ deleted: 10, exhausted: false });
+
+        let statements = 0;
+        const counting: Pick<Transaction, "execute"> = {
+          execute: ((query: Parameters<Transaction["execute"]>[0]) => {
+            statements += 1;
+            return tx.execute(query);
+          }) as Transaction["execute"],
+        };
+        const rest = await rollups.pruneSamples(counting, {
+          batchSize: 10,
+          budgetMs: 60_000,
+        });
+        expect(rest.exhausted).toBe(true);
+        expect(rest.deleted).toBe(eligible - 10);
+        expect(statements).toBeGreaterThan(1);
+        expect(await count(tx, cutoff)).toBe(0);
+
+        const again = await rollups.pruneSamples(tx, { budgetMs: 60_000 });
+        expect(again).toEqual({ deleted: 0, exhausted: true });
+      });
+    });
+
+    it("pruneHistory poda rollups e ingest a 30 días y repetirla no borra nada", async () => {
+      await isolated(async (tx) => {
+        await seed(tx, "ret-a", 100, 0);
+        await aggregate(tx);
+        await tx.execute(sql`
+          INSERT INTO sample_rollups ("hostId", bucket, n) VALUES
+            ('ret-old', (now() - interval '40 days')::timestamp, 1),
+            ('ret-new', (now() - interval '20 days')::timestamp, 1)`);
+        await tx.execute(sql`
+          INSERT INTO container_rollups ("hostId", container, bucket, n) VALUES
+            ('ret-old', 'c', (now() - interval '40 days')::timestamp, 1),
+            ('ret-new', 'c', (now() - interval '20 days')::timestamp, 1)`);
+        await tx.execute(sql`
+          INSERT INTO ingest_events (source, "eventId", "bodyHash", "receivedAt") VALUES
+            ('s', 'old', 'h', (now() - interval '40 days')::timestamp),
+            ('s', 'new', 'h', (now() - interval '1 day')::timestamp)`);
+
+        const first = await rollups.pruneHistory(tx, { budgetMs: 60_000 });
+
+        expect(first.sampleRollups).toBe(1);
+        expect(first.containerRollups).toBe(1);
+        expect(first.ingestEvents).toBe(1);
+        const left = async (table: string) =>
+          (
+            await tx.execute(
+              sql`SELECT "hostId" FROM ${sql.raw(table)} WHERE "hostId" IN ('ret-old', 'ret-new') ORDER BY 1`,
+            )
+          ).rows.map((row) => row.hostId);
+        expect(await left("sample_rollups")).toEqual(["ret-new"]);
+        expect(await left("container_rollups")).toEqual(["ret-new"]);
+        const events = await tx.execute(sql`SELECT "eventId" FROM ingest_events`);
+        expect(events.rows).toEqual([{ eventId: "new" }]);
+
+        const second = await rollups.pruneHistory(tx, { budgetMs: 60_000 });
+        expect(second).toEqual({
+          deleted: 0,
+          exhausted: true,
+          sampleRollups: 0,
+          containerRollups: 0,
+          ingestEvents: 0,
+        });
+      });
+    });
   });
 });
 
