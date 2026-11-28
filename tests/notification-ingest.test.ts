@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { and, eq } from "drizzle-orm";
 import {
   afterAll,
   beforeAll,
@@ -437,6 +438,138 @@ describe.skipIf(!baseUrl)("ingest firmado", () => {
     it("responde 503 con un secreto mal formado en lugar de verificar con él", async () => {
       process.env.NOTIFY_INGEST_SECRET = "short";
       await rejected(ingestRequest(body, { secret: "short" }), 503);
+    });
+  });
+
+  describe("idempotencia", () => {
+    const body = JSON.stringify(envelope());
+
+    it("responde 200 a la repetición exacta sin filas nuevas", async () => {
+      const first = await route.POST(ingestRequest(body));
+      const second = await route.POST(ingestRequest(body));
+
+      expect([first.status, second.status]).toEqual([202, 200]);
+      expect(await second.json()).toEqual({ status: "duplicate" });
+      expect(await counts()).toEqual({ events: 1, incidents: 1, outbox: 1 });
+    });
+
+    it("responde 200 a una repetición con otra marca de tiempo y la misma firma válida", async () => {
+      await route.POST(ingestRequest(body));
+      const later = await route.POST(
+        ingestRequest(body, { timestamp: String(nowSeconds() + 5) }),
+      );
+      expect(later.status).toBe(200);
+      expect(await counts()).toEqual({ events: 1, incidents: 1, outbox: 1 });
+    });
+
+    it("responde 409 al mismo eventId con otro cuerpo", async () => {
+      await route.POST(ingestRequest(body));
+      const other = JSON.stringify(
+        envelope({ data: { errors: ["a different failure"] } }),
+      );
+      const response = await route.POST(ingestRequest(other));
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({ status: "conflict" });
+      expect(await counts()).toEqual({ events: 1, incidents: 1, outbox: 1 });
+    });
+
+    it("deja una sola incidencia con dos peticiones simultáneas", async () => {
+      const responses = await Promise.all([
+        route.POST(ingestRequest(body)),
+        route.POST(ingestRequest(body)),
+      ]);
+
+      expect(responses.map((response) => response.status).sort()).toEqual([
+        200, 202,
+      ]);
+      expect(await counts()).toEqual({ events: 1, incidents: 1, outbox: 1 });
+    });
+
+    it("revierte la fila del ingest si falla el registro y el reintento se procesa", async () => {
+      const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const failed = await ingest.handleIngest(ingestRequest(body), {
+        record: async () => {
+          throw new Error("boom with secret detail");
+        },
+      });
+      const logged = JSON.stringify(spy.mock.calls);
+      spy.mockRestore();
+
+      expect(failed.status).toBe(503);
+      expect(await failed.text()).not.toContain("boom");
+      expect(logged).not.toContain("boom");
+      expect(await counts()).toEqual({ events: 0, incidents: 0, outbox: 0 });
+
+      const retry = await route.POST(ingestRequest(body));
+      expect(retry.status).toBe(202);
+      expect(await counts()).toEqual({ events: 1, incidents: 1, outbox: 1 });
+    });
+
+    it("revierte la incidencia entera si el fallo llega tras escribirla", async () => {
+      const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const failed = await ingest.handleIngest(ingestRequest(body), {
+        record: async (tx, input) => {
+          const { recordIncidentObservationIn } = await import(
+            "@/lib/incident-store"
+          );
+          await recordIncidentObservationIn(tx, input);
+          throw new Error("late failure");
+        },
+      });
+      spy.mockRestore();
+
+      expect(failed.status).toBe(503);
+      expect(await counts()).toEqual({ events: 0, incidents: 0, outbox: 0 });
+    });
+  });
+
+  describe("ciclo", () => {
+    it("abre con open y cierra con resolved sobre la misma clave", async () => {
+      const opened = await route.POST(
+        ingestRequest(JSON.stringify(envelope({ eventId: "backup-failed:1:open" }))),
+      );
+      expect(await opened.json()).toEqual({ status: "accepted", action: "opened" });
+
+      const closed = await route.POST(
+        ingestRequest(
+          JSON.stringify(
+            envelope({ eventId: "backup-failed:1:resolved", state: "resolved" }),
+          ),
+        ),
+      );
+      expect(closed.status).toBe(202);
+      expect(await closed.json()).toEqual({
+        status: "accepted",
+        action: "resolved",
+      });
+      const [incident] = await db.select().from(tables.incidents);
+      expect(incident.resolvedAt).not.toBeNull();
+      expect(incident.closedBy).toBe("ingest");
+    });
+
+    it("responde 202 ignored si no hay nada abierto que cerrar", async () => {
+      const response = await route.POST(
+        ingestRequest(
+          JSON.stringify(envelope({ eventId: "backup-failed:2:resolved", state: "resolved" })),
+        ),
+      );
+      expect(response.status).toBe(202);
+      expect(await response.json()).toEqual({
+        status: "accepted",
+        action: "ignored",
+      });
+      const events = await db
+        .select()
+        .from(tables.ingestEvents)
+        .where(
+          and(
+            eq(tables.ingestEvents.source, "backup"),
+            eq(tables.ingestEvents.eventId, "backup-failed:2:resolved"),
+          ),
+        );
+      expect(events).toHaveLength(1);
+      expect(events[0].incidentId).toBeNull();
     });
   });
 
